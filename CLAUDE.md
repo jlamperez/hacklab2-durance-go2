@@ -22,6 +22,7 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
 pixi run setup          # fetch the Go2 MuJoCo model into third_party/
 pixi run test           # unit tests
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
+pixi run view           # interactive 3D viewer, needs a display
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
 ```
 

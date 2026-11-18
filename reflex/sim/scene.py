@@ -144,9 +144,11 @@ class Go2Sim:
         self._v_adr = m.jnt_dofadr[jnt]
         self._ctrl_lo, self._ctrl_hi = m.actuator_ctrlrange[:, 0], m.actuator_ctrlrange[:, 1]
         self.q_des = POSES["stand"].copy()
-        self._eye = mujoco.Renderer(m, *eye_hw)
-        self._third = mujoco.Renderer(m, *third_hw)
-        self.eye_hw = eye_hw
+        # Offscreen renderers are created on first use, so the interactive viewer
+        # (which owns its own window and GL context) never has to create them.
+        self._eye: mujoco.Renderer | None = None
+        self._third: mujoco.Renderer | None = None
+        self.eye_hw, self.third_hw = eye_hw, third_hw
         self.reset()
 
     @property
@@ -198,10 +200,14 @@ class Go2Sim:
 
     def render_eye(self) -> np.ndarray:
         """RGB uint8 (H, W, 3) from the head camera."""
+        if self._eye is None:
+            self._eye = mujoco.Renderer(self.model, *self.eye_hw)
         self._eye.update_scene(self.data, camera="eye")
         return self._eye.render()
 
     def render_third(self) -> np.ndarray:
+        if self._third is None:
+            self._third = mujoco.Renderer(self.model, *self.third_hw)
         self._third.update_scene(self.data, camera="third")
         return self._third.render()
 
