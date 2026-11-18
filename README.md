@@ -34,6 +34,7 @@ pixi run test
 pixi run gen-data # 2000 simulated episodes -> data/synth (about 10 min, 63 MB)
 pixi run train    # trains the SNN -> out/models/snn.pt
 pixi run eval     # SNN vs the no-learning detector on the same held-out windows
+pixi run view-data data/synth   # browse dataset windows; also plays raw event recordings (.npz)
 pixi run sim     # writes out/demo.mp4: third person, dog-eye RGB, emulated events
 pixi run -e ros ros-build   # build the ROS 2 workspace (once, and after changing messages)
 pixi run -e ros ros-sim max_shots:=12 record:=out/loop.mp4   # closed loop over ROS 2

@@ -24,6 +24,7 @@ pixi run test           # unit tests
 pixi run gen-data       # synthetic dataset -> data/synth
 pixi run train          # train the SNN -> out/models/snn.pt
 pixi run eval           # SNN vs simple detector on held-out windows
+pixi run view-data PATH # look inside a dataset folder or an event recording; --sheet/--video save files
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
 pixi run -e ros ros-build   # build ros2_ws (unitree messages, reflex_msgs, reflex_ros)

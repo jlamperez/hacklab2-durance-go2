@@ -14,6 +14,7 @@ numpy = "*"
 opencv-python-headless = "*"
 imageio = "*"
 imageio-ffmpeg = "*"
+matplotlib = "*"
 pytest = "*"
 torch = { version = ">=2.7", index = "https://download.pytorch.org/whl/cu128" }
 
@@ -27,6 +28,7 @@ sim = "python -m reflex.sim.demo"
 gen-data = "python -m reflex.data.generate"
 train = "python -m reflex.train"
 eval = "python -m reflex.eval"
+view-data = "python -m reflex.viz.view_npz"
 view = { cmd = "python -m reflex.sim.view", env = { MUJOCO_GL = "glfw" } }
 
 # --- ROS 2 Humble (RoboStack). Separate environment: `pixi run -e ros ...`
