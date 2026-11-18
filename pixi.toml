@@ -1,0 +1,44 @@
+[workspace]
+name = "reflex-arc"
+description = "Reflexes for a Unitree Go2 using event vision and a spiking neural network (Durance AI track, HackLab #2)"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.11.*"
+
+[pypi-dependencies]
+reflex = { path = ".", editable = true }
+mujoco = ">=3.3"
+numpy = "*"
+opencv-python-headless = "*"
+imageio = "*"
+imageio-ffmpeg = "*"
+pytest = "*"
+torch = { version = ">=2.7", index = "https://download.pytorch.org/whl/cu128" }
+
+[activation.env]
+MUJOCO_GL = "egl"
+
+[tasks]
+test = "pytest -q tests"
+sim = "python -m reflex.sim.demo"
+
+# --- ROS 2 Humble (RoboStack). Separate environment: `pixi run -e ros ...`
+[feature.ros]
+channels = ["robostack-humble", "conda-forge"]
+
+[feature.ros.dependencies]
+ros-humble-ros-base = "*"
+ros-humble-rmw-cyclonedds-cpp = "*"
+ros-humble-rosidl-generator-dds-idl = "*"
+colcon-common-extensions = "*"
+compilers = "*"
+cmake = "*"
+make = "*"
+
+[feature.ros.activation.env]
+RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
+
+[environments]
+ros = ["ros"]

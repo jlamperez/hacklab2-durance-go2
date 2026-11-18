@@ -1,0 +1,11 @@
+.pixi/
+__pycache__/
+*.egg-info/
+out/
+data/
+*.pt
+*.onnx
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+third_party/
