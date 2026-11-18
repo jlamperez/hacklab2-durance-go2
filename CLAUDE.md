@@ -21,6 +21,9 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
 ```bash
 pixi run setup          # fetch the Go2 MuJoCo model into third_party/
 pixi run test           # unit tests
+pixi run gen-data       # synthetic dataset -> data/synth
+pixi run train          # train the SNN -> out/models/snn.pt
+pixi run eval           # SNN vs simple detector on held-out windows
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
@@ -41,6 +44,9 @@ Three seams let simulation be swapped for the real thing:
 | Robot, topic `/api/sport/request` | `go2_sim_bridge` on MuJoCo | the real Go2, same message |
 
 - `reflex/events/`: event format (`EVENT_DTYPE`: t in µs, x, y, p), emulator, representations.
+- `reflex/data/`: simulated episodes (threats and hard negatives), windowing, dataset generation.
+- `reflex/models/snn.py`: the network. `reflex/runtime/`: detectors (SNN, no-learning),
+  reflex state machine, sport-mode command table.
 - `reflex/sim/`: standing Go2, ball launcher, head camera. The dog does not walk in
   simulation; reflexes are posture changes. Walking is sport mode's job on the real robot.
 - `ros2_ws/src/`: ROS 2 packages (Humble). The behavior node publishes the same

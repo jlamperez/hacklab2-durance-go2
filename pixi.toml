@@ -24,6 +24,9 @@ MUJOCO_GL = "egl"
 setup = "bash scripts/setup.sh"
 test = "pytest -q tests"
 sim = "python -m reflex.sim.demo"
+gen-data = "python -m reflex.data.generate"
+train = "python -m reflex.train"
+eval = "python -m reflex.eval"
 view = { cmd = "python -m reflex.sim.view", env = { MUJOCO_GL = "glfw" } }
 
 # --- ROS 2 Humble (RoboStack). Separate environment: `pixi run -e ros ...`

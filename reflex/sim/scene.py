@@ -118,6 +118,16 @@ def build_model(rng: np.random.Generator | None = None) -> mujoco.MjModel:
     ball.add_geom(name="ball", type=G.mjGEOM_SPHERE, size=[0.1, 0, 0], mass=0.3,
                   material="ball", rgba=[1.0, 0.45, 0.1, 1.0], friction=[0.8, 0.005, 0.0001])
 
+    # A person-sized shape moved kinematically, used as a hard negative ("someone walks by").
+    walker = w.add_body(name="walker", mocap=True, pos=[30, 0, 0])
+    for name, gtype, pos, size in (
+        ("torso", G.mjGEOM_BOX, [0, 0, 1.15], [0.11, 0.20, 0.32]),
+        ("leg_a", G.mjGEOM_CAPSULE, [0.06, 0.10, 0.42], [0.07, 0.40, 0]),
+        ("leg_b", G.mjGEOM_CAPSULE, [-0.06, -0.10, 0.42], [0.07, 0.40, 0]),
+    ):
+        walker.add_geom(name=f"walker_{name}", type=gtype, pos=pos, size=size,
+                        rgba=[0.2, 0.25, 0.5, 1.0], contype=0, conaffinity=0)
+
     # Event camera on the head: looks along +x.
     spec.body("base").add_camera(name="eye", pos=[0.33, 0.0, 0.05],
                                  xyaxes=[0, -1, 0, 0, 0, 1], fovy=60)
@@ -149,6 +159,15 @@ class Go2Sim:
         self._eye: mujoco.Renderer | None = None
         self._third: mujoco.Renderer | None = None
         self.eye_hw, self.third_hw = eye_hw, third_hw
+        self._eye_cam = m.camera("eye").id
+        self._eye_pos0 = m.cam_pos[self._eye_cam].copy()
+        self._eye_quat0 = m.cam_quat[self._eye_cam].copy()
+        self._eye_fovy0 = float(m.cam_fovy[self._eye_cam])
+        self._mount_pos = self._eye_pos0.copy()     # per-episode camera mount
+        self._mount_quat = self._eye_quat0.copy()
+        self._shake: tuple | None = None             # (amplitudes, frequencies, phases)
+        self._walker_mocap = m.body("walker").mocapid[0]
+        self._walker_geoms = [m.geom(f"walker_{n}").id for n in ("torso", "leg_a", "leg_b")]
         self.reset()
 
     @property
@@ -163,6 +182,7 @@ class Go2Sim:
         d.qpos[self._q_adr] = POSES["stand"]
         self.q_des = POSES["stand"].copy()
         self.park_ball()
+        self.park_walker()
         for _ in range(int(settle_s / self.dt)):
             self.step()
         d.time = 0.0
@@ -176,18 +196,77 @@ class Go2Sim:
         self.data.qvel[v:v + 6] = 0
 
     def launch(self, shot: BallShot) -> None:
-        m, d = self.model, self.data
-        m.geom_size[self._ball_geom, 0] = shot.radius
-        m.geom_rbound[self._ball_geom] = shot.radius
-        m.geom_rgba[self._ball_geom, :3] = shot.rgb
+        """Roll a ball from its start point towards (0.35, y_target), just in front of the dog."""
         start = np.array([shot.x_start, shot.y_start])
         direction = np.array([0.35, shot.y_target]) - start
         direction /= np.linalg.norm(direction)
-        vel = shot.speed * direction
+        self.launch_raw(start, shot.speed * direction, shot.radius, shot.rgb)
+
+    def launch_raw(self, start_xy, vel_xy, radius: float, rgb) -> None:
+        """Roll a ball from `start_xy` with velocity `vel_xy` (world frame, m and m/s)."""
+        m, d = self.model, self.data
+        m.geom_size[self._ball_geom, 0] = radius
+        m.geom_rbound[self._ball_geom] = radius
+        m.geom_rgba[self._ball_geom, :3] = rgb
         a, v = self._ball_qadr, self._ball_vadr
-        d.qpos[a:a + 7] = [start[0], start[1], shot.radius, 1, 0, 0, 0]
+        d.qpos[a:a + 7] = [start_xy[0], start_xy[1], radius, 1, 0, 0, 0]
         # Pure rolling: omega = z x v / r
-        d.qvel[v:v + 6] = [vel[0], vel[1], 0, -vel[1] / shot.radius, vel[0] / shot.radius, 0]
+        d.qvel[v:v + 6] = [vel_xy[0], vel_xy[1], 0, -vel_xy[1] / radius, vel_xy[0] / radius, 0]
+
+    def park_walker(self) -> None:
+        self.data.mocap_pos[self._walker_mocap] = [30, 0, 0]
+
+    def set_walker(self, x: float, y: float, bob: float = 0.0, rgb=None) -> None:
+        """Place the walker (kinematic). Call every step to move it."""
+        self.data.mocap_pos[self._walker_mocap] = [x, y, bob]
+        if rgb is not None:
+            self.model.geom_rgba[self._walker_geoms, :3] = rgb
+
+    def randomize_camera(self, rng: np.random.Generator) -> dict:
+        """Per-episode camera mount: we do not know where the real camera will sit."""
+        m, c = self.model, self._eye_cam
+        dz = rng.uniform(-0.05, 0.25)            # from head height up to on top of the back
+        dy = rng.uniform(-0.04, 0.04)
+        pitch = np.radians(rng.uniform(-12, 6))   # negative looks down
+        fovy = rng.uniform(45, 75)
+        self._mount_pos = self._eye_pos0 + [0, dy, dz]
+        # Pitch is a rotation about the camera's own x axis (its "right").
+        dq = np.array([np.cos(pitch / 2), np.sin(pitch / 2), 0, 0])
+        self._mount_quat = np.zeros(4)
+        mujoco.mju_mulQuat(self._mount_quat, self._eye_quat0, dq)
+        m.cam_pos[c], m.cam_quat[c], m.cam_fovy[c] = self._mount_pos, self._mount_quat, fovy
+        return {"cam_dz": float(dz), "cam_pitch_deg": float(np.degrees(pitch)), "cam_fovy": float(fovy)}
+
+    def reset_camera(self) -> None:
+        m, c = self.model, self._eye_cam
+        self._mount_pos, self._mount_quat = self._eye_pos0.copy(), self._eye_quat0.copy()
+        m.cam_pos[c], m.cam_quat[c], m.cam_fovy[c] = self._mount_pos, self._mount_quat, self._eye_fovy0
+        self._shake = None
+
+    def set_shake(self, rng: np.random.Generator, level: float) -> None:
+        """Camera shake standing in for the balance motion of a real dog that "stands still".
+
+        `level` 0 disables it; 1 is about 0.4 degrees and 2 mm, a guess until we measure
+        the real robot on Saturday.
+        """
+        if level <= 0:
+            self._shake = None
+            return
+        amp = level * np.array([np.radians(0.4), np.radians(0.4), 0.002]) * rng.uniform(0.3, 1.0, 3)
+        self._shake = (amp, rng.uniform(1.5, 9.0, 3), rng.uniform(0, 2 * np.pi, 3))
+
+    def _apply_shake(self) -> None:
+        if self._shake is None:
+            return
+        amp, freq, phase = self._shake
+        pitch, roll, dz = amp * np.sin(2 * np.pi * freq * self.data.time + phase)
+        dq = np.array([1.0, pitch / 2, 0.0, roll / 2])   # small-angle quaternion
+        dq /= np.linalg.norm(dq)
+        q = np.zeros(4)
+        mujoco.mju_mulQuat(q, self._mount_quat, dq)
+        c = self._eye_cam
+        self.model.cam_quat[c] = q
+        self.model.cam_pos[c] = self._mount_pos + [0, 0, dz]
 
     def ball_xy(self) -> np.ndarray:
         return self.data.qpos[self._ball_qadr:self._ball_qadr + 2].copy()
@@ -202,6 +281,7 @@ class Go2Sim:
         """RGB uint8 (H, W, 3) from the head camera."""
         if self._eye is None:
             self._eye = mujoco.Renderer(self.model, *self.eye_hw)
+        self._apply_shake()
         self._eye.update_scene(self.data, camera="eye")
         return self._eye.render()
 
