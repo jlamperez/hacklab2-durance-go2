@@ -1,4 +1,4 @@
-# Reflex Arc
+# hacklab2-durance-go2
 
 Hackathon project: event-vision reflexes for a Unitree Go2. Durance AI track, HackLab #2,
 CIC Berlin. Hacking runs Saturday 21 Nov 2026 11:00 to Sunday 22 Nov 17:45.

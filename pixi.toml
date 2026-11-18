@@ -1,5 +1,5 @@
 [workspace]
-name = "reflex-arc"
+name = "hacklab2-durance-go2"
 description = "Reflexes for a Unitree Go2 using event vision and a spiking neural network (Durance AI track, HackLab #2)"
 channels = ["conda-forge"]
 platforms = ["linux-64"]

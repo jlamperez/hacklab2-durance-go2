@@ -1,4 +1,4 @@
-# Reflex Arc
+# hacklab2-durance-go2
 
 Reflexes for a Unitree Go2 driven by an event camera and a spiking neural network (SNN).
 Built for the Durance AI track of HackLab #2 (Berlin, 21–22 November 2026).
