@@ -18,7 +18,8 @@ camera or Durance's toolchain.
 | Python environment (pixi, MuJoCo, PyTorch) | working |
 | Event-camera emulator (contrast-threshold model, randomized) | working, tested |
 | MuJoCo scene: standing Go2, ball launcher, head camera | working, tested |
-| ROS 2 Humble environment (RoboStack) | installed, no nodes yet |
+| ROS 2 Humble environment (RoboStack, CycloneDDS) | working; Unitree messages build and import |
+| Sport-mode `api_id` table, checked against Unitree's client | done, tested; not tried on a robot |
 | SNN training | not started |
 | ROS 2 nodes | not started |
 
@@ -26,10 +27,11 @@ camera or Durance's toolchain.
 
 ```bash
 pixi install
-pixi run setup   # fetches the Go2 MuJoCo model
+pixi run setup   # fetches the Go2 MuJoCo model and Unitree's ROS 2 messages
 pixi run test
 pixi run sim     # writes out/demo.mp4: third person, dog-eye RGB, emulated events
 ```
 
 Requires [pixi](https://pixi.sh). The default environment is Python only; ROS 2 Humble
-lives in a separate environment (`pixi run -e ros ...`).
+lives in a separate environment (`pixi run -e ros ...`). Build the ROS 2 workspace with
+`pixi run -e ros ros-build`.

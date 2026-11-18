@@ -34,9 +34,16 @@ ros-humble-ros-base = "*"
 ros-humble-rmw-cyclonedds-cpp = "*"
 ros-humble-rosidl-generator-dds-idl = "*"
 colcon-common-extensions = "*"
+empy = "==3.3.4"   # Humble's rosidl templates break with empy 4
+lark = "*"
 compilers = "*"
 cmake = "*"
 make = "*"
+
+[feature.ros.tasks.ros-build]
+# RoboStack needs CMake pointed at the environment's Python explicitly.
+cmd = "colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python -DPython3_EXECUTABLE=$CONDA_PREFIX/bin/python -DPython_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_STRATEGY=LOCATION -DPython3_FIND_STRATEGY=LOCATION"
+cwd = "ros2_ws"
 
 [feature.ros.activation.env]
 RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
