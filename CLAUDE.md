@@ -26,6 +26,9 @@ pixi run train          # train the SNN -> out/models/snn.pt
 pixi run eval           # SNN vs simple detector on held-out windows
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
+pixi run -e ros ros-build   # build ros2_ws (unitree messages, reflex_msgs, reflex_ros)
+pixi run -e ros ros-sim     # closed loop over ROS 2 in simulation; args: detector:=snn|simple
+                            #   max_shots:=N actuation_delay_ms:=300.0 record:=out/x.mp4
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
 ```
 
@@ -49,8 +52,12 @@ Three seams let simulation be swapped for the real thing:
   reflex state machine, sport-mode command table.
 - `reflex/sim/`: standing Go2, ball launcher, head camera. The dog does not walk in
   simulation; reflexes are posture changes. Walking is sport mode's job on the real robot.
-- `ros2_ws/src/`: ROS 2 packages (Humble). The behavior node publishes the same
-  `unitree_api/msg/Request` to the simulator and to the robot.
+- `ros2_ws/src/reflex_msgs`: `EventWindow`, `ReflexDecision`.
+- `ros2_ws/src/reflex_ros`: three nodes. `sim_bridge` (MuJoCo behind the robot's and the
+  camera's topics, with a configurable actuation delay, scores every shot), `perception`
+  (window -> decision), `behavior` (decision -> `unitree_api/msg/Request`, all safety
+  logic). The behavior node publishes the same message to the simulator and to the robot.
+  Nodes are thin; logic lives in `reflex/` where it is unit-tested without ROS.
 
 Frame convention: dog at the origin, +x forward, +y left, +z up. Labels
 (`none / left / center / right`) are in the dog frame.

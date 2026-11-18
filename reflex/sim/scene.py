@@ -154,6 +154,7 @@ class Go2Sim:
         self._v_adr = m.jnt_dofadr[jnt]
         self._ctrl_lo, self._ctrl_hi = m.actuator_ctrlrange[:, 0], m.actuator_ctrlrange[:, 1]
         self.q_des = POSES["stand"].copy()
+        self.damped = False      # True: motors only damp, as after Unitree's Damp command
         # Offscreen renderers are created on first use, so the interactive viewer
         # (which owns its own window and GL context) never has to create them.
         self._eye: mujoco.Renderer | None = None
@@ -181,6 +182,7 @@ class Go2Sim:
         d.qpos[3:7] = [1, 0, 0, 0]
         d.qpos[self._q_adr] = POSES["stand"]
         self.q_des = POSES["stand"].copy()
+        self.damped = False      # True: motors only damp, as after Unitree's Damp command
         self.park_ball()
         self.park_walker()
         for _ in range(int(settle_s / self.dt)):
@@ -273,7 +275,8 @@ class Go2Sim:
 
     def step(self) -> None:
         d = self.data
-        tau = KP * (self.q_des - d.qpos[self._q_adr]) - KD * d.qvel[self._v_adr]
+        kp = 0.0 if self.damped else KP
+        tau = kp * (self.q_des - d.qpos[self._q_adr]) - KD * d.qvel[self._v_adr]
         d.ctrl[:] = np.clip(tau, self._ctrl_lo, self._ctrl_hi)
         mujoco.mj_step(self.model, d)
 

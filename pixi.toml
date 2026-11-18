@@ -49,6 +49,11 @@ make = "*"
 cmd = "colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python -DPython3_EXECUTABLE=$CONDA_PREFIX/bin/python -DPython_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_STRATEGY=LOCATION -DPython3_FIND_STRATEGY=LOCATION"
 cwd = "ros2_ws"
 
+[feature.ros.tasks.ros-sim]
+# Closed loop over ROS 2 in simulation. Extra arguments go to the launch file, e.g.
+#   pixi run -e ros ros-sim detector:=simple max_shots:=20 record:=out/loop.mp4
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros sim.launch.py \"$@\"' --"
+
 [feature.ros.activation.env]
 RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
 

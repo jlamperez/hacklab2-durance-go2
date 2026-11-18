@@ -23,8 +23,7 @@ camera or Durance's toolchain.
 | Synthetic dataset with hard negatives (miss, crossing, slow, walker, idle) | working, tested |
 | SNN (23.7k parameters, plain PyTorch) and training | trains in ~90 s; 81 % window accuracy on held-out simulated episodes |
 | No-learning detector and reflex state machine | working, tested |
-| Closed loop (events → decision → dog reacts) | not started |
-| ROS 2 nodes | not started |
+| Closed loop over ROS 2 in simulation (bridge + perception + behavior) | working; see results below |
 
 ## Quick start
 
@@ -36,6 +35,8 @@ pixi run gen-data # 2000 simulated episodes -> data/synth (about 10 min, 63 MB)
 pixi run train    # trains the SNN -> out/models/snn.pt
 pixi run eval     # SNN vs the no-learning detector on the same held-out windows
 pixi run sim     # writes out/demo.mp4: third person, dog-eye RGB, emulated events
+pixi run -e ros ros-build   # build the ROS 2 workspace (once, and after changing messages)
+pixi run -e ros ros-sim max_shots:=12 record:=out/loop.mp4   # closed loop over ROS 2
 pixi run view    # interactive 3D window (needs a display); keys S/C/L/R change the pose
 ```
 
@@ -61,3 +62,22 @@ balls. The shake amplitude is a guess until we measure the real dog.
 These are per-window numbers on emulated events. They say nothing yet about the real
 camera, and the number that matters, correct reactions per ball through the state
 machine, is not measured yet.
+
+### Closed loop over ROS 2 (simulation only)
+
+`pixi run -e ros ros-sim` starts three nodes: the MuJoCo bridge (publishes event
+windows, listens on `/api/sport/request`), perception and behavior. One run, 12 shots
+(9 balls, 3 hard negatives), same seed for every row, default sensor without camera shake:
+
+| Detector | Actuation delay | Correct | Missed | Wrong side | False triggers | Median margin before arrival |
+|---|---|---|---|---|---|---|
+| SNN | 200 ms | 9 / 9 | 0 | 0 | 2 / 3 | 318 ms |
+| SNN | 300 ms | 9 / 9 | 0 | 0 | 2 / 3 | 188 ms |
+| SNN | 400 ms | 6 / 9 | 3 | 0 | 2 / 3 | 142 ms |
+| No-learning | 300 ms | 2 / 9 | 6 | 1 | 3 / 3 | 112 ms |
+
+Twelve shots is a smoke test, not a benchmark. The two SNN false triggers are both balls
+crossing sideways. The actuation delay is the time the simulated dog waits before it
+starts moving; 300 ms is a guess to be replaced by a measurement on the real Go2.
+From newest event to request on the wire: about 6-10 ms of simulated time, with the
+simulation running slower than real time, so this is not a latency claim.
