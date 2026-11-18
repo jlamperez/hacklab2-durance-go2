@@ -37,6 +37,8 @@ channels = ["robostack-humble", "conda-forge"]
 ros-humble-ros-base = "*"
 ros-humble-rmw-cyclonedds-cpp = "*"
 ros-humble-rosidl-generator-dds-idl = "*"
+ros-humble-rqt-graph = "*"        # node/topic graph
+ros-humble-rqt-image-view = "*"   # shows /reflex/debug/events_image
 colcon-common-extensions = "*"
 empy = "==3.3.4"   # Humble's rosidl templates break with empy 4
 lark = "*"
@@ -53,6 +55,10 @@ cwd = "ros2_ws"
 # Closed loop over ROS 2 in simulation. Extra arguments go to the launch file, e.g.
 #   pixi run -e ros ros-sim detector:=simple max_shots:=20 record:=out/loop.mp4
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros sim.launch.py \"$@\"' --"
+
+[feature.ros.tasks.ros-shell]
+# An interactive shell with ROS 2 and this workspace ready, for ros2 / rqt commands.
+cmd = "bash --rcfile scripts/ros_bashrc -i"
 
 [feature.ros.activation.env]
 RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"

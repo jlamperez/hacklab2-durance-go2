@@ -1,0 +1,4 @@
+# Sourced by `pixi run -e ros ros-shell`: an interactive shell with this workspace ready.
+[ -f ~/.bashrc ] && source ~/.bashrc
+source ros2_ws/install/setup.bash
+PS1="(ros) \w \$ "

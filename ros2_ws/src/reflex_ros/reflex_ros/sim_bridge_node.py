@@ -2,6 +2,7 @@
 
   subscribes  /api/sport/request      unitree_api/Request      (what the real Go2 listens to)
   publishes   /reflex/events_window   reflex_msgs/EventWindow  (what the camera adapter will publish)
+              /reflex/debug/events_image  sensor_msgs/Image, the events drawn as a picture (for people)
               /clock                  simulated time
               /reflex/sim/outcome     std_msgs/String, one JSON line per shot
 
@@ -18,6 +19,7 @@ from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rosgraph_msgs.msg import Clock as ClockMsg
+from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
 from reflex.data.episodes import DOG_FRONT_X, THREAT_NEAR
@@ -66,6 +68,7 @@ class SimBridge(Node):
         self.clock_pub = self.create_publisher(ClockMsg, "/clock", 10)
         self.win_pub = self.create_publisher(EventWindow, "/reflex/events_window", qos_profile_sensor_data)
         self.out_pub = self.create_publisher(String, "/reflex/sim/outcome", 10)
+        self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", qos_profile_sensor_data)
         self.create_subscription(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
 
         self.pending = []            # (apply_time_s, pose, api name)
@@ -209,6 +212,14 @@ class SimBridge(Node):
         msg.n_bins, msg.channels, msg.height, msg.width = cfg.shape
         msg.data = window.tobytes()
         self.win_pub.publish(msg)
+        if self.img_pub.get_subscription_count() > 0:      # only draw it if someone is watching
+            h, w = self.sim.eye_hw
+            bgr = ev_repr.render(ev_repr.to_frame(np.concatenate(list(self.recent)[-10:]), h, w), saturation=1.5)
+            img = Image()
+            img.header = msg.header
+            img.height, img.width, img.encoding, img.step = h, w, "bgr8", 3 * w
+            img.data = bgr.tobytes()
+            self.img_pub.publish(img)
 
     def write_frame(self, eye: np.ndarray) -> None:
         import cv2
