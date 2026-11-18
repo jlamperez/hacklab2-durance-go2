@@ -11,6 +11,7 @@ configurable actuation delay, and scores each shot. The behavior node cannot tel
 apart from the robot, which is the point: it is that node's test bench.
 """
 import json
+import os
 from collections import deque
 
 import numpy as np
@@ -53,6 +54,11 @@ class SimBridge(Node):
         self.record = p("record", "").value                    # mp4 path, empty: no video
         seed = int(p("seed", 0).value)
         randomize = bool(p("randomize", False).value)          # camera mount, shake, sensor
+        # robot_only: act as the robot and nothing else. No simulated camera, no balls, no
+        # /clock: events come from somewhere else (a webcam node, a Kria board) in real time.
+        self.robot_only = bool(p("robot_only", False).value)
+        self.use_viewer = bool(p("viewer", False).value)       # 3D window; robot_only mode only
+        self.viewer = None
 
         self.rng = np.random.default_rng(seed)
         self.sim = Go2Sim(seed=seed)
@@ -62,7 +68,8 @@ class SimBridge(Node):
             self.sim.set_shake(self.rng, float(self.rng.uniform(0.2, 1.5)))
         h, w = self.sim.eye_hw
         self.emu = EventEmulator(h, w, EmuConfig.randomized(self.rng) if randomize else EmuConfig(), self.rng)
-        self.emu.reset(to_gray(self.sim.render_eye()), 0)
+        if not self.robot_only:
+            self.emu.reset(to_gray(self.sim.render_eye()), 0)
         self.recent = deque(maxlen=round(self.wcfg.window_ms * 1e-3 / self.sim.dt))
 
         self.clock_pub = self.create_publisher(ClockMsg, "/clock", 10)
@@ -75,11 +82,16 @@ class SimBridge(Node):
         self.pose = "stand"
         self.steps = 0
         self.shot = None             # dict describing the shot in flight
-        self.next_shot_t = 2.0       # quiet start: lets the simple detector calibrate
+        self.next_shot_t = float("inf") if self.robot_only else 2.0   # quiet start: the simple detector calibrates
         self.results = []
         self.latencies_ms = []
         self.writer = None
-        if self.record:
+        if self.robot_only and self.use_viewer:
+            import mujoco.viewer
+            self.viewer = mujoco.viewer.launch_passive(self.sim.model, self.sim.data)
+            self.viewer.cam.lookat[:] = [0.0, 0.0, 0.25]
+            self.viewer.cam.distance, self.viewer.cam.azimuth, self.viewer.cam.elevation = 2.2, 150, -15
+        if self.record and not self.robot_only:
             import imageio.v2 as imageio
             self.writer = imageio.get_writer(self.record, fps=50, codec="libx264", quality=8, macro_block_size=2)
         # Wall-clock timer: this node produces /clock, so it cannot run on it.
@@ -97,7 +109,11 @@ class SimBridge(Node):
             return
         stamp_us = int(msg.header.identity.id)
         if stamp_us > 0:   # time from the newest event to the request arriving here
-            self.latencies_ms.append(self.sim.time * 1e3 - stamp_us * 1e-3)
+            now_us = self.get_clock().now().nanoseconds / 1000 if self.robot_only else self.sim.time * 1e6
+            self.latencies_ms.append((now_us - stamp_us) * 1e-3)
+            if self.robot_only:
+                self.get_logger().info(f"{name} -> {pose}; {self.latencies_ms[-1]:.0f} ms from newest event to request, "
+                                       f"applied after {self.delay_s * 1e3:.0f} ms more")
         self.pending.append((self.sim.time + self.delay_s, pose, name))
 
     def apply_due(self) -> None:
@@ -183,6 +199,12 @@ class SimBridge(Node):
             sim.set_walker(x, y0 + vy * (sim.time - self.shot["t0"]))
         sim.step()
         self.steps += 1
+        if self.robot_only:
+            if self.viewer is not None and self.steps % 8 == 0:
+                if not self.viewer.is_running():
+                    os._exit(0)      # window closed; MuJoCo's viewer teardown is unsafe, leave directly
+                self.viewer.sync()
+            return
         eye = sim.render_eye()
         t_us = int(sim.time * 1e6)
         self.recent.append(self.emu.step(to_gray(eye), t_us))

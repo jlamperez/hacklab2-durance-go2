@@ -58,6 +58,14 @@ cwd = "ros2_ws"
 #   pixi run -e ros ros-sim detector:=simple max_shots:=20 record:=out/loop.mp4
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros sim.launch.py \"$@\"' --"
 
+[feature.ros.tasks.ros-camera]
+# Camera side (webcam standing in for the event camera + perception). Runs on the Kria or here.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros camera.launch.py \"$@\"' --"
+
+[feature.ros.tasks.ros-robot-sim]
+# Robot side, simulated: behavior + MuJoCo dog acting only as the robot, with a 3D window.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros robot_sim.launch.py \"$@\"' --"
+
 [feature.ros.tasks.ros-shell]
 # An interactive shell with ROS 2 and this workspace ready, for ros2 / rqt commands.
 cmd = "bash --rcfile scripts/ros_bashrc -i"

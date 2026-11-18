@@ -20,6 +20,7 @@ setup(
             "perception = reflex_ros.perception_node:main",
             "behavior = reflex_ros.behavior_node:main",
             "sim_bridge = reflex_ros.sim_bridge_node:main",
+            "camera_webcam = reflex_ros.camera_webcam_node:main",
         ],
     },
 )

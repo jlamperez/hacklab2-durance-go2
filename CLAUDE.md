@@ -30,6 +30,9 @@ pixi run view           # interactive 3D viewer, needs a display
 pixi run -e ros ros-build   # build ros2_ws (unitree messages, reflex_msgs, reflex_ros)
 pixi run -e ros ros-sim     # closed loop over ROS 2 in simulation; args: detector:=snn|simple
                             #   max_shots:=N actuation_delay_ms:=300.0 record:=out/x.mp4
+pixi run -e ros ros-camera     # camera side: webcam as stand-in event camera + perception
+pixi run -e ros ros-robot-sim  # robot side: behavior + MuJoCo dog acting only as the robot
+pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rqt commands
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
 ```
 
@@ -72,6 +75,8 @@ unverified; `docker/` holds the fallback.
 
 ## What we do not know yet
 
+What is left to run on the real robot, and the Kria + webcam rehearsal: `docs/real-robot.md`.
+How to look inside the running ROS 2 system: `docs/inspecting-ros.md`.
 See `docs/questions-for-durance.md`. For sport mode versus low-level control, and why
 `unitree_mujoco` is not used (yet), see `docs/go2-control.md`. Camera model and resolution, recording format,
 RIVERLib's supported layers, and the KV260 image are all assumptions until Saturday.

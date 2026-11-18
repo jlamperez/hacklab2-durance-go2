@@ -82,3 +82,9 @@ crossing sideways. The actuation delay is the time the simulated dog waits befor
 starts moving; 300 ms is a guess to be replaced by a measurement on the real Go2.
 From newest event to request on the wire: about 6-10 ms of simulated time, with the
 simulation running slower than real time, so this is not a latency claim.
+
+## Towards the real robot
+
+`docs/real-robot.md` lists what is left before this runs on a Go2, and a rehearsal that
+needs no Durance hardware: a Kria board with a webcam (emulated event camera) sending
+decisions over ROS 2 to the simulated dog on a PC. Tested on one PC only so far.
