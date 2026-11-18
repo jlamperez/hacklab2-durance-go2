@@ -9,9 +9,11 @@ Ask these before hacking starts (opening ceremony is Saturday 09:30).
 3. Does the KV260 image ship with ROS 2? Which distro? Can we install our own packages?
    Is Docker available on it?
 4. How many Go2 robots and boards are there, and how is robot time shared? Where is the
-   camera mounted on the dog?
-5. Is the Go2 controlled through high-level sport mode? Are there speed limits or a
-   fenced area?
+   camera mounted: on the dog (head, back, tilted?) or off the robot? Which lens and
+   field of view?
+5. Is the Go2 controlled through high-level sport mode? Is low-level motor control
+   allowed? Which acrobatics (jump, flips) are enabled and permitted? Are there speed
+   limits or a fenced area?
 6. How is the track judged and what is the prize? What weighs most: latency, power,
    sparsity, originality of the behavior?
 7. Do you have data already recorded with the event camera?
@@ -25,4 +27,4 @@ Ask these before hacking starts (opening ceremony is Saturday 09:30).
 | LIF neuron, subtractive reset, conv/pool/linear only, 8–16 time steps, 8-bit weights | 2 |
 | ROS 2 Humble with CycloneDDS on the board | 3 |
 | Reflex triggers while the dog stands still, head-mounted camera | 4 |
-| Commands go to `/api/sport/request` | 5 |
+| Commands go to `/api/sport/request`; see `go2-control.md` | 5 |

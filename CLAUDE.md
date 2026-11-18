@@ -58,5 +58,6 @@ unverified; `docker/` holds the fallback.
 
 ## What we do not know yet
 
-See `docs/questions-for-durance.md`. Camera model and resolution, recording format,
+See `docs/questions-for-durance.md`. For sport mode versus low-level control, and why
+`unitree_mujoco` is not used (yet), see `docs/go2-control.md`. Camera model and resolution, recording format,
 RIVERLib's supported layers, and the KV260 image are all assumptions until Saturday.
