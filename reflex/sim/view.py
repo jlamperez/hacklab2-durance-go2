@@ -4,6 +4,7 @@
     pixi run view --speed 0.25    # slow motion
 
 Mouse: left-drag rotates, right-drag pans, scroll zooms. Space pauses.
+Pose keys: S stand, C crouch, L lean left, R lean right.
 This viewer shows the scene only. For the dog-eye and event-camera panels,
 record a video with `pixi run sim`.
 """
@@ -17,7 +18,17 @@ import time
 import mujoco.viewer
 import numpy as np
 
-from reflex.sim.scene import BallShot, Go2Sim
+from reflex.sim.scene import POSES, BallShot, Go2Sim  # noqa: F401 (POSES: see tests)
+
+# Key -> pose. Keys arrive as GLFW key codes, which for letters are the uppercase ASCII code.
+KEY_POSES = {"S": "stand", "C": "crouch", "L": "lean_left", "R": "lean_right"}
+
+
+def pose_for_key(keycode: int) -> str | None:
+    """Pose selected by a key press, or None if the key is not a pose key."""
+    if not 0 <= keycode < 256:
+        return None
+    return KEY_POSES.get(chr(keycode).upper())
 
 
 def main() -> None:
@@ -25,13 +36,22 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--speed", type=float, default=1.0, help="1.0 = real time, 0.25 = slow motion")
     ap.add_argument("--period", type=float, default=3.0, help="simulated seconds between shots")
+    ap.add_argument("--no-balls", action="store_true", help="do not roll balls; pose keys only")
     ap.add_argument("--duration", type=float, default=0.0, help="stop after this many wall seconds (0 = until closed)")
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
     sim = Go2Sim(seed=args.seed)
-    next_shot = 0.5
-    with mujoco.viewer.launch_passive(sim.model, sim.data) as viewer:
+    next_shot = float("inf") if args.no_balls else 0.5
+    pending: list[str] = []   # filled by the viewer thread, drained by the main loop
+
+    def on_key(keycode: int) -> None:
+        pose = pose_for_key(keycode)
+        if pose is not None:
+            pending.append(pose)
+
+    print("pose keys: S stand, C crouch, L lean left, R lean right", flush=True)
+    with mujoco.viewer.launch_passive(sim.model, sim.data, key_callback=on_key) as viewer:
         viewer.cam.lookat[:] = [1.2, 0.0, 0.2]
         viewer.cam.distance = 4.5
         viewer.cam.azimuth = 120
@@ -43,6 +63,10 @@ def main() -> None:
                 break
             # Advance physics until simulated time catches up with (scaled) wall time.
             target = sim_start + (time.perf_counter() - wall_start) * args.speed
+            while pending:
+                pose = pending.pop(0)
+                sim.set_pose(pose)
+                print(f"t = {sim.time:5.1f} s  pose: {pose}", flush=True)
             while sim.time < target:
                 if sim.time >= next_shot:
                     shot = BallShot.sample(rng)

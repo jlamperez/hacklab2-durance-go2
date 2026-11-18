@@ -30,7 +30,7 @@ pixi install
 pixi run setup   # fetches the Go2 MuJoCo model and Unitree's ROS 2 messages
 pixi run test
 pixi run sim     # writes out/demo.mp4: third person, dog-eye RGB, emulated events
-pixi run view    # interactive 3D window (needs a display); --speed 0.25 for slow motion
+pixi run view    # interactive 3D window (needs a display); keys S/C/L/R change the pose
 ```
 
 Requires [pixi](https://pixi.sh). The default environment is Python only; ROS 2 Humble

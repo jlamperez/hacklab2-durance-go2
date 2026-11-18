@@ -1,7 +1,8 @@
+import mujoco
 import numpy as np
 import pytest
 
-from reflex.sim.scene import GO2_XML, BallShot, Go2Sim
+from reflex.sim.scene import GO2_XML, POSES, BallShot, Go2Sim
 
 pytestmark = pytest.mark.skipif(not GO2_XML.exists(), reason="Go2 model missing: run `pixi run setup`")
 
@@ -44,3 +45,54 @@ def test_ball_arrives_on_the_labelled_side(sim, label, sign):
 def test_eye_camera_renders(sim):
     img = sim.render_eye()
     assert img.shape == (*sim.eye_hw, 3) and img.std() > 5
+
+
+def _hold(sim, pose, seconds=1.5):
+    """Switch to `pose` from standing and return (y, z, roll_deg, max_speed) once settled."""
+    sim.reset()
+    sim.set_pose(pose)
+    for _ in range(int(seconds / sim.dt)):
+        sim.step()
+    rot = np.zeros(9)
+    mujoco.mju_quat2Mat(rot, sim.data.qpos[3:7])
+    rot = rot.reshape(3, 3)
+    roll = np.degrees(np.arctan2(rot[2, 1], rot[2, 2]))
+    return sim.data.qpos[1], sim.data.qpos[2], roll, np.abs(sim.data.qvel[:6]).max()
+
+
+@pytest.mark.parametrize("pose", list(POSES))
+def test_every_pose_is_stable(sim, pose):
+    """The dog settles (does not fall, drift or keep moving) in every pose."""
+    y, z, roll, speed = _hold(sim, pose)
+    assert speed < 0.02, "still moving after 1.5 s"
+    assert z > 0.10, "trunk on the floor"
+    assert abs(roll) < 25, "rolled over"
+    assert abs(y) < 0.15, "drifted sideways"
+
+
+@pytest.mark.parametrize("pose,sign", [("lean_left", 1), ("lean_right", -1)])
+def test_lean_moves_the_trunk_to_the_named_side(sim, pose, sign):
+    y, z, roll, _ = _hold(sim, pose)
+    assert sign * y > 0.02                 # +y is the dog's left
+    assert sign * roll > 5                 # and it rolls towards that side
+    assert z > 0.25                        # while staying up
+
+
+def test_leans_are_mirror_images(sim):
+    y_l, z_l, roll_l, _ = _hold(sim, "lean_left")
+    y_r, z_r, roll_r, _ = _hold(sim, "lean_right")
+    assert abs(y_l + y_r) < 0.005 and abs(roll_l + roll_r) < 1.0 and abs(z_l - z_r) < 0.005
+
+
+def test_dog_recovers_to_stand_from_every_pose(sim):
+    sim.reset()
+    z_stand = sim.data.qpos[2]
+    for pose in ("crouch", "lean_left", "lean_right"):
+        sim.set_pose(pose)
+        for _ in range(500):
+            sim.step()
+        sim.set_pose("stand")
+        for _ in range(750):
+            sim.step()
+        assert abs(sim.data.qpos[2] - z_stand) < 0.02, f"did not stand back up after {pose}"
+        assert abs(sim.data.qpos[1]) < 0.05
