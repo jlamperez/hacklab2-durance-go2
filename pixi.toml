@@ -21,6 +21,7 @@ torch = { version = ">=2.7", index = "https://download.pytorch.org/whl/cu128" }
 MUJOCO_GL = "egl"
 
 [tasks]
+setup = "bash scripts/setup.sh"
 test = "pytest -q tests"
 sim = "python -m reflex.sim.demo"
 

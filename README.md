@@ -10,13 +10,15 @@ Main reflex: goalkeeper / dodge. The network classifies a fast-approaching objec
 
 ## Status
 
-Early scaffold. What exists and what is simulated is tracked here as the project grows.
+Everything so far is simulation. Nothing has run on the real robot, the real event
+camera or Durance's toolchain.
 
 | Part | State |
 |---|---|
 | Python environment (pixi, MuJoCo, PyTorch) | working |
-| Event-camera emulator | in progress |
-| MuJoCo Go2 scene | in progress |
+| Event-camera emulator (contrast-threshold model, randomized) | working, tested |
+| MuJoCo scene: standing Go2, ball launcher, head camera | working, tested |
+| ROS 2 Humble environment (RoboStack) | installed, no nodes yet |
 | SNN training | not started |
 | ROS 2 nodes | not started |
 
@@ -24,8 +26,9 @@ Early scaffold. What exists and what is simulated is tracked here as the project
 
 ```bash
 pixi install
+pixi run setup   # fetches the Go2 MuJoCo model
 pixi run test
-pixi run sim
+pixi run sim     # writes out/demo.mp4: third person, dog-eye RGB, emulated events
 ```
 
 Requires [pixi](https://pixi.sh). The default environment is Python only; ROS 2 Humble
