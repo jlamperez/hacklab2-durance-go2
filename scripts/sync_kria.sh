@@ -14,5 +14,7 @@ rsync -az --delete \
   --exclude=/ros2_ws/src/unitree_api --exclude=/ros2_ws/src/unitree_go --exclude='__pycache__' --exclude=/build.log \
   ./ "$target":hacklab2-durance-go2/
 # --network=host: on some boards the default Docker bridge has no working DNS during builds.
-ssh "$target" 'cd hacklab2-durance-go2 && docker build --network=host --pull=false -q -f docker/kria/Dockerfile -t reflex-kria .'
+# DOCKER_BUILDKIT=0: the classic builder uses the local base image without asking the
+# registry, so a rebuild works when the board's DNS is flaky or it has no internet.
+ssh "$target" 'cd hacklab2-durance-go2 && DOCKER_BUILDKIT=0 docker build --network=host -q -f docker/kria/Dockerfile -t reflex-kria .'
 echo "run it with:  ssh -t $target docker run --rm -it --net=host --device /dev/video0 reflex-kria"
