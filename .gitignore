@@ -1,8 +1,8 @@
 .pixi/
 __pycache__/
 *.egg-info/
-out/
-data/
+/out/
+/data/
 *.pt
 *.onnx
 ros2_ws/build/
