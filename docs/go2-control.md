@@ -110,8 +110,27 @@ https://github.com/unitreerobotics/unitree_rl_mjlab trains one with reinforcemen
 learning (PPO, 4096 parallel robots on the GPU). It ships no pretrained Go2 policy, so it
 has to be trained: `scripts/setup_rl.sh` installs it and prints the training command.
 
-Measured on the RTX 5090: 0.61 s per iteration, about 2 hours for the default 10001
-iterations. How many iterations are needed for a usable walk is **unverified**.
+Trained here on 18-19 Nov 2026 (RTX 5090): the default 10001 iterations at about 0.61 s
+each. Result: episodes reach the maximum length (the dog no longer falls), reward for
+tracking linear velocity 0.57 and angular velocity 0.92. Whether fewer iterations would
+do is not known; only the final checkpoint was looked at.
+
+```bash
+bash scripts/setup_rl.sh     # clone and install into third_party/unitree_rl_mjlab/.venv
+cd third_party/unitree_rl_mjlab
+WANDB_MODE=disabled MUJOCO_GL=egl nohup .venv/bin/python scripts/train.py Unitree-Go2-Flat \
+    --env.scene.num-envs=4096 > train.log 2>&1 &
+cd ../.. && pixi run rl-play           # watch the newest checkpoint; --num_envs 9, --viewer viser
+```
+
+Checkpoints and the exported `policy.onnx` land in
+`third_party/unitree_rl_mjlab/logs/rsl_rl/go2_velocity/<date>/` (git-ignored).
+
+`rl-play` opens mjlab's own viewer on MuJoCo Warp (physics on the GPU), with the
+repository's own Go2 model. It is a separate world from `pixi run view`: no balls, no
+event camera. The environment gives the dog random velocity commands; the arrow above it
+shows the current one. Closing the window does not stop the process: Ctrl+C in the
+terminal, or `pkill -f scripts/play.py`.
 
 The trained policy (from `deploy/robots/go2/config/policy/velocity/v0/params/deploy.yaml`):
 
@@ -124,9 +143,33 @@ The trained policy (from `deploy/robots/go2/config/policy/velocity/v0/params/dep
 
 Not integrated into our simulation yet. To do that: run the exported `policy.onnx` at
 50 Hz inside `Go2Sim`, build the 47-number observation, and feed it a velocity command
-(keyboard, or the `Move` request from the bridge). Its Go2 model differs from the
-Menagerie one we use (joint order, default pose, gains), so the safest route is to use
-its `go2.xml` in our scene.
+(keyboard, or the `Move` request from the bridge).
+
+#### Its Go2 model versus the Menagerie one
+
+Compared by loading both files in MuJoCo (19 Nov 2026). The robot is the same: total
+mass 15.206 kg, same bodies and inertias, same 12 joints in the same order (FL, FR, RL,
+RR; hip, thigh, calf), same joint limits, same meshes, same 23 collision shapes. The
+`unitree_rl_mjlab` file looks like the Menagerie file with the control parts stripped
+out, which its Python code then adds back differently:
+
+| | Menagerie `go2.xml` (our simulator) | `unitree_rl_mjlab` |
+|---|---|---|
+| Actuators in the XML | 12 torque motors, limits 23.7 / 23.7 / 45.43 N·m | none; position actuators added in Python, limits 23.5 / 23.5 / 45 N·m |
+| Joint control | our own PD in `Go2Sim`: kp 60, kd 3 | kp 20 / 20 / 40, kd 1 / 1 / 2 |
+| Joint damping, friction loss | 2.0 and 0.2 on every joint | 0 and 0 |
+| Rotor inertia (armature) | 0.01 | 0.01, calf 0.02 |
+| Foot friction | 0.6 | 1.0 in the XML, set to 0.6 by its config |
+| Friction cone | elliptic | pyramidal |
+| Sensors | none | IMU (angular velocity, linear velocity, acceleration) |
+| Standing pose | keyframe: hips 0, thigh 0.9, calf -1.8, base at 0.27 m | hips +-0.1, thigh 0.9, calf -1.8, base at 0.32 m |
+| Physics engine | MuJoCo on the CPU | MuJoCo Warp on the GPU |
+
+What this means for running the policy in our simulator: the body matches, but the policy
+learned with soft gains and joints without passive damping. Putting it on the Menagerie
+model as it is (damping 2.0, our kp 60) would change how the legs respond, and the walk
+may degrade or fail. The safer route is to load its `go2.xml` and reproduce its gains.
+Not tried.
 
 This policy is low-level control: on a real robot it replaces sport mode. We do not plan
 to deploy it; it only makes the simulated dog respond to `Move` like the real one would.
