@@ -69,10 +69,9 @@ class PerceptionNode(Node):
             # Median background with a wide margin: a short movement during calibration
             # must not push the threshold out of reach.
             thr = self.detector.calibrate(np.stack(self._calib), margin=3.0, percentile=50.0)
-            self._calib = []
             self.get_logger().info(f"simple detector calibrated on {len(self._calib)} idle windows: "
                                    f"threshold {thr:.0f} events")
-            self.calibrate_s = 0.0
+            self.calibrate_s, self._calib = 0.0, []
         start = time.perf_counter()
         decision = self.detector.predict(window)
         out = ReflexDecision()
