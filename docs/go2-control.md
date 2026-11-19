@@ -182,14 +182,16 @@ explained the shortfall. `Go2Sim` now switches to the training contact model in 
 mode and back in `pose` mode. Sideways and backward stay below the command; that part
 is probably the policy itself (not verified against its own simulator).
 
-The closed-loop run below was made before this fix.
+Closed loop with sidesteps (SNN, 300 ms actuation delay), two runs of 12 shots:
 
-Closed loop with sidesteps, one run of 12 shots with the SNN and 300 ms actuation delay:
-8 of 9 balls answered on the correct side, 1 wrong side, 0 missed; 3 of 3 negatives
-(balls that miss) triggered a reaction. That is worse on negatives than the posture-only
-run (2 of 3), but the shots are not the same ones and 12 is too few to conclude anything.
-One known difference: after walking back, the dog stands within 6 cm and 3.4 degrees of
-its spot, not exactly on it.
+| Run | Balls | Correct side | Wrong side | Missed | Negatives that triggered |
+|---|---|---|---|---|---|
+| Before the contact fix | 9 | 8 | 1 | 0 | 3 of 3 (balls that miss) |
+| After the contact fix | 12 | 11 | 1 | 0 | none drawn in this run |
+
+The shots differ between runs (the random sequence depends on timing), and 12 is too
+few to conclude anything; the second run says nothing about false triggers. After
+walking back, the dog stands within 6 cm and 3.4 degrees of its spot, not exactly on it.
 
 #### MuJoCo and MuJoCo Warp
 
