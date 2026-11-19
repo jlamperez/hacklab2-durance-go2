@@ -8,42 +8,138 @@ Pipeline: **events → SNN → reflex decision → Go2 sport-mode command over R
 Main reflex: goalkeeper / dodge. The network classifies a fast-approaching object as
 `none / left / center / right`; the dog either blocks it or steps out of the way.
 
+## How it fits together
+
+```
+ EVENT SOURCE               PERCEPTION                  BEHAVIOR                    ROBOT
+ simulator (MuJoCo)   ->    SNN  or                ->   state machine        ->     simulated Go2
+ webcam stand-in            no-learning detector        + safety limits             (real Go2: same message)
+ real event camera
+        /reflex/events_window       /reflex/decision          /api/sport/request
+        50 ms of events             none/left/center/right    Unitree sport-mode command
+```
+
+Four boxes joined by three ROS 2 topics. Each box can be swapped without touching the
+others: that is how the same code runs fully simulated on one PC, with the camera side on
+a Kria board, and (the plan for the hackathon) with the real camera and the real dog.
+
+Two loops around that pipeline:
+
+- **Data and training**: simulate or record takes -> look at them -> train or fine-tune
+  the SNN -> evaluate.
+- **Running**: start an event source, perception, behavior and a robot.
+
 ## Status
 
-Everything so far is simulation. Nothing has run on the real robot, the real event
-camera or Durance's toolchain.
+Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 
 | Part | State |
 |---|---|
-| Python environment (pixi, MuJoCo, PyTorch) | working |
-| Event-camera emulator (contrast-threshold model, randomized) | working, tested |
-| MuJoCo scene: standing Go2, ball launcher, head camera | working, tested |
-| ROS 2 Humble environment (RoboStack, CycloneDDS) | working; Unitree messages build and import |
-| Sport-mode `api_id` table, checked against Unitree's client | done, tested; not tried on a robot |
+| Event-camera emulator, MuJoCo scene with ball launcher and head camera | working, tested |
 | Synthetic dataset with hard negatives (miss, crossing, slow, walker, idle) | working, tested |
-| SNN (23.7k parameters, plain PyTorch) and training | trains in ~90 s; 81 % window accuracy on held-out simulated episodes |
+| SNN (26.5k parameters, plain PyTorch) and training | trains in ~90 s; 81 % window accuracy on held-out simulated episodes |
 | No-learning detector and reflex state machine | working, tested |
-| Closed loop over ROS 2 in simulation (bridge + perception + behavior) | working; see results below |
+| Sport-mode `api_id` table, checked against Unitree's client | done, tested; not tried on a robot |
+| Closed loop over ROS 2 in simulation | working; results below |
+| Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
+| Recording, labelling and fine-tuning on recorded data | working with webcam takes; not yet with a real event camera |
+| Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
+| Camera adapter for the real sensor, SNN on the FPGA (RIVERLib), real Go2 | not started: blocked on hardware |
 
-## Quick start
+## Commands
+
+Requires [pixi](https://pixi.sh). Two environments: the default one (Python, MuJoCo,
+PyTorch) and `ros` (adds ROS 2 Humble), used as `pixi run -e ros ...`.
+Arguments after a `ros-*` command are `name:=value` pairs.
+
+### Setup (once)
+
+| Command | What it does |
+|---|---|
+| `pixi install -a` | Create both environments |
+| `pixi run setup` | Fetch the Go2 MuJoCo model and Unitree's ROS 2 messages into `third_party/` |
+| `pixi run -e ros ros-build` | Build the ROS 2 workspace. Again after changing messages or adding nodes |
+| `pixi run test` | Unit tests (no ROS needed) |
+
+### Look at the simulator (no ROS)
+
+| Command | What it does |
+|---|---|
+| `pixi run view` | 3D window with balls rolling at the dog. Pose keys: X stand, C crouch, Q / E lean left / right |
+| `pixi run drive` | Same window, dog walks: arrows = speed and turn, A / D sidestep, SPACE stop |
+| `pixi run sim` | Write `out/demo.mp4`: third person, dog-eye view, emulated events |
+
+### Data and training
+
+| Command | What it does |
+|---|---|
+| `pixi run gen-data` | 2000 simulated episodes -> `data/synth` (about 10 min, 63 MB) |
+| `pixi run train` | Train the SNN on `data/synth` -> `out/models/snn.pt` |
+| `pixi run eval` | SNN versus the no-learning detector on the same held-out windows |
+| `pixi run view-data PATH` | Browse a dataset folder, or play an event recording. `--label left`, `--kind crossing`, `--sheet out/x.png` |
+| `pixi run -e ros ros-record session:=NAME` | Record labelled takes from the live stream -> `data/real/NAME` |
+| `pixi run build-real data/real/*` | Recorded takes -> training set `data/real_ds` (labels derived from the arrival mark) |
+| `pixi run finetune-real --val-session NAME` | Build + fine-tune the SNN on recorded data -> `out/models/snn_real.pt` |
+
+### Run the loop over ROS 2
+
+| Command | What it does |
+|---|---|
+| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple`, `max_shots:=12`, `actuation_delay_ms:=300.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
+| `pixi run -e ros ros-camera` | Camera side only: webcam as stand-in event camera + perception. `mirror:=true` |
+| `pixi run -e ros ros-robot-sim` | Robot side only: behavior + simulated dog in a 3D window |
+| `pixi run -e ros ros-drive` | Simulated dog driven by `/cmd_vel`, converted to the Go2's `Move` command |
+| `pixi run -e ros ros-teleop` | Keyboard that publishes `/cmd_vel` (second terminal, with `ros-drive`) |
+| `pixi run -e ros ros-shell` | Shell with ROS 2 ready, for `ros2 topic echo`, `rqt_graph`, ... |
+
+### Kria board
+
+| Command | What it does |
+|---|---|
+| `scripts/sync_kria.sh ubuntu@kria.local` | Copy the code to the board and build its Docker image |
+| `ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 reflex-kria` | Run the camera side on the board |
+
+### Optional extra
+
+| Command | What it does |
+|---|---|
+| `bash scripts/setup_rl.sh` | Install unitree_rl_mjlab (to retrain the walking policy; the trained one is in `models/`) |
+| `pixi run rl-play` | Watch the walking policy in its own simulator |
+
+## Typical sessions
+
+Everything simulated, one terminal:
 
 ```bash
-pixi install
-pixi run setup   # fetches the Go2 MuJoCo model and Unitree's ROS 2 messages
-pixi run test
-pixi run gen-data # 2000 simulated episodes -> data/synth (about 10 min, 63 MB)
-pixi run train    # trains the SNN -> out/models/snn.pt
-pixi run eval     # SNN vs the no-learning detector on the same held-out windows
-pixi run view-data data/synth   # browse dataset windows; also plays raw event recordings (.npz)
-pixi run sim     # writes out/demo.mp4: third person, dog-eye RGB, emulated events
-pixi run -e ros ros-build   # build the ROS 2 workspace (once, and after changing messages)
-pixi run -e ros ros-sim max_shots:=12 record:=out/loop.mp4   # closed loop over ROS 2
-pixi run view    # interactive 3D window (needs a display); keys X/C/Q/E change the pose
+pixi run -e ros ros-sim max_shots:=12 record:=out/loop.mp4
 ```
 
-Requires [pixi](https://pixi.sh). The default environment is Python only; ROS 2 Humble
-lives in a separate environment (`pixi run -e ros ...`). Build the ROS 2 workspace with
-`pixi run -e ros ros-build`.
+Camera on the Kria, robot simulated on the PC:
+
+```bash
+ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 reflex-kria   # terminal 1
+pixi run -e ros ros-robot-sim                                                             # terminal 2
+```
+
+Record real takes and fine-tune (camera side running as above):
+
+```bash
+pixi run -e ros ros-record session:=sat_am     # l / c / r / n start a take, SPACE = ball arrived
+pixi run view-data data/real_ds                # after: pixi run build-real data/real/*
+pixi run finetune-real --val-session sat_pm
+pixi run -e ros ros-robot-sim                  # and the camera side with detector:=snn model:=out/models/snn_real.pt
+```
+
+## Documentation
+
+| File | Contents |
+|---|---|
+| `docs/real-robot.md` | What is left before the real robot, first hour with it, the Kria rehearsal and its results |
+| `docs/recording.md` | Recording takes, the labelling rule, fine-tuning |
+| `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
+| `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
+| `docs/questions-for-durance.md` | What to ask at the opening |
+| `CLAUDE.md` | Rules and architecture notes for working on this repository with an agent |
 
 ## First results (simulation only)
 
@@ -83,14 +179,7 @@ starts moving; 300 ms is a guess to be replaced by a measurement on the real Go2
 From newest event to request on the wire: about 6-10 ms of simulated time, with the
 simulation running slower than real time, so this is not a latency claim.
 
-## Towards the real robot
+## Other results
 
-`docs/real-robot.md` lists what is left before this runs on a Go2, and a rehearsal that
-needs no Durance hardware: a Kria board with a webcam (emulated event camera) sending
-decisions over ROS 2 to the simulated dog on a PC. Tested on one PC only so far.
-
-## Optional: a dog that walks
-
-`pixi run drive` opens the simulator with a learned walking policy: arrow keys drive the
-dog. `pixi run -e ros ros-drive` plus `ros-teleop` does the same through ROS 2 and the
-Go2's `Move` command. Off by default; see `docs/go2-control.md`.
+- Kria + webcam rehearsal: `docs/real-robot.md`.
+- Walking policy, speed tracking and the closed loop with sidesteps: `docs/go2-control.md`.
