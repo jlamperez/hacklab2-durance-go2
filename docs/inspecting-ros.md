@@ -44,10 +44,6 @@ Nodes and topics (`Nodes/Topics (all)` in the drop-down):
 
 ![rqt_graph, nodes and topics](img/rqt_graph_topics.png)
 
-These screenshots show an arrow from `go2_sim_bridge` to `/reflex/events_window`. It was
-a leftover: in robot-only mode the bridge created that publisher without ever using it.
-Fixed since; the only source of event windows here is `event_camera_webcam`.
-
 In the drop-down, `Nodes only` shows nodes joined by topic names; `Nodes/Topics (all)`
 draws topics as boxes. Untick `Debug` to see `/rosout` and `/parameter_events`. The
 refresh button redraws after nodes start or stop.
