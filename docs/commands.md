@@ -76,7 +76,8 @@ Arguments (defaults in brackets):
 - `ros-sim`: `detector:=snn|simple` [snn], `max_shots:=N` [0, endless], `negative_fraction:=0.3`,
   `actuation_delay_ms:=300.0`, `record:=out/x.mp4`, `mode:=keeper|dodge`,
   `reaction:=euler|move`, `locomotion:=none|rl`, `move_vy:=0.3`, `hold_s:=0.6`,
-  `shot_period_s:=3.0`, `seed:=0`, `randomize:=false`.
+  `shot_period_s:=3.0`, `seed:=0`, `randomize:=false`, `viewer:=false` (true: also open the
+  MuJoCo window; by default it runs with no window and you watch it with `ros-web`).
 - `ros-camera`: `device:=0` (camera number), `detector:=simple|snn` [simple], `mirror:=false`,
   `fps:=30.0`, `contrast_threshold:=0.25`, `calibrate_s:=3.0`.
 - `ros-robot-sim`: `viewer:=true` (false: no MuJoCo window), `reaction:=euler|move`,
@@ -218,6 +219,7 @@ camera on, the simulation runs at about 70 % of real time.
 
 | Symptom | Cause |
 |---|---|
+| the dog reacts to nothing you did, shots are scored oddly, latency shows absurd numbers | two launchers running at once (e.g. `ros-sim` while `ros-drive` is still open): they share topics. Stop one, or give one of them another network: `ROS_DOMAIN_ID=7 pixi run -e ros ros-sim` |
 | `ros2: command not found`, `pixi: command not found` on the Kria | not inside `ros-shell`; on the Kria use `~/.pixi/bin/pixi` and `-e kria` |
 | `cannot open camera 0` | no camera on that machine, or another number: `device:=2` |
 | the dog does not react | no camera source running; simple detector calibrated while something moved (call `/reflex/recalibrate`); reflexes `enabled:=false` |

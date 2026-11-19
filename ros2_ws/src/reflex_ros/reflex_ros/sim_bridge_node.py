@@ -63,7 +63,7 @@ class SimBridge(Node):
         # robot_only: act as the robot and nothing else. No simulated camera, no balls, no
         # /clock: events come from somewhere else (a webcam node, a Kria board) in real time.
         self.robot_only = bool(p("robot_only", False).value)
-        self.use_viewer = bool(p("viewer", False).value)       # 3D window; robot_only mode only
+        self.use_viewer = bool(p("viewer", False).value)       # MuJoCo 3D window (needs MUJOCO_GL=glfw)
         # camera: in robot_only mode, also publish what the dog's simulated event camera sees
         # (for driving it around and watching the events). Always on outside robot_only.
         self.camera = bool(p("camera", False).value) or not self.robot_only
@@ -113,7 +113,7 @@ class SimBridge(Node):
         self.results = []
         self.latencies_ms = []
         self.writer = None
-        if self.robot_only and self.use_viewer:
+        if self.use_viewer:
             import mujoco.viewer
             self.viewer = mujoco.viewer.launch_passive(self.sim.model, self.sim.data)
             self.viewer.cam.lookat[:] = [0.0, 0.0, 0.25]
@@ -261,13 +261,12 @@ class SimBridge(Node):
             x, y, h = sim.base_pose()
             self.get_logger().info(f"dog at x {x:+.2f} m, y {y:+.2f} m, heading {np.degrees(h):+.0f} deg; "
                                    f"command {sim.command.round(2).tolist()}")
-        if self.robot_only:
-            if self.viewer is not None and self.steps % 8 == 0:
-                if not self.viewer.is_running():
-                    os._exit(0)      # window closed; MuJoCo's viewer teardown is unsafe, leave directly
-                self.viewer.sync()
-            if not self.camera:
-                return
+        if self.viewer is not None and self.steps % 8 == 0:
+            if not self.viewer.is_running():
+                os._exit(0)      # window closed; MuJoCo's viewer teardown is unsafe, leave directly
+            self.viewer.sync()
+        if not self.camera:
+            return
         eye = sim.render_eye()
         t_us = int(sim.time * 1e6)
         self.recent.append(self.emu.step(to_gray(eye), t_us))

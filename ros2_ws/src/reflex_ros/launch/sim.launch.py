@@ -2,6 +2,7 @@
 
     ros2 launch reflex_ros sim.launch.py detector:=snn max_shots:=20
     ros2 launch reflex_ros sim.launch.py detector:=simple actuation_delay_ms:=200
+    ros2 launch reflex_ros sim.launch.py viewer:=true          # also open the MuJoCo window
 
 Run from the repository root so the relative model path resolves.
 """
@@ -9,6 +10,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, RegisterEventHandler, Shutdown
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration as LC
+from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue as PV
 
@@ -17,7 +19,7 @@ ARGS = {
     "reaction": "euler", "actuation_delay_ms": "300.0", "max_shots": "0", "shot_period_s": "3.0",
     "negative_fraction": "0.3", "record": "", "seed": "0", "randomize": "false",
     "min_confidence": "0.6", "consecutive": "2", "locomotion": "none", "move_vy": "0.3", "hold_s": "0.6",
-    "scene": "lab",
+    "scene": "lab", "viewer": "false",
 }
 
 
@@ -29,8 +31,10 @@ def generate_launch_description():
         "negative_fraction": PV(LC("negative_fraction"), value_type=float),
         "record": PV(LC("record"), value_type=str), "seed": PV(LC("seed"), value_type=int),
         "randomize": PV(LC("randomize"), value_type=bool), "mode": LC("mode"), "locomotion": LC("locomotion"),
-        "scene": LC("scene"),
-    }])
+        "scene": LC("scene"), "viewer": PV(LC("viewer"), value_type=bool),
+    }],
+        # The MuJoCo window needs a windowed GL context; without it, render off screen.
+        additional_env={"MUJOCO_GL": PythonExpression(["'glfw' if '", LC("viewer"), "' == 'true' else 'egl'"])})
     perception = Node(package="reflex_ros", executable="perception", output="screen", parameters=[{
         "use_sim_time": True, "detector": LC("detector"), "model": LC("model"), "device": LC("device"),
     }])
