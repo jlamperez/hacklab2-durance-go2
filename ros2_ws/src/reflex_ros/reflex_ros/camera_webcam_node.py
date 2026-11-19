@@ -34,6 +34,8 @@ class WebcamEventCamera(Node):
         device = p("device", 0).value
         fps = float(p("fps", 30.0).value)
         contrast = float(p("contrast_threshold", 0.25).value)
+        # mirror: flip left/right, for a webcam that faces the person (selfie view).
+        self.mirror = bool(p("mirror", False).value)
         self.cfg = WindowConfig()
         self.cap = cv2.VideoCapture(int(device), cv2.CAP_V4L2)
         # Ask for compressed frames: uncompressed, a USB 2 port limits many webcams to 7.5 fps.
@@ -61,6 +63,8 @@ class WebcamEventCamera(Node):
         if not ok:
             return None
         t_us = self.get_clock().now().nanoseconds // 1000
+        if self.mirror:
+            frame = frame[:, ::-1]
         gray = cv2.cvtColor(cv2.resize(frame, (self.cfg.width, self.cfg.height), interpolation=cv2.INTER_AREA),
                             cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
         return self.emu.step(gray, t_us), t_us

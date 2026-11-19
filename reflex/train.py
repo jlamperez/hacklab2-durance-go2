@@ -27,7 +27,8 @@ def load_shards(data_dir: str | Path) -> tuple[dict, dict]:
     parts = [np.load(p) for p in sorted(data_dir.glob("shard_*.npz"))]
     if not parts:
         raise FileNotFoundError(f"no shards in {data_dir}; run `pixi run gen-data` first")
-    data = {k: np.concatenate([p[k] for p in parts]) for k in ("x", "y", "episode", "kind")}
+    keys = ("x", "y", "episode", "kind") + (("session",) if all("session" in p for p in parts) else ())
+    data = {k: np.concatenate([p[k] for p in parts]) for k in keys}
     return data, meta
 
 
@@ -72,6 +73,8 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--val-frac", type=float, default=0.15)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--val-session", default=None,
+                    help="recorded data: hold out this whole session for validation instead of random clips")
     ap.add_argument("--init", default=None, help="checkpoint to start from (fine-tuning)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
@@ -80,6 +83,13 @@ def main() -> None:
     data, meta = load_shards(args.data)
     labels, kinds = meta["labels"], meta["kinds"]
     tr, va = split_by_episode(data["episode"], args.val_frac, args.seed)
+    held_out = "held-out SIMULATED episodes; says nothing about the real camera"
+    if args.val_session:
+        va = data["session"] == meta["sessions"].index(args.val_session)
+        tr = ~va
+        held_out = f"recorded session '{args.val_session}', never trained on"
+    elif "sessions" in meta:
+        held_out = "held-out recorded clips from the same sessions as training (optimistic)"
     x = torch.from_numpy(data["x"])
     y = torch.from_numpy(data["y"])
     kind = torch.from_numpy(data["kind"])
@@ -125,7 +135,7 @@ def main() -> None:
               f"wrong side {res['wrong_side']:.3f}")
     res = evaluate(model, xva, yva, kva, labels, kinds, args.device)
     res.update(train_seconds=time.time() - t0, parameters=count_parameters(model),
-               validation="held-out SIMULATED episodes; says nothing about the real camera")
+               validation=held_out)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": model.state_dict(), "model_cfg": cfg.to_dict(), "labels": labels,

@@ -24,6 +24,8 @@ pixi run test           # unit tests
 pixi run gen-data       # synthetic dataset -> data/synth
 pixi run train          # train the SNN -> out/models/snn.pt
 pixi run eval           # SNN vs simple detector on held-out windows
+pixi run build-real data/real/*   # recorded sessions -> data/real_ds
+pixi run finetune-real  # build + fine-tune the SNN on recorded data -> out/models/snn_real.pt
 pixi run view-data PATH # look inside a dataset folder or an event recording; --sheet/--video save files
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
@@ -34,6 +36,7 @@ pixi run -e ros ros-sim     # closed loop over ROS 2 in simulation; args: detect
 pixi run -e ros ros-camera     # camera side: webcam as stand-in event camera + perception
 pixi run -e ros ros-robot-sim  # robot side: behavior + MuJoCo dog acting only as the robot
 pixi run -e ros ros-drive      # drive the walking dog over ROS 2; second terminal: ros-teleop
+pixi run -e ros ros-record session:=NAME   # record labelled takes from the live stream (docs/recording.md)
 pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rqt commands
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
 ```

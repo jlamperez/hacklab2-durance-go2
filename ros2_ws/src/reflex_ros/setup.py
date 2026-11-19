@@ -22,6 +22,7 @@ setup(
             "sim_bridge = reflex_ros.sim_bridge_node:main",
             "camera_webcam = reflex_ros.camera_webcam_node:main",
             "cmd_vel_to_sport = reflex_ros.cmd_vel_to_sport_node:main",
+            "recorder = reflex_ros.recorder_node:main",
         ],
     },
 )

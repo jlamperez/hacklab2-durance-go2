@@ -20,8 +20,8 @@ camera -> [camera adapter] -> /reflex/events_window
 |---|---|---|---|
 | Camera adapter | Template only: `camera_webcam_node.py` (webcam + emulator) | Replace `read_events` with the real sensor's SDK; keep windowing and publishing | Camera model, SDK, event format |
 | Perception node | Works with `snn` (PyTorch) and `simple` | Third detector backend that runs the network on the FPGA | RIVERLib |
-| Network | Trained on simulated events only | Fine-tune on real recordings; port to RIVERLib; `pixi run finetune-real` not written yet | Real data, RIVERLib layer support |
-| Recording and labelling tool | Not written | Record events to `.npz` by session, label threat / side | Camera adapter |
+| Network | Trained on simulated events only | Fine-tune on real recordings (`pixi run finetune-real`); port to RIVERLib | Real data, RIVERLib layer support |
+| Recording and labelling tool | `ros-record`, `build-real`, `finetune-real` written and tested on the simulator stream (`docs/recording.md`) | Try with real takes; it records the windows the adapter publishes, not raw events | Camera adapter |
 | Behavior node | Done, tested against the simulator | No code. Check on the robot: Euler roll sign, which states accept each command | Robot |
 | Launch for the real setup | `camera.launch.py` (camera side) exists; behavior runs alone with `ros2 run reflex_ros behavior` | A `real.launch.py` once the camera adapter exists | - |
 | Network / DDS | Kria <-> PC works over CycloneDDS (19 Nov) | Kria, laptop and Go2 on the same network (Go2: `192.168.123.x` over Ethernet, CycloneDDS). RoboStack's CycloneDDS against the Go2 is unverified | Robot |
