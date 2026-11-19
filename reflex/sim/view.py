@@ -97,6 +97,10 @@ def main() -> None:
             viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
             viewer.cam.trackbodyid = sim.model.body("base").id
             viewer.cam.distance, viewer.cam.azimuth = 3.0, 150
+        # The viewer has its own shortcuts on the same letters (A: auto-connect, D: hide
+        # static bodies, C: contact points). They cannot be disabled, so its display
+        # options are put back every frame.
+        vis_flags = viewer.opt.flags.copy()
         wall_start = time.perf_counter()
         sim_start = sim.time
         while viewer.is_running():
@@ -120,6 +124,8 @@ def main() -> None:
                     print(f"t = {sim.time:5.1f} s  shot: {shot.label:6s} {shot.speed:.1f} m/s  r = {shot.radius * 100:.0f} cm", flush=True)
                     next_shot = sim.time + args.period
                 sim.step()
+            with viewer.lock():
+                viewer.opt.flags[:] = vis_flags
             viewer.sync()
             time.sleep(0.002)
         # MuJoCo 4.0.1 segfaults while tearing the passive viewer down (its render
