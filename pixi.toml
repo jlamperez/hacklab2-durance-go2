@@ -28,6 +28,7 @@ sim = "python -m reflex.sim.demo"
 gen-data = "python -m reflex.data.generate"
 train = "python -m reflex.train"
 eval = "python -m reflex.eval"
+rl-play = "bash scripts/play_rl.sh"   # optional: watch the RL walking policy (third_party/unitree_rl_mjlab)
 view-data = "python -m reflex.viz.view_npz"
 view = { cmd = "python -m reflex.sim.view", env = { MUJOCO_GL = "glfw" } }
 
