@@ -83,3 +83,16 @@ def test_dodge_mode_moves_away_from_the_ball():
 def test_every_behavior_is_a_pose_the_simulator_knows():
     for mode in BEHAVIORS.values():
         assert set(mode.values()) <= set(POSES)
+
+
+def test_simple_calibration_can_ignore_a_burst_of_movement():
+    import numpy as np
+
+    from reflex.runtime.detectors import SimpleDetector
+    rng = np.random.default_rng(0)
+    quiet = (rng.random((30, 10, 2, 45, 80)) < 0.002).astype(np.uint8)
+    busy = np.full((5, 10, 2, 45, 80), 3, dtype=np.uint8)
+    windows = np.concatenate([quiet, busy])
+    strict = SimpleDetector().calibrate(windows)
+    robust = SimpleDetector().calibrate(windows, margin=3.0, percentile=50.0)
+    assert robust < strict / 20

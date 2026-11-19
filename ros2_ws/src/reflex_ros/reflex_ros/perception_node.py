@@ -12,6 +12,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from std_srvs.srv import Trigger
 
 from reflex.runtime.detectors import SimpleConfig, SimpleDetector, SNNDetector
 from reflex_msgs.msg import EventWindow, ReflexDecision
@@ -38,9 +39,22 @@ class PerceptionNode(Node):
         else:
             raise ValueError(f"unknown detector {self.kind!r}")
         self._calib, self._t0 = [], None
+        self._calibrate_for = float(self.calibrate_s)
+        if self.kind == "simple":
+            # ros2 service call /reflex/recalibrate std_srvs/srv/Trigger
+            self.create_service(Trigger, "/reflex/recalibrate", self.on_recalibrate)
+            if self.calibrate_s > 0:
+                self.get_logger().info(f"calibrating: keep the scene still for {self.calibrate_s + 1.0:.0f} s")
         self.pub = self.create_publisher(ReflexDecision, "/reflex/decision", 10)
         self.sub = self.create_subscription(EventWindow, "/reflex/events_window", self.on_window,
                                             qos_profile_sensor_data)
+
+    def on_recalibrate(self, request, response):
+        self._calib, self._t0, self.calibrate_s = [], None, max(self._calibrate_for, 2.0)
+        response.success = True
+        response.message = f"calibrating: keep the scene still for {self.calibrate_s + SETTLE_S:.0f} s"
+        self.get_logger().info(response.message)
+        return response
 
     def on_window(self, msg: EventWindow) -> None:
         window = np.frombuffer(bytes(msg.data), dtype=np.uint8).reshape(
@@ -48,10 +62,14 @@ class PerceptionNode(Node):
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         if self.kind == "simple" and self.calibrate_s > 0:
             self._t0 = t if self._t0 is None else self._t0
-            if t - self._t0 < self.calibrate_s:
-                self._calib.append(window)
+            if t - self._t0 < SETTLE_S + self.calibrate_s:
+                if t - self._t0 >= SETTLE_S:     # the first second is skipped: cameras settle
+                    self._calib.append(window)
                 return
-            thr = self.detector.calibrate(np.stack(self._calib))
+            # Median background with a wide margin: a short movement during calibration
+            # must not push the threshold out of reach.
+            thr = self.detector.calibrate(np.stack(self._calib), margin=3.0, percentile=50.0)
+            self._calib = []
             self.get_logger().info(f"simple detector calibrated on {len(self._calib)} idle windows: "
                                    f"threshold {thr:.0f} events")
             self.calibrate_s = 0.0
@@ -62,6 +80,9 @@ class PerceptionNode(Node):
         out.label, out.confidence, out.detector = decision.label, float(decision.confidence), self.kind
         out.inference_ms = float((time.perf_counter() - start) * 1e3)
         self.pub.publish(out)
+
+
+SETTLE_S = 1.0
 
 
 def main():

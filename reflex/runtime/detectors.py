@@ -48,13 +48,15 @@ class SimpleDetector:
         cols = zone.astype(np.float32).sum(axis=(0, 1, 2))          # events per column
         return np.array([c.sum() for c in np.array_split(cols, 3)])  # left, center, right
 
-    def calibrate(self, idle_windows: np.ndarray, margin: float = 1.5) -> float:
+    def calibrate(self, idle_windows: np.ndarray, margin: float = 1.5, percentile: float = 100.0) -> float:
         """Set the threshold above the background seen while nothing happens.
 
-        On Saturday the idle windows come from the real dog standing still.
+        On Saturday the idle windows come from the real dog standing still. `percentile`
+        below 100 ignores the busiest windows, for live calibration where something may
+        move for a moment (someone walking past, a webcam adjusting its exposure).
         """
-        peak = max(float(self._thirds(w).max()) for w in idle_windows)
-        self.cfg.threshold = max(peak * margin, 5.0)
+        peaks = [float(self._thirds(w).max()) for w in idle_windows]
+        self.cfg.threshold = max(float(np.percentile(peaks, percentile)) * margin, 5.0)
         return self.cfg.threshold
 
     def predict(self, window: np.ndarray, t_us: int = 0) -> Decision:
