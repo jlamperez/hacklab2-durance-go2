@@ -120,6 +120,27 @@ ros2 topic echo /reflex/decision                                    # what the d
 
 More in `docs/inspecting-ros.md`.
 
+### Keyboards
+
+There are two, with different letters. One is the 3D window of the simulator, the other
+is a terminal that sends ROS 2 requests (to the simulator or to the real robot).
+
+| Action | 3D window (`view`, `drive`) | Terminal (`ros-tricks`) | In the simulator |
+|---|---|---|---|
+| Sit | `Z` | `s` | imitated |
+| Stand up | `X` | `u` (RiseSit) | imitated |
+| Hello (wave a paw) | `H` | `h` | imitated |
+| Crouch, lean left / right | `C`, `Q`, `E` | – (reflexes, not tricks) | yes |
+| Stretch, Content, Dance1, Dance2, Scrape, Heart | – | `t`, `c`, `1`, `2`, `p`, `e` | ignored with a warning; real robot only |
+| Jumps and flips | – | `J`, `P`, `F`, `L`, `B`, only with `allow_acrobatics:=true` | ignored; real robot only |
+| Stop, balance stand, recovery stand | – | `SPACE`, `b`, `r` | stand |
+| Damp (emergency, the robot drops) | – | `!` | motors limp |
+| Walk | arrows, `A`, `D` (`drive` only) | – (use `ros-teleop`) | yes, with the walking policy |
+
+The 3D window cannot use `S` for sit: MuJoCo's viewer keeps it for shadows. To try the
+tricks over ROS 2, run `pixi run -e ros ros-drive` in one terminal and
+`pixi run -e ros ros-tricks` in another, and press the keys in the second.
+
 ### Kria board
 
 | Command | What it does |
