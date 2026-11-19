@@ -84,7 +84,7 @@ class SimBridge(Node):
         self.clock_pub = self.create_publisher(ClockMsg, "/clock", 10)
         self.win_pub = self.create_publisher(EventWindow, "/reflex/events_window", qos_profile_sensor_data)
         self.out_pub = self.create_publisher(String, "/reflex/sim/outcome", 10)
-        self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", qos_profile_sensor_data)
+        self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", 2)   # reliable: any viewer can subscribe
         self.create_subscription(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
 
         self.pending = []            # (apply_time_s, pose, api name, velocity or None)

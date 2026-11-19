@@ -51,7 +51,7 @@ class WebcamEventCamera(Node):
                                  EmuConfig(c_on=contrast, c_off=contrast, noise_rate_hz=0.0, hot_pixel_frac=0.0))
         self.windower = StreamWindower(self.cfg)
         self.win_pub = self.create_publisher(EventWindow, "/reflex/events_window", qos_profile_sensor_data)
-        self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", qos_profile_sensor_data)
+        self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", 2)   # reliable: any viewer can subscribe
         self.frames, self.events, self.t_report = 0, 0, time.monotonic()
         self.timer = self.create_timer(1.0 / fps, self.on_timer)
         self.get_logger().info(f"webcam {device} at {fps:.0f} fps emulating a {self.cfg.width}x{self.cfg.height} "
