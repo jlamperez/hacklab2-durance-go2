@@ -20,3 +20,18 @@ def test_web_scene_meshes_and_state_roundtrip():
     assert np.allclose(pos, sim.data.xpos, atol=1e-5) and np.allclose(quat, sim.data.xquat, atol=1e-5)
     assert pos.shape == (sim.model.nbody, 3)
     mujoco.mj_forward(sim.model, sim.data)
+
+
+def test_web_scene_park_scenery_is_textured():
+    import numpy as np
+
+    from reflex.sim.scene import build_model
+    from reflex.viz.web_scene import body_meshes, world_meshes
+    model = build_model(np.random.default_rng(0), "park")
+    scenery = world_meshes(model)
+    assert {"grass", "gravel", "bark", "leaves", "brick"} <= set(scenery)
+    grass = scenery["grass"]
+    assert grass.visual.uv.shape == (len(grass.vertices), 2)
+    assert grass.extents[0] > 20                       # the ground plane became a large square
+    assert len(scenery["leaves"].faces) > 1000         # tree crowns (ellipsoids) are drawn
+    assert len(body_meshes(model)[0].faces) > 1000

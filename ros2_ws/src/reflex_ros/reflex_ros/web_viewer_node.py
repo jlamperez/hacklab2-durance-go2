@@ -28,7 +28,7 @@ from std_msgs.msg import Float32, Float32MultiArray, String
 
 from reflex.runtime import sport_api
 from reflex.runtime.detectors import LABELS
-from reflex.viz.web_scene import body_meshes, unpack_state
+from reflex.viz.web_scene import body_meshes, unpack_state, world_meshes
 from reflex_msgs.msg import ReflexDecision
 from unitree_api.msg import Request
 
@@ -110,18 +110,31 @@ class WebViewer(Node):
         from reflex.sim.scene import build_model
         scene = self.server.scene
         scene.set_up_direction("+z")
-        scene.add_grid("/floor", width=20.0, height=20.0, plane="xy", cell_size=0.5, section_size=1.0,
-                       plane_color=(70, 105, 50) if scene_name == "park" else (110, 112, 108),
-                       plane_opacity=1.0, cell_color=(90, 90, 90), section_color=(70, 70, 70))
         model = build_model(np.random.default_rng(seed), scene_name)
         self.handles = {b: scene.add_mesh_trimesh(f"/body/{model.body(b).name or b}", mesh)
                         for b, mesh in body_meshes(model).items()}
         self.scene_note = scene.add_label("/note", "no simulator: 3D scene idle", position=(0.0, 0.0, 0.8))
+        if scene_name == "park":     # textured scenery and a sky instead of the lab's grid
+            del self.handles[0]
+            scene.remove_by_name("/body/world")
+            for name, mesh in world_meshes(model).items():
+                scene.add_mesh_trimesh(f"/scenery/{name}", mesh)
+            sky = np.linspace([115, 166, 235], [204, 222, 242], 64).astype(np.uint8)[:, None, :].repeat(64, 1)
+            scene.set_background_image(sky)
+        else:
+            self._lab_floor(scene)
 
         @self.server.on_client_connect
         def _(client) -> None:       # same viewpoint as the recorded videos
-            client.camera.position = (-1.0, -1.7, 0.9)
-            client.camera.look_at = (0.8, 0.1, 0.2)
+            park = scene_name == "park"      # further back, clear of the goal behind the dog
+            client.camera.position = (-2.3, -1.5, 1.3) if park else (-1.0, -1.7, 0.9)
+            client.camera.look_at = (1.5, 0.2, 0.3) if park else (0.8, 0.1, 0.2)
+
+    @staticmethod
+    def _lab_floor(scene) -> None:
+        scene.add_grid("/floor", width=20.0, height=20.0, plane="xy", cell_size=0.5, section_size=1.0,
+                       plane_color=(110, 112, 108),
+                       plane_opacity=1.0, cell_color=(90, 90, 90), section_color=(70, 70, 70))
 
     # --- topics: keep the newest, draw in refresh() --------------------------------------
     def on_image(self, msg: Image) -> None:

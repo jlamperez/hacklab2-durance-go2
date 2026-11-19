@@ -49,7 +49,88 @@ def _geom_mesh(model: mujoco.MjModel, g: int):
         return trimesh.creation.capsule(radius=float(size[0]), height=2 * float(size[1]))
     if kind == G.mjGEOM_CYLINDER:
         return trimesh.creation.cylinder(radius=float(size[0]), height=2 * float(size[1]))
-    return None     # planes are drawn by the viewer as a grid
+    if kind == G.mjGEOM_ELLIPSOID:
+        mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+        mesh.apply_scale(size)
+        return mesh
+    return None     # planes: see world_meshes (textured) or the viewer's grid
+
+
+def _posed(model: mujoco.MjModel, g: int, mesh):
+    pose = np.eye(4)
+    rot = np.zeros(9)
+    mujoco.mju_quat2Mat(rot, model.geom_quat[g])
+    pose[:3, :3], pose[:3, 3] = rot.reshape(3, 3), model.geom_pos[g]
+    mesh.apply_transform(pose)
+    return mesh
+
+
+def _texture_of(model: mujoco.MjModel, g: int):
+    """(image, repeat) of the geom's material texture, or None if it has no usable one."""
+    mat = int(model.geom_matid[g])
+    if mat < 0 or not np.allclose(model.geom_rgba[g], _DEFAULT_RGBA):
+        return None
+    tex = int(model.mat_texid[mat, mujoco.mjtTextureRole.mjTEXROLE_RGB])
+    if tex < 0 or int(model.tex_nchannel[tex]) != 3:
+        return None
+    h, w, a0 = int(model.tex_height[tex]), int(model.tex_width[tex]), int(model.tex_adr[tex])
+    return model.tex_data[a0:a0 + 3 * h * w].reshape(h, w, 3).copy(), model.mat_texrepeat[mat].copy()
+
+
+def _textured(mesh, image: np.ndarray, repeat):
+    """Give a mesh texture coordinates by projecting each face along its dominant axis
+    (so many repeats per metre, like MuJoCo's `texuniform`), and attach the image."""
+    import trimesh
+    from PIL import Image
+    tri = np.asarray(mesh.vertices)[np.asarray(mesh.faces)]          # (F, 3, 3)
+    normal = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    axis = np.abs(normal).argmax(1)
+    u_ax, v_ax = np.array([1, 0, 0])[axis], np.array([2, 2, 1])[axis]
+    f = np.arange(len(tri))[:, None]
+    uv = np.stack([tri[f, np.arange(3)[None, :], u_ax[:, None]] * repeat[0],
+                   tri[f, np.arange(3)[None, :], v_ax[:, None]] * repeat[1]], axis=-1).reshape(-1, 2)
+    material = trimesh.visual.material.PBRMaterial(baseColorTexture=Image.fromarray(image), roughnessFactor=1.0,
+                                                   metallicFactor=0.0)
+    return trimesh.Trimesh(tri.reshape(-1, 3), np.arange(3 * len(tri)).reshape(-1, 3), process=False,
+                           visual=trimesh.visual.TextureVisuals(uv=uv, material=material))
+
+
+def world_meshes(model: mujoco.MjModel, groups=VISUAL_GROUPS, floor_half: float = 30.0) -> dict:
+    """The static scenery (geoms of the world body) as {name: mesh}, one mesh per texture so
+    the browser shows the same grass, bricks and bark as MuJoCo. Shapes without a texture
+    are merged into one plain-coloured mesh. Planes become a textured square."""
+    import trimesh
+    G = mujoco.mjtGeom
+    by_tex: dict[int, list] = {}
+    info: dict[int, tuple] = {}
+    plain = []
+    for g in range(model.ngeom):
+        if int(model.geom_bodyid[g]) != 0 or int(model.geom_group[g]) not in groups:
+            continue
+        tex = _texture_of(model, g)
+        if int(model.geom_type[g]) == G.mjGEOM_PLANE:
+            if tex is None:
+                continue
+            mesh = trimesh.creation.box(extents=[2 * floor_half, 2 * floor_half, 0.002])
+            mesh.apply_translation([0, 0, -0.001])
+        else:
+            mesh = _geom_mesh(model, g)
+            if mesh is None:
+                continue
+        mesh = _posed(model, g, mesh)
+        if tex is None:
+            colour = (np.clip(geom_rgba(model, g), 0, 1) * 255).astype(np.uint8)
+            mesh.visual = trimesh.visual.ColorVisuals(mesh, vertex_colors=np.tile(colour, (len(mesh.vertices), 1)))
+            plain.append(mesh)
+        else:
+            mat = int(model.geom_matid[g])
+            by_tex.setdefault(mat, []).append(mesh)
+            info[mat] = tex
+    out = {model.material(m).name or f"material{m}": _textured(trimesh.util.concatenate(parts), *info[m])
+           for m, parts in by_tex.items()}
+    if plain:
+        out["plain"] = plain[0] if len(plain) == 1 else trimesh.util.concatenate(plain)
+    return out
 
 
 def body_meshes(model: mujoco.MjModel, groups=VISUAL_GROUPS) -> dict:
@@ -62,11 +143,7 @@ def body_meshes(model: mujoco.MjModel, groups=VISUAL_GROUPS) -> dict:
         mesh = _geom_mesh(model, g)
         if mesh is None:
             continue
-        pose = np.eye(4)
-        rot = np.zeros(9)
-        mujoco.mju_quat2Mat(rot, model.geom_quat[g])
-        pose[:3, :3], pose[:3, 3] = rot.reshape(3, 3), model.geom_pos[g]
-        mesh.apply_transform(pose)
+        mesh = _posed(model, g, mesh)
         colour = (np.clip(geom_rgba(model, g), 0, 1) * 255).astype(np.uint8)
         mesh.visual = trimesh.visual.ColorVisuals(mesh, vertex_colors=np.tile(colour, (len(mesh.vertices), 1)))
         parts.setdefault(int(model.geom_bodyid[g]), []).append(mesh)

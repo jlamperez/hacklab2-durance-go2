@@ -89,7 +89,8 @@ Arguments (defaults in brackets):
 Scenery: `ros-sim`, `ros-robot-sim` and `ros-drive` take `scene:=lab|park` [lab]. `park` is
 an outdoor scene built from code (grass, a gravel path, trees, benches, a brick wall, houses);
 see `reflex/sim/scenery.py`. Give `ros-web` the same value (`ros-web scene:=park`) or it draws
-the lab. The plain commands take it as `--scene park` (`pixi run view --scene park`, also
+the lab. The browser shows the same textures, but with its own lighting and no shadows, so it
+does not look identical to MuJoCo. The plain commands take it as `--scene park` (`pixi run view --scene park`, also
 `drive` and `sim`). The network was trained on the lab scene only: in the park it scored
 5 of 9 balls where the lab gave 9 of 9 (one run of 12 shots each), so the README numbers
 are lab numbers.
