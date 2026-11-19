@@ -71,7 +71,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 
 | Command | What it does |
 |---|---|
-| `pixi run view` | 3D window with balls rolling at the dog. Pose keys: X stand, C crouch, Q / E lean left / right |
+| `pixi run view` | 3D window with balls rolling at the dog. Pose keys: X stand, C crouch, Q / E lean left / right, Z sit, H hello |
 | `pixi run drive` | Same window, dog walks: arrows = speed and turn, A / D sidestep, SPACE stop |
 | `pixi run sim` | Write `out/demo.mp4`: third person, dog-eye view, emulated events |
 
@@ -96,6 +96,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 | `pixi run -e ros ros-robot-sim` | Robot side only: behavior + simulated dog in a 3D window |
 | `pixi run -e ros ros-drive` | Simulated dog driven by `/cmd_vel`, converted to the Go2's `Move` command |
 | `pixi run -e ros ros-teleop` | Keyboard that publishes `/cmd_vel` (second terminal, with `ros-drive`) |
+| `pixi run -e ros ros-tricks` | Keyboard for the Go2's built-in tricks (Hello, Sit, Stretch, dances; flips only with `allow_acrobatics:=true`). The simulator imitates Sit and Hello |
 | `pixi run -e ros ros-shell` | Shell with ROS 2 ready, for `ros2 topic echo`, `rqt_graph`, ... |
 
 Which command plays which part. The simulator can be the camera and the robot at once,

@@ -37,6 +37,7 @@ pixi run -e ros ros-camera     # camera side: webcam as stand-in event camera + 
 pixi run -e ros ros-robot-sim  # robot side: behavior + MuJoCo dog acting only as the robot
 pixi run -e ros ros-drive      # drive the walking dog over ROS 2; second terminal: ros-teleop
 pixi run -e ros ros-record session:=NAME   # record labelled takes from the live stream (docs/recording.md)
+pixi run -e ros ros-tricks     # keyboard for built-in tricks (Hello, Sit, ...); acrobatics off by default
 pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rqt commands
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
 ```

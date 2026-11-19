@@ -64,11 +64,41 @@ to Unitree's header. Commands used or likely to be used:
 | `Move` | 1008 | Walk (vx, vy, vyaw) |
 | `Hello` | 1016 | Wave |
 
-Acrobatics present in the header, not in our table: `FrontFlip` 1030, `FrontJump` 1031,
-`FrontPounce` 1032, `LeftFlip` 2041, `BackFlip` 2043, `HandStand` 2044. Whether the Go2 X
-at the hackathon has them enabled is **unverified**. They are unsuitable as reflexes
-(slow, unsafe near people, the camera sees the ceiling) but could work as a celebration
-after a save.
+### Tricks
+
+Sit, Hello, Stretch, dances, jumps and flips are sport-mode commands too: the real robot
+already knows them and each is one request with its own `api_id`. They are in
+`reflex/runtime/sport_api.py`, read from Unitree's header at the same commit:
+
+| Group | Commands |
+|---|---|
+| Gestures | `Sit` 1009, `RiseSit` 1010, `Hello` 1016, `Stretch` 1017, `Content` 1020, `Dance1` 1022, `Dance2` 1023, `Scrape` 1029, `Heart` 1036 |
+| Acrobatics | `FrontFlip` 1030, `FrontJump` 1031, `FrontPounce` 1032, `LeftFlip` 2041, `BackFlip` 2043 |
+
+Left out: `HandStand` 2044 and `WalkUpright` (they take a flag). Which of these the Go2 X
+at the hackathon accepts, and which the organizers allow, is not known.
+
+```bash
+pixi run -e ros ros-tricks                          # keyboard: h Hello, s Sit, u RiseSit, t Stretch, ...
+pixi run -e ros ros-tricks allow_acrobatics:=true   # also J/P/F/L/B: jumps and flips
+```
+
+Acrobatics are refused unless enabled, use capital letters, and need a clear area.
+
+**In the simulator** nothing executes these: the movements live in Unitree's closed
+controller inside the robot. We imitate three of them with slow, statically stable joint
+sequences (`MOTIONS` in `reflex/sim/scene.py`): `Sit`, `RiseSit` and `Hello` (sit, raise
+the front-right paw, wave three times, stand up; 4.5 s). The rest is ignored with a
+warning. Ours do not look or last like Unitree's; they exist to make the simulated demo
+livelier and to test that the right request goes out. In `pixi run view` / `drive`: Z
+sits, H says hello, X stands up.
+
+![Hello in the simulator](img/hello_trick.png)
+
+Tried and dropped: sitting up with both front paws in the air. Across 72 combinations
+of joint angles the trunk always fell forward: with the front paws off the ground the
+centre of mass is ahead of the rump. Balancing on the hind legs, like jumps and flips,
+needs a learned controller, not a posture.
 
 There is no `BodyHeight` command in the client at this commit.
 

@@ -23,5 +23,12 @@ def test_stand_down_and_damp():
 
 def test_unknown_or_malformed_requests_are_ignored():
     assert pose_for_request(9999) is None
-    assert pose_for_request(api.HELLO.api_id) is None
+    assert pose_for_request(api.DANCE1.api_id) is None
+    assert pose_for_request(api.FRONT_FLIP.api_id) is None
     assert pose_for_request(api.MOVE.api_id, "not json") is None
+
+
+def test_sit_and_hello_have_a_simulated_version():
+    assert pose_for_request(api.SIT.api_id) == "sit"
+    assert pose_for_request(api.RISE_SIT.api_id) == "stand"
+    assert pose_for_request(api.HELLO.api_id) == "hello"

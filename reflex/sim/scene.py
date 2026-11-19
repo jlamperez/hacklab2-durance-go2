@@ -27,6 +27,21 @@ POSES: dict[str, np.ndarray] = {
     "lean_right": np.tile([0.35, 0.80, -1.50], 4),
 }
 
+# Slow, statically stable tricks, found by trying joint angles in the simulator. They are
+# our own imitation: Unitree's Sit and Hello on the real robot look and time differently.
+_SIT = np.array([0, 0.75, -1.2, 0, 0.75, -1.2, 0, 2.2, -2.6, 0, 2.2, -2.6], dtype=float)
+# Weight on the front-left leg and the rump, front-right paw up.
+_PAW_UP = np.array([-0.3, 0.95, -1.2, 0.35, -1.2, -1.3, 0.35, 2.2, -2.6, 0.35, 2.2, -2.6], dtype=float)
+_PAW_WAVE = _PAW_UP.copy()
+_PAW_WAVE[5] = -2.0
+# name -> keyframes (seconds to reach it, joint targets). The last keyframe is held.
+MOTIONS = {
+    "sit": [(0.8, _SIT)],
+    "rise": [(0.8, POSES["stand"])],
+    "hello": [(0.8, _SIT), (0.6, _PAW_UP), (0.25, _PAW_WAVE), (0.25, _PAW_UP), (0.25, _PAW_WAVE),
+              (0.25, _PAW_UP), (0.25, _PAW_WAVE), (0.25, _PAW_UP), (0.6, _SIT), (0.8, POSES["stand"])],
+}
+
 KP, KD = 60.0, 3.0
 LABELS = ("none", "left", "center", "right")
 
@@ -176,6 +191,7 @@ class Go2Sim:
         self._passive = (m.dof_damping[self._v_adr].copy(), m.dof_frictionloss[self._v_adr].copy())
         self._contact = (int(m.opt.cone), float(m.opt.impratio))
         self._steps = 0
+        self._motion: list | None = None      # keyframes left to play, see MOTIONS
         self.reset()
 
     @property
@@ -192,6 +208,7 @@ class Go2Sim:
         self.damped = False      # True: motors only damp, as after Unitree's Damp command
         self._set_mode("pose")
         self.command[:] = 0
+        self._motion = None
         self.park_ball()
         self.park_walker()
         for _ in range(int(settle_s / self.dt)):
@@ -201,7 +218,38 @@ class Go2Sim:
     def set_pose(self, name: str) -> None:
         self._set_mode("pose")
         self.command[:] = 0
+        if name == "stand" and self.sitting:
+            self.play("rise")           # getting up from sitting in one jump is violent
+            return
+        self._motion = None
         self.q_des = POSES[name].copy()
+
+    def play(self, name: str) -> None:
+        """Start a slow trick: sit, rise, hello. Joint targets move through its keyframes."""
+        self._set_mode("pose")
+        self.command[:] = 0
+        self._motion = [[float(t), q.copy(), None] for t, q in MOTIONS[name]]
+
+    @property
+    def sitting(self) -> bool:
+        return self._motion is None and bool(np.allclose(self.q_des, _SIT))
+
+    @property
+    def busy(self) -> bool:
+        """True while a trick is still playing."""
+        return self._motion is not None
+
+    def _advance_motion(self) -> None:
+        duration, target, start = self._motion[0]
+        if start is None:                               # first step of this keyframe
+            start = self._motion[0][2] = (self.data.time, self.q_des.copy())
+        t0, q0 = start
+        a = min(1.0, (self.data.time - t0) / max(duration, 1e-6))
+        self.q_des = q0 + (target - q0) * a
+        if a >= 1.0:
+            self._motion.pop(0)
+            if not self._motion:
+                self._motion = None
 
     # --- optional walking ----------------------------------------------------------------
     def enable_walking(self, policy_path=None) -> None:
@@ -218,6 +266,7 @@ class Go2Sim:
         if self.gait is None:
             raise RuntimeError("call enable_walking() first")
         self.command[:] = self.gait.clip_command([vx, vy, wz])
+        self._motion = None
         self._set_mode("walk")
 
     def _set_mode(self, mode: str) -> None:
@@ -356,6 +405,8 @@ class Go2Sim:
             d.ctrl[:] = np.clip(tau, self._ctrl_lo, self._ctrl_hi)
             mujoco.mj_step(self.model, d)
             return
+        if self._motion is not None:
+            self._advance_motion()
         kp = 0.0 if self.damped else KP
         tau = kp * (self.q_des - d.qpos[self._q_adr]) - KD * d.qvel[self._v_adr]
         d.ctrl[:] = np.clip(tau, self._ctrl_lo, self._ctrl_hi)

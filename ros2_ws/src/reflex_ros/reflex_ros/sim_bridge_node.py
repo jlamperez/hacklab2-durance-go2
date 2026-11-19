@@ -153,6 +153,9 @@ class SimBridge(Node):
                 pass                 # StopMove while standing in a posture: nothing to do
             elif pose == "damp":
                 self.sim.damped = True
+            elif pose in ("sit", "hello"):
+                self.sim.damped = False
+                self.sim.play(pose)
             else:
                 self.sim.damped = False
                 self.sim.set_pose(pose)

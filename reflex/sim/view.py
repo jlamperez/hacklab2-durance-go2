@@ -4,7 +4,7 @@
     pixi run view --speed 0.25    # slow motion
 
 Mouse: left-drag rotates, right-drag pans, scroll zooms. Space pauses.
-Pose keys: X stand, C crouch, Q lean left, E lean right. Chosen among the letters whose
+Pose keys: X stand, C crouch, Q lean left, E lean right, Z sit, H hello (wave a paw). Chosen among the letters whose
 built-in viewer shortcut can be undone (S, W, R, L, K, G toggle render options that cannot).
 This viewer shows the scene only. For the dog-eye and event-camera panels,
 record a video with `pixi run sim`.
@@ -23,13 +23,14 @@ from reflex.sim.scene import POSES, BallShot, Go2Sim  # noqa: F401 (POSES: see t
 
 # Key -> pose. Keys arrive as GLFW key codes, which for letters are the uppercase ASCII code.
 KEY_POSES = {"X": "stand", "C": "crouch", "Q": "lean_left", "E": "lean_right"}
+KEY_TRICKS = {"Z": "sit", "H": "hello"}     # slow tricks, see MOTIONS in scene.py
 
 
 def pose_for_key(keycode: int) -> str | None:
     """Pose selected by a key press, or None if the key is not a pose key."""
     if not 0 <= keycode < 256:
         return None
-    return KEY_POSES.get(chr(keycode).upper())
+    return KEY_POSES.get(chr(keycode).upper()) or KEY_TRICKS.get(chr(keycode).upper())
 
 
 # GLFW key codes
@@ -85,7 +86,7 @@ def main() -> None:
             if cmd is not None:
                 pending.append(cmd)
 
-    print("pose keys: X stand, C crouch, Q lean left, E lean right", flush=True)
+    print("pose keys: X stand, C crouch, Q lean left, E lean right, Z sit, H hello (wave a paw)", flush=True)
     if args.drive:
         print("drive keys: UP/DOWN faster/slower, LEFT/RIGHT turn, A/D sidestep, SPACE stop "
               "(each press adds speed)", flush=True)
@@ -116,7 +117,10 @@ def main() -> None:
                     print(f"t = {sim.time:5.1f} s  walk: forward {pose[0]:+.2f} m/s  left {pose[1]:+.2f} m/s  "
                           f"turn {pose[2]:+.2f} rad/s", flush=True)
                     continue
-                sim.set_pose(pose)
+                if pose in KEY_TRICKS.values():
+                    sim.play(pose)
+                else:
+                    sim.set_pose(pose)
                 print(f"t = {sim.time:5.1f} s  pose: {pose}", flush=True)
             while sim.time < target:
                 if sim.time >= next_shot:

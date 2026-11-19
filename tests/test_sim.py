@@ -141,3 +141,37 @@ def test_walking_is_off_by_default():
     assert sim.gait is None and sim.mode == "pose"
     with pytest.raises(RuntimeError):
         sim.set_velocity(0.5, 0, 0)
+
+
+# --- slow tricks -------------------------------------------------------------------------
+def _run(sim, seconds):
+    for _ in range(int(seconds / sim.dt)):
+        sim.step()
+
+
+def _pitch_deg(sim):
+    w, x, y, z = sim.data.qpos[3:7]
+    return float(np.degrees(np.arcsin(np.clip(2 * (w * y - z * x), -1, 1))))
+
+
+def test_sit_then_stand_up_again():
+    sim = Go2Sim(seed=0)
+    sim.play("sit")
+    _run(sim, 2.0)
+    assert sim.sitting and -45 < _pitch_deg(sim) < -25        # nose up, rump down
+    sim.set_pose("stand")
+    _run(sim, 2.5)
+    assert abs(_pitch_deg(sim)) < 5 and sim.data.qpos[2] > 0.27 and not sim.busy
+
+
+def test_hello_raises_a_front_paw_and_ends_standing():
+    sim = Go2Sim(seed=0)
+    paw = sim.model.geom("FR").id
+    sim.play("hello")
+    highest = 0.0
+    for _ in range(int(6.0 / sim.dt)):
+        sim.step()
+        highest = max(highest, float(sim.data.geom_xpos[paw][2]))
+        assert sim.upright() > 0.6
+    assert highest > 0.4
+    assert not sim.busy and abs(_pitch_deg(sim)) < 5 and sim.data.qpos[2] > 0.27

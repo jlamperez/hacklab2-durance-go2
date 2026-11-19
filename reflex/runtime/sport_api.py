@@ -37,9 +37,28 @@ STAND_DOWN = SportCommand("StandDown", 1005, "ROBOT_SPORT_API_ID_STANDDOWN")
 RECOVERY_STAND = SportCommand("RecoveryStand", 1006, "ROBOT_SPORT_API_ID_RECOVERYSTAND")
 EULER = SportCommand("Euler", 1007, "ROBOT_SPORT_API_ID_EULER")
 MOVE = SportCommand("Move", 1008, "ROBOT_SPORT_API_ID_MOVE")
+SIT = SportCommand("Sit", 1009, "ROBOT_SPORT_API_ID_SIT")
+RISE_SIT = SportCommand("RiseSit", 1010, "ROBOT_SPORT_API_ID_RISESIT")
 HELLO = SportCommand("Hello", 1016, "ROBOT_SPORT_API_ID_HELLO")
+STRETCH = SportCommand("Stretch", 1017, "ROBOT_SPORT_API_ID_STRETCH")
+CONTENT = SportCommand("Content", 1020, "ROBOT_SPORT_API_ID_CONTENT")
+DANCE1 = SportCommand("Dance1", 1022, "ROBOT_SPORT_API_ID_DANCE1")
+DANCE2 = SportCommand("Dance2", 1023, "ROBOT_SPORT_API_ID_DANCE2")
+SCRAPE = SportCommand("Scrape", 1029, "ROBOT_SPORT_API_ID_SCRAPE")
+HEART = SportCommand("Heart", 1036, "ROBOT_SPORT_API_ID_HEART")
+# Acrobatics: the robot leaves the ground. Clear space, and only if the organizers allow it.
+FRONT_FLIP = SportCommand("FrontFlip", 1030, "ROBOT_SPORT_API_ID_FRONTFLIP")
+FRONT_JUMP = SportCommand("FrontJump", 1031, "ROBOT_SPORT_API_ID_FRONTJUMP")
+FRONT_POUNCE = SportCommand("FrontPounce", 1032, "ROBOT_SPORT_API_ID_FRONTPOUNCE")
+LEFT_FLIP = SportCommand("LeftFlip", 2041, "ROBOT_SPORT_API_ID_LEFTFLIP")
+BACK_FLIP = SportCommand("BackFlip", 2043, "ROBOT_SPORT_API_ID_BACKFLIP")
 
-ALL = (DAMP, BALANCE_STAND, STOP_MOVE, STAND_UP, STAND_DOWN, RECOVERY_STAND, EULER, MOVE, HELLO)
+# Tricks: none takes a parameter in Unitree's client. HandStand (2044) does (a flag) and
+# is left out. Which of these a given Go2 model and firmware accepts is not known.
+GESTURES = (SIT, RISE_SIT, HELLO, STRETCH, CONTENT, DANCE1, DANCE2, SCRAPE, HEART)
+ACROBATICS = (FRONT_FLIP, FRONT_JUMP, FRONT_POUNCE, LEFT_FLIP, BACK_FLIP)
+
+ALL = (DAMP, BALANCE_STAND, STOP_MOVE, STAND_UP, STAND_DOWN, RECOVERY_STAND, EULER, MOVE) + GESTURES + ACROBATICS
 BY_ID = {c.api_id: c for c in ALL}
 
 # Note: the client at this commit has no BodyHeight command. To lower the trunk on the

@@ -14,7 +14,8 @@ DEADBAND = 0.05
 
 
 def pose_for_request(api_id: int, parameter: str = "") -> str | None:
-    """Pose for a request: stand / crouch / lean_left / lean_right / damp, or None if ignored.
+    """Pose or motion for a request: stand / crouch / lean_left / lean_right / sit / hello /
+    damp, or None if ignored.
 
     Sign convention, dog frame (+y is left): Move with vy > 0 and Euler with roll > 0
     both lean the simulated dog to its left. Whether a real Go2 rolls to the same side
@@ -36,8 +37,14 @@ def pose_for_request(api_id: int, parameter: str = "") -> str | None:
         return "stand"
     if cmd is sport_api.STAND_DOWN:
         return "crouch"
+    if cmd is sport_api.SIT:
+        return "sit"
+    if cmd is sport_api.HELLO:
+        return "hello"       # our own imitation: sit, raise a front paw, wave, stand up
+    if cmd is sport_api.RISE_SIT:
+        return "stand"
     if cmd is sport_api.DAMP:
         return "damp"
     if cmd in (sport_api.STAND_UP, sport_api.BALANCE_STAND, sport_api.RECOVERY_STAND, sport_api.STOP_MOVE):
         return "stand"
-    return None   # Hello and anything else: no equivalent in the simulator
+    return None   # stretch, dances, jumps, flips: no equivalent in the simulator
