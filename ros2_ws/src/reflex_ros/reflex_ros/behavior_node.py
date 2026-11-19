@@ -2,6 +2,7 @@
 
   subscribes  /reflex/decision      reflex_msgs/ReflexDecision
   publishes   /api/sport/request    unitree_api/Request
+              /reflex/debug/behavior   std_msgs/String, JSON: state of the reflex and last request
 
 It publishes the same message whether a simulator or a real Go2 is listening.
 
@@ -15,8 +16,11 @@ Safety, all here and nowhere else:
 `header.identity.id` carries the time (microseconds) of the newest event behind the
 decision, so whoever receives the request can measure the latency of the whole chain.
 """
+import json
+
 import rclpy
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from reflex.runtime import sport_api
 from reflex.runtime.detectors import Decision
@@ -46,6 +50,8 @@ class BehaviorNode(Node):
         self._stamp_us = 0
         self.pub = self.create_publisher(Request, sport_api.SPORT_REQUEST_TOPIC, 10)
         self.sub = self.create_subscription(ReflexDecision, "/reflex/decision", self.on_decision, 10)
+        self.debug_pub = self.create_publisher(String, "/reflex/debug/behavior", 10)
+        self._last_request, self._reactions, self._ticks = "-", 0, 0
         self.timer = self.create_timer(0.02, self.on_timer)
         self.get_logger().info(f"mode {cfg.mode}, reaction {self.reaction}, enabled {self.enabled}")
 
@@ -57,8 +63,17 @@ class BehaviorNode(Node):
         self._stamp_us = msg.header.stamp.sec * 1_000_000 + msg.header.stamp.nanosec // 1000
         self.act(self.fsm.update(Decision(msg.label, msg.confidence, self._stamp_us), self.now()))
 
+    def publish_debug(self) -> None:
+        if self.debug_pub.get_subscription_count() > 0:
+            self.debug_pub.publish(String(data=json.dumps({
+                "state": self.fsm.state, "pose": self._last_pose, "last_request": self._last_request,
+                "reactions": self._reactions, "mode": self.fsm.cfg.mode, "enabled": bool(self.enabled)})))
+
     def on_timer(self) -> None:
         self.act(self.fsm.update(None, self.now()))        # lets the hold and the rest expire
+        self._ticks += 1
+        if self._ticks % 5 == 0:
+            self.publish_debug()
         if (self._last_decision_t is not None and not self._silent
                 and self.now() - self._last_decision_t > self.watchdog_s):
             self._silent = True
@@ -71,6 +86,8 @@ class BehaviorNode(Node):
         for cmd, param in self.requests_for(action.name):
             self.send(cmd, param)
         self._last_pose = action.name
+        self._reactions += action.name != "stand"
+        self.publish_debug()
         self.get_logger().info(f"{action.label} -> {action.name}")
 
     def requests_for(self, pose: str) -> list:
@@ -90,6 +107,7 @@ class BehaviorNode(Node):
         return [(sport_api.EULER, sport_api.euler_params(0.0, 0.0, 0.0))]
 
     def send(self, cmd, param: str = "") -> None:
+        self._last_request = f"{cmd.name} {param}".strip()
         if not self.enabled:
             self.get_logger().info(f"[disabled] would send {cmd.name} {param}")
             return

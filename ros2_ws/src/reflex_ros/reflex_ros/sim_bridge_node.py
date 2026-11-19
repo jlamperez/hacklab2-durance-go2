@@ -22,7 +22,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rosgraph_msgs.msg import Clock as ClockMsg
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
+from std_msgs.msg import Float32, Float32MultiArray, String
 
 from reflex.data.episodes import DOG_FRONT_X, THREAT_NEAR
 from reflex.data.windows import WindowConfig, make_window
@@ -32,10 +32,12 @@ from reflex.runtime import sport_api
 from reflex.runtime.reflex_fsm import BEHAVIORS
 from reflex.runtime.sim_sport import pose_for_request
 from reflex.sim.scene import BallShot, Go2Sim, to_gray
+from reflex.viz.web_scene import pack_state
 from reflex_msgs.msg import EventWindow
 from unitree_api.msg import Request
 
 WINDOW_STRIDE_STEPS = 10     # one window every 20 ms of simulated time
+STATE_STRIDE_STEPS = 16      # body poses for the web viewer, about 30 per second
 NEGATIVES = ("miss", "crossing", "walker")
 
 
@@ -89,6 +91,9 @@ class SimBridge(Node):
             self.win_pub = self.create_publisher(EventWindow, "/reflex/events_window", qos_profile_sensor_data)
             self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", 2)   # reliable: any viewer can subscribe
         self.out_pub = self.create_publisher(String, "/reflex/sim/outcome", 10)
+        # For the web viewer: where every body is (reflex/viz/web_scene.py), and each latency.
+        self.state_pub = self.create_publisher(Float32MultiArray, "/reflex/sim/state", 2)
+        self.latency_pub = self.create_publisher(Float32, "/reflex/debug/latency_ms", 10)
         self.create_subscription(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
 
         self.pending = []            # (apply_time_s, pose, api name, velocity or None)
@@ -137,6 +142,7 @@ class SimBridge(Node):
         if stamp_us > 0:   # time from the newest event to the request arriving here
             now_us = self.get_clock().now().nanoseconds / 1000 if self.robot_only else self.sim.time * 1e6
             self.latencies_ms.append((now_us - stamp_us) * 1e-3)
+            self.latency_pub.publish(Float32(data=float(self.latencies_ms[-1])))
             if self.robot_only:
                 self.get_logger().info(f"{name} -> {pose}; {self.latencies_ms[-1]:.0f} ms from newest event to request, "
                                        f"applied after {self.delay_s * 1e3:.0f} ms more")
@@ -241,6 +247,8 @@ class SimBridge(Node):
             sim.set_walker(x, y0 + vy * (sim.time - self.shot["t0"]))
         sim.step()
         self.steps += 1
+        if self.steps % STATE_STRIDE_STEPS == 0 and self.state_pub.get_subscription_count() > 0:
+            self.state_pub.publish(Float32MultiArray(data=array("f", pack_state(sim.model, sim.data).tobytes())))
         if self.robot_only and sim.mode == "walk" and self.steps % 1000 == 0:
             x, y, h = sim.base_pose()
             self.get_logger().info(f"dog at x {x:+.2f} m, y {y:+.2f} m, heading {np.degrees(h):+.0f} deg; "

@@ -96,3 +96,45 @@ confident threats in a row.
 Times are simulated time (`/clock`). The simulation runs slower than real time, so
 `ros2 topic hz` shows about 25 Hz of wall time for a topic published at 50 Hz of
 simulated time.
+
+## Dashboard in the browser
+
+```bash
+pixi run -e ros ros-web            # then open http://localhost:8080
+pixi run -e ros ros-web port:=8081
+```
+
+Start it next to any launch file, on any machine of the ROS 2 network; other devices on
+the network can open `http://<pc-address>:8080`. It only listens, so it changes nothing
+in the loop. Built on [viser](https://viser.studio), the library behind mjlab's browser
+viewer.
+
+![Web dashboard](img/web_viewer.png)
+
+| Panel | Shows | Topic |
+|---|---|---|
+| 3D scene | dog, ball, walker and clutter; drag to orbit, scroll to zoom | `/reflex/sim/state` |
+| Event camera | events as a picture, events in the window | `/reflex/debug/events_image` |
+| Decision | label, confidence, inference time, one bar per class | `/reflex/debug/perception`, `/reflex/decision` |
+| Reflex | state (idle, reacting, refractory), pose, last requests | `/reflex/debug/behavior`, `/api/sport/request` |
+| Latency | newest event to request, every request and the median | `/reflex/debug/latency_ms` |
+| Network activity | share of neurons firing per time step, per layer, over the last 300 windows | `/reflex/debug/perception` |
+| Score | outcome of every simulated shot | `/reflex/sim/outcome` |
+
+How the 3D scene works: the simulation is not in the browser. The bridge sends the
+position and orientation of each body about 30 times a second (16 bodies, 113 numbers),
+and the page moves meshes it received once. `reflex/viz/web_scene.py` turns the MuJoCo
+model into those meshes.
+
+Limits:
+
+- **Real robot:** the 3D scene stays idle, there is no simulator to send poses. Every
+  other panel works. Latency is then measured with this machine's clock, so the machines
+  need synchronized clocks (NTP).
+- **Simple detector:** it has no neurons; the network panel shows input activity only and
+  the bars show events over threshold instead of probabilities.
+- **Scenery colours** match the simulator only if both use the same `seed` (default 0).
+- The floor is a grid, not MuJoCo's checker texture.
+- Checked with the simulated loop (`ros-sim`) in a headless browser. Not yet tried with
+  the Kria as the camera or with `ros-drive`.
+- The debug topics are published only while someone subscribes to them.

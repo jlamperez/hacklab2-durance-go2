@@ -24,6 +24,7 @@ setup(
             "cmd_vel_to_sport = reflex_ros.cmd_vel_to_sport_node:main",
             "recorder = reflex_ros.recorder_node:main",
             "tricks = reflex_ros.tricks_node:main",
+            "web_viewer = reflex_ros.web_viewer_node:main",
         ],
     },
 )

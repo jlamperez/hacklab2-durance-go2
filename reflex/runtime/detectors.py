@@ -41,6 +41,7 @@ class SimpleDetector:
 
     def __init__(self, cfg: SimpleConfig | None = None):
         self.cfg = cfg or SimpleConfig()
+        self.last: dict = {}     # details of the last prediction, for viewers
 
     def _thirds(self, window: np.ndarray) -> np.ndarray:
         t, _, h, w = window.shape
@@ -63,6 +64,9 @@ class SimpleDetector:
         thirds = self._thirds(window)
         k = int(thirds.argmax())
         score = float(thirds[k] / self.cfg.threshold)
+        # Events per third of the zone, as a fraction of the threshold.
+        self.last = {"scores": dict(zip(LABELS[1:], (thirds / self.cfg.threshold).round(3).tolist())),
+                     "threshold": float(self.cfg.threshold)}
         if score < 1.0:
             return Decision("none", 1.0 - 0.5 * score, t_us)
         return Decision(LABELS[1 + k], min(1.0, 0.5 * score), t_us)
@@ -81,11 +85,14 @@ class SNNDetector:
         self.model.load_state_dict(ckpt["state_dict"])
         self.model.eval().to(device)
         self.device, self._torch = device, torch
+        self.last: dict = {}     # details of the last prediction, for viewers
 
     def predict(self, window: np.ndarray, t_us: int = 0) -> Decision:
         torch = self._torch
         with torch.no_grad():
-            logits = self.model(torch.from_numpy(window)[None].to(self.device))
+            logits, rates = self.model(torch.from_numpy(window)[None].to(self.device), return_stats=True)
             prob = torch.softmax(logits[0], dim=0).cpu().numpy()
         k = int(prob.argmax())
+        # firing_rate: fraction of neurons that fire per time step, one value per layer.
+        self.last = {"probs": dict(zip(self.labels, prob.round(4).tolist())), "firing_rate": rates}
         return Decision(self.labels[k], float(prob[k]), t_us)

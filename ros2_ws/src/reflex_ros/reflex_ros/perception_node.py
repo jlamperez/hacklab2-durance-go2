@@ -2,16 +2,20 @@
 
   subscribes  /reflex/events_window   reflex_msgs/EventWindow
   publishes   /reflex/decision        reflex_msgs/ReflexDecision
+              /reflex/debug/perception   std_msgs/String, JSON: what is behind the decision
+                                         (class probabilities, firing rate per layer, input activity)
 
 The detector is chosen by a parameter, so the SNN and the no-learning detector are
 swapped without touching anything else.
 """
+import json
 import time
 
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from reflex.runtime.detectors import SimpleConfig, SimpleDetector, SNNDetector
@@ -46,6 +50,7 @@ class PerceptionNode(Node):
             if self.calibrate_s > 0:
                 self.get_logger().info(f"calibrating: keep the scene still for {self.calibrate_s + 1.0:.0f} s")
         self.pub = self.create_publisher(ReflexDecision, "/reflex/decision", 10)
+        self.debug_pub = self.create_publisher(String, "/reflex/debug/perception", 10)
         self.sub = self.create_subscription(EventWindow, "/reflex/events_window", self.on_window,
                                             qos_profile_sensor_data)
 
@@ -79,6 +84,11 @@ class PerceptionNode(Node):
         out.label, out.confidence, out.detector = decision.label, float(decision.confidence), self.kind
         out.inference_ms = float((time.perf_counter() - start) * 1e3)
         self.pub.publish(out)
+        if self.debug_pub.get_subscription_count() > 0:
+            self.debug_pub.publish(String(data=json.dumps({
+                "detector": self.kind, "label": out.label, "confidence": round(out.confidence, 4),
+                "inference_ms": round(out.inference_ms, 2), "events": int(window.sum()),
+                "input_active": round(float((window > 0).mean()), 5), **self.detector.last})))
 
 
 SETTLE_S = 1.0

@@ -97,6 +97,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 | `pixi run -e ros ros-drive` | Simulated dog driven by `/cmd_vel`, converted to the Go2's `Move` command |
 | `pixi run -e ros ros-teleop` | Keyboard that publishes `/cmd_vel` (second terminal, with `ros-drive`) |
 | `pixi run -e ros ros-tricks` | Keyboard for the Go2's built-in tricks (Hello, Sit, Stretch, dances; flips only with `allow_acrobatics:=true`). The simulator imitates Sit and Hello |
+| `pixi run -e ros ros-web` | Live dashboard in the browser at `http://localhost:8080`: 3D scene, events, decision, reflex state, latency, network activity. Run it next to any of the above |
 | `pixi run -e ros ros-shell` | Shell with ROS 2 ready, for `ros2 topic echo`, `rqt_graph`, ... |
 
 Which command plays which part. The simulator can be the camera and the robot at once,
@@ -109,6 +110,10 @@ or the robot only:
 | Kria camera + `ros-robot-sim` | webcam on the Kria | simulator | no, the Kria does |
 | `ros-drive` + `ros-teleop` | none (keyboard driving) | simulator, walking | no |
 | at the hackathon | real event camera on the Kria | real Go2 | no simulator |
+
+The whole pipeline on one page, in the browser (`pixi run -e ros ros-web`, simulation only so far):
+
+![Web dashboard](docs/img/web_viewer.png)
 
 To watch the event stream of any of them, from `pixi run -e ros ros-shell`:
 
