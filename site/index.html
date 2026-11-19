@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go2 Event Reflexes</title>
+<meta name="description" content="Guide to the hacklab2-durance-go2 project: event camera, spiking network, ROS 2 nodes, simulator, Kria KV260 and Unitree Go2.">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23d9480f'/><path d='M9 16h14M19 11l5 5-5 5' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/></svg>">
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <h1>Go2 event reflexes</h1>
+      <span class="sub">events → SNN → reflex → Unitree Go2, over ROS 2 · HackLab #2, Durance AI track</span>
+      <span class="spacer"></span>
+      <button class="theme-btn" id="theme-btn" type="button" aria-label="Toggle colour theme">◐ theme</button>
+    </div>
+    <nav class="tabs" aria-label="Sections">
+      <a href="#overview">Overview</a>
+      <a href="#simulator">Simulator</a>
+      <a href="#ros">ROS 2 nodes</a>
+      <a href="#setup">Build a setup</a>
+      <a href="#kria">Kria KV260</a>
+      <a href="#data">Data &amp; training</a>
+      <a href="#commands">Commands</a>
+      <a href="#status">Status &amp; results</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- ================================================================ OVERVIEW -->
+<section class="tab" id="tab-overview">
+  <h2>One pipeline, four swappable boxes</h2>
+  <p class="lede">An event camera sees a ball coming. A small spiking neural network decides
+    <code>none / left / center / right</code>. A state machine turns that into one safe action, and the Go2
+    gets a sport-mode command. Every box talks to the next through a ROS 2 topic, so each one can be replaced
+    by a simulated, a stand-in or a real version without touching the others. Click a box.</p>
+
+  <div class="pipeline" id="pipeline">
+    <button class="stage" data-stage="source" aria-pressed="true">
+      <div class="kicker">1 · Event source</div>
+      <div class="name">Camera</div>
+      <ul>
+        <li>MuJoCo emulated camera <span class="badge ok">works</span></li>
+        <li>Webcam stand-in (PC / Kria) <span class="badge ok">works</span></li>
+        <li>Real event camera <span class="badge plan">Saturday</span></li>
+      </ul>
+    </button>
+    <div class="wire"><div class="topic">/reflex/events_window</div><div class="arrow"></div><div class="what">EventWindow · 50 ms of events</div></div>
+    <button class="stage" data-stage="perception" aria-pressed="false">
+      <div class="kicker">2 · Perception</div>
+      <div class="name">Detector</div>
+      <ul>
+        <li>SNN in PyTorch (CPU / GPU) <span class="badge ok">works</span></li>
+        <li>No-learning detector <span class="badge ok">works</span></li>
+        <li>SNN on the FPGA (RIVERLib) <span class="badge plan">Saturday</span></li>
+      </ul>
+    </button>
+    <div class="wire"><div class="topic">/reflex/decision</div><div class="arrow"></div><div class="what">ReflexDecision · label + confidence</div></div>
+    <button class="stage" data-stage="behavior" aria-pressed="false">
+      <div class="kicker">3 · Behavior</div>
+      <div class="name">Reflex state machine</div>
+      <ul>
+        <li>FSM + safety limits <span class="badge ok">works</span></li>
+        <li>keeper (block) / dodge <span class="badge ok">works</span></li>
+        <li>Same code on the real robot <span class="badge warn">untried</span></li>
+      </ul>
+    </button>
+    <div class="wire"><div class="topic">/api/sport/request</div><div class="arrow"></div><div class="what">unitree_api/Request · sport mode</div></div>
+    <button class="stage" data-stage="robot" aria-pressed="false">
+      <div class="kicker">4 · Robot</div>
+      <div class="name">Go2</div>
+      <ul>
+        <li>MuJoCo Go2 (go2_sim_bridge) <span class="badge ok">works</span></li>
+        <li>Optional walking policy <span class="badge ok">works</span></li>
+        <li>Real Go2, same message <span class="badge plan">Saturday</span></li>
+      </ul>
+    </button>
+  </div>
+
+  <div class="card stage-detail" id="stage-detail"></div>
+
+  <h3>See it</h3>
+  <div class="grid two">
+    <figure class="figure card">
+      <video src="media/demo.mp4" poster="media/demo-poster.jpg" controls muted loop playsinline preload="none"></video>
+      <figcaption><code>pixi run sim</code>: third-person view, the dog's RGB view and the emulated event camera
+        (red ON, blue OFF) for three shots. Everything here is simulated.</figcaption>
+    </figure>
+    <figure class="figure card">
+      <img src="img/web_viewer.png" alt="Web dashboard: 3D dog on the left, event camera, decision bars, reflex state, latency and network activity on the right" loading="lazy">
+      <figcaption><code>pixi run -e ros ros-web</code>: the whole pipeline in the browser at
+        <code>http://localhost:8080</code>, next to any launcher.</figcaption>
+    </figure>
+  </div>
+
+  <h3>Two loops around the pipeline</h3>
+  <div class="grid two">
+    <div class="card">
+      <b>Data and training</b>
+      <div class="loop">
+        <div class="step">simulate / record<code>gen-data · ros-record</code></div><span class="to">→</span>
+        <div class="step">look<code>view-data</code></div><span class="to">→</span>
+        <div class="step">train / fine-tune<code>train · finetune-real</code></div><span class="to">→</span>
+        <div class="step">evaluate<code>eval</code></div>
+      </div>
+      <a href="#data">Data &amp; training →</a>
+    </div>
+    <div class="card">
+      <b>Running</b>
+      <div class="loop">
+        <div class="step">event source<code>ros-sim · ros-camera · kria-camera</code></div><span class="to">→</span>
+        <div class="step">perception</div><span class="to">→</span>
+        <div class="step">behavior</div><span class="to">→</span>
+        <div class="step">robot<code>ros-sim · ros-robot-sim · Go2</code></div>
+      </div>
+      <a href="#setup">Build a setup →</a>
+    </div>
+  </div>
+
+  <h3>Where the code lives</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Folder</th><th>What is in it</th></tr>
+    <tr><td><code>reflex/events/</code></td><td>Event format (<code>t</code> in µs, <code>x</code>, <code>y</code>, <code>p</code>), the camera emulator, representations (windows → tensors and images)</td></tr>
+    <tr><td><code>reflex/sim/</code></td><td>MuJoCo scene: standing Go2, ball launcher, head camera. Optional park scenery and optional walking policy</td></tr>
+    <tr><td><code>reflex/data/</code></td><td>Simulated episodes (threats and hard negatives), windowing, dataset generation, recorded-session builder</td></tr>
+    <tr><td><code>reflex/models/snn.py</code></td><td>The spiking network (26.5k parameters, plain PyTorch, kept portable for RIVERLib)</td></tr>
+    <tr><td><code>reflex/runtime/</code></td><td>Detectors (SNN, no-learning), reflex state machine, sport-mode command table, simulated sport mode</td></tr>
+    <tr><td><code>ros2_ws/src/reflex_msgs</code></td><td>Messages: <code>EventWindow</code>, <code>ReflexDecision</code></td></tr>
+    <tr><td><code>ros2_ws/src/reflex_ros</code></td><td>Thin ROS 2 nodes and launch files. Logic stays in <code>reflex/</code>, unit-tested without ROS</td></tr>
+    <tr><td><code>docker/kria</code>, <code>scripts/sync_kria.sh</code></td><td>Camera side for the Kria KV260</td></tr>
+  </table></div>
+  <p class="note">Nothing in this project has touched the real Go2, the real event camera or Durance's toolchain yet.
+    Every result on this site is from simulation or from the Kria + webcam rehearsal.</p>
+</section>
+
+<!-- ================================================================ SIMULATOR -->
+<section class="tab" id="tab-simulator">
+  <h2>The simulator</h2>
+  <p class="lede">MuJoCo stands in for two things at once: the event camera (a camera on the dog's head plus an
+    emulator that turns frames into events) and the robot (a Go2 that answers sport-mode requests). It exists to
+    generate training data and to test the closed loop before the hardware is there.</p>
+
+  <div class="grid three">
+    <div class="card"><b>Standing Go2</b>
+      <p>A Go2 model holding a pose with a joint PD controller. By default it does not walk: reflexes are posture
+        changes (stand, crouch, lean left / right, sit, hello). <code>reflex/sim/scene.py</code></p></div>
+    <div class="card"><b>Ball launcher</b>
+      <p>Rolls balls at the dog (arriving left / center / right) and hard negatives: misses, balls crossing
+        sideways, slow balls, a walker, nothing at all. Every instant gets a label. <code>reflex/data/episodes.py</code></p></div>
+    <div class="card"><b>Event-camera emulator</b>
+      <p>Reduced ESIM / v2e model: a pixel fires ON or OFF when its log-intensity moves past a contrast threshold.
+        Parameters are randomized per episode so the network does not learn one sensor. <code>reflex/events/emu.py</code></p></div>
+    <div class="card"><b>Simulated sport mode</b>
+      <p>Translates each <code>/api/sport/request</code> to the closest of the simulator's poses, after a
+        configurable actuation delay (300 ms by default, a guess). <code>reflex/runtime/sim_sport.py</code></p></div>
+    <div class="card"><b>Optional walking</b>
+      <p>A policy trained with unitree_rl_mjlab (<code>models/go2_walk.onnx</code>) turns a <code>Move</code> into
+        steps. Off unless asked for: <code>locomotion:=rl</code> or <code>pixi run drive</code>.
+        <code>reflex/sim/locomotion.py</code></p></div>
+    <div class="card"><b>Optional park scene</b>
+      <p>Grass, path, trees, benches, houses, built from code. The default lab scene stays as it is.
+        <code>scene:=park</code> / <code>--scene park</code>. <code>reflex/sim/scenery.py</code></p></div>
+  </div>
+
+  <h3>Three ways to see it</h3>
+  <div class="grid three">
+    <div class="card"><b>Without ROS</b>
+      <p>The simulator alone, in a MuJoCo window or as a video file. Useful to look at the scene and the camera.</p>
+      <div class="code"><pre>pixi run view        <span class="comment"># balls at a standing dog</span>
+pixi run drive       <span class="comment"># walk it with the arrows</span>
+pixi run sim         <span class="comment"># write out/demo.mp4</span></pre></div></div>
+    <div class="card"><b>Over ROS 2, MuJoCo window</b>
+      <p>The simulator is one ROS node (<code>go2_sim_bridge</code>) among others. Add <code>viewer:=true</code> to
+        <code>ros-sim</code> to get its window.</p>
+      <div class="code"><pre>pixi run -e ros ros-sim viewer:=true</pre></div></div>
+    <div class="card"><b>Over ROS 2, in the browser</b>
+      <p>Run the simulator headless and draw it in the browser. The dashboard only listens: it works next to any
+        launcher, on this machine or another.</p>
+      <div class="code"><pre>pixi run -e ros ros-sim          <span class="comment"># headless by default</span>
+pixi run -e ros ros-web          <span class="comment"># http://localhost:8080</span></pre></div></div>
+  </div>
+
+  <h3>Keys in the MuJoCo window</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Action</th><th>3D window (<code>view</code>, <code>drive</code>)</th><th>ROS terminal (<code>ros-tricks</code>)</th><th>In the simulator</th></tr>
+    <tr><td>Sit / stand up</td><td><kbd>Z</kbd> / <kbd>X</kbd></td><td><kbd>s</kbd> / <kbd>u</kbd></td><td>imitated</td></tr>
+    <tr><td>Hello (wave a paw)</td><td><kbd>H</kbd></td><td><kbd>h</kbd></td><td>imitated</td></tr>
+    <tr><td>Crouch, lean left / right</td><td><kbd>C</kbd>, <kbd>Q</kbd>, <kbd>E</kbd></td><td>– (reflexes, not tricks)</td><td>yes</td></tr>
+    <tr><td>Walk</td><td>arrows, <kbd>A</kbd> / <kbd>D</kbd>, <kbd>SPACE</kbd> stop (<code>drive</code> only)</td><td>– (use <code>ros-teleop</code>)</td><td>yes, walking policy</td></tr>
+    <tr><td>Stretch, dances, Heart …</td><td>–</td><td><kbd>t</kbd> <kbd>c</kbd> <kbd>1</kbd> <kbd>2</kbd> <kbd>p</kbd> <kbd>e</kbd></td><td>ignored; real robot only</td></tr>
+    <tr><td>Damp (emergency, motors limp)</td><td>–</td><td><kbd>!</kbd></td><td>motors limp</td></tr>
+  </table></div>
+
+  <h3>Pictures</h3>
+  <div class="grid two">
+    <figure class="figure card"><img src="media/demo.png" alt="Three shots: third-person, dog-eye RGB and emulated events" loading="lazy">
+      <figcaption>Left, center and right shots: third person, dog's eye, emulated events.</figcaption></figure>
+    <figure class="figure card"><img src="img/hello_trick.png" alt="Simulated Go2 doing the Hello trick" loading="lazy">
+      <figcaption>The simulator imitating the Hello trick, sent over ROS 2 by <code>ros-tricks</code>.</figcaption></figure>
+    <figure class="figure card"><img src="img/park_scene.png" alt="Park scene with the Go2" loading="lazy">
+      <figcaption>The optional park scene. Generated from code, not a real place.</figcaption></figure>
+    <figure class="figure card"><img src="img/park_eye.png" alt="What the dog's camera sees in the park" loading="lazy">
+      <figcaption>The dog's camera in the park. The network was trained on the lab only: 5 of 9 balls here, 9 of 9 in the lab.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ================================================================ ROS -->
+<section class="tab" id="tab-ros">
+  <h2>ROS 2 nodes and topics</h2>
+  <p class="lede">Two packages: <code>reflex_msgs</code> (messages) and <code>reflex_ros</code> (nodes and launch
+    files). Nodes are thin: each one wraps logic from <code>reflex/</code>. Click a topic to see who publishes and who
+    listens.</p>
+
+  <div class="filter-line" id="topic-filter-line">Highlighting: <span id="topic-hl">nothing</span>
+    <button class="pill" id="topic-clear" type="button">clear</button></div>
+  <div class="grid three" id="node-grid"></div>
+
+  <h3>Which launcher starts which node</h3>
+  <p>A launcher is a <code>pixi run -e ros ros-…</code> command that wraps <code>ros2 launch reflex_ros ….launch.py</code>.
+    <span class="badge warn">c</span> = only with <code>camera:=true</code>.</p>
+  <div class="table-wrap"><table class="launch-matrix" id="launch-matrix"></table></div>
+
+  <h3>The messages</h3>
+  <div class="grid two">
+    <div><b><code>reflex_msgs/EventWindow</code></b> on <code>/reflex/events_window</code>
+      <div class="code"><pre><span class="comment"># the last window_ms of events, binned. stamp = newest event</span>
+std_msgs/Header header
+float32 window_ms
+uint32 n_bins      <span class="comment"># time steps</span>
+uint32 channels    <span class="comment"># 2: OFF, ON</span>
+uint32 height
+uint32 width
+uint8[] data       <span class="comment"># (n_bins, channels, height, width)</span></pre></div>
+      <p>Today: 50 ms, 10 steps × 2 polarities × 45 × 80 cells = 72 000 bytes.</p></div>
+    <div><b><code>reflex_msgs/ReflexDecision</code></b> on <code>/reflex/decision</code>
+      <div class="code"><pre><span class="comment"># one detector output per window. stamp copied from the window</span>
+std_msgs/Header header
+string label          <span class="comment"># none / left / center / right (dog frame)</span>
+float32 confidence    <span class="comment"># 0..1</span>
+string detector       <span class="comment"># snn / simple</span>
+float32 inference_ms</pre></div>
+      <p>The robot side gets <code>unitree_api/msg/Request</code> on <code>/api/sport/request</code>, Unitree's own message.
+        Every <code>api_id</code> lives in <code>reflex/runtime/sport_api.py</code>, each checked against Unitree's client.</p></div>
+  </div>
+
+  <h3>The graph, live</h3>
+  <p>Camera side on a Kria, robot side on the PC, drawn by <code>rqt_graph</code> on 19 Nov 2026.</p>
+  <div class="grid two">
+    <figure class="figure card"><img src="img/rqt_graph_topics.png" alt="rqt_graph with nodes and topics" loading="lazy">
+      <figcaption>Nodes and topics: <code>event_camera_webcam</code> is the only source of event windows; the bridge only listens on <code>/api/sport/request</code>.</figcaption></figure>
+    <figure class="figure card"><img src="img/rqt_graph_nodes.png" alt="rqt_graph with nodes only" loading="lazy">
+      <figcaption>Nodes only.</figcaption></figure>
+  </div>
+
+  <h3>Looking inside</h3>
+  <p>In a second terminal, <code>pixi run -e ros ros-shell</code>, then:</p>
+  <div class="code"><pre>ros2 node list
+ros2 topic echo /reflex/decision --filter "m.label != 'none'"   <span class="comment"># only threats</span>
+ros2 topic echo /reflex/events_window --no-arr                  <span class="comment"># without the big array</span>
+ros2 topic echo /api/sport/request                              <span class="comment"># what goes to the dog</span>
+ros2 topic hz /reflex/decision
+ros2 run rqt_image_view rqt_image_view /reflex/debug/events_image
+rqt_graph</pre></div>
+</section>
+
+<!-- ================================================================ SETUP -->
+<section class="tab" id="tab-setup">
+  <h2>Build a setup</h2>
+  <p class="lede">Pick what plays each part. The page shows which node runs on which machine and the commands for
+    each terminal. This is how nodes are swapped: the topics stay the same, only the program behind them changes.</p>
+
+  <div class="builder">
+    <form class="choices card" id="builder" autocomplete="off">
+      <fieldset><legend>1 · Event source</legend>
+        <label class="opt"><input type="radio" name="cam" value="sim" checked><span>Simulated camera<small>MuJoCo head camera + emulator, inside the simulator</small></span></label>
+        <label class="opt"><input type="radio" name="cam" value="pc"><span>Webcam on the PC<small>stand-in: frames → emulated events</small></span></label>
+        <label class="opt"><input type="radio" name="cam" value="kria"><span>Webcam on the Kria KV260<small>camera side runs on the board</small></span></label>
+        <label class="opt"><input type="radio" name="cam" value="event"><span>Real event camera on the Kria <span class="badge plan">planned</span><small>needs the camera adapter (Saturday)</small></span></label>
+      </fieldset>
+      <fieldset id="fs-kria"><legend>Kria install</legend>
+        <label class="opt"><input type="radio" name="kinst" value="pixi" checked><span>pixi<small>same commands as the PC, direct device / FPGA access</small></span></label>
+        <label class="opt"><input type="radio" name="kinst" value="docker"><span>Docker<small>image <code>reflex-kria</code>, works offline once built</small></span></label>
+      </fieldset>
+      <fieldset id="fs-det"><legend>2 · Detector</legend>
+        <label class="opt"><input type="radio" name="det" value="snn" checked><span>SNN<small>needs PyTorch and <code>out/models/snn.pt</code></small></span></label>
+        <label class="opt"><input type="radio" name="det" value="simple"><span>No-learning detector<small>counts events; the fallback and the baseline</small></span></label>
+      </fieldset>
+      <fieldset><legend>3 · Robot</legend>
+        <label class="opt"><input type="radio" name="robot" value="simwin" checked><span>Simulated Go2, MuJoCo window</span></label>
+        <label class="opt"><input type="radio" name="robot" value="simweb"><span>Simulated Go2, headless<small>watch it in the browser dashboard</small></span></label>
+        <label class="opt"><input type="radio" name="robot" value="real"><span>Real Go2 <span class="badge warn">untried</span><small>behavior node alone; the Go2 replaces the simulator</small></span></label>
+      </fieldset>
+      <fieldset id="fs-scene"><legend>Scene</legend>
+        <label class="opt"><input type="radio" name="scene" value="lab" checked><span>Lab (default, what the network was trained on)</span></label>
+        <label class="opt"><input type="radio" name="scene" value="park"><span>Park</span></label>
+      </fieldset>
+      <fieldset><legend>Extras</legend>
+        <label class="opt"><input type="checkbox" name="web" checked><span>Browser dashboard (<code>ros-web</code>)</span></label>
+        <label class="opt"><input type="checkbox" name="shell"><span>Inspection shell (<code>ros-shell</code>)</span></label>
+      </fieldset>
+    </form>
+
+    <div>
+      <div id="builder-out"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ KRIA -->
+<section class="tab" id="tab-kria">
+  <h2>Kria KV260: the camera side on the board</h2>
+  <p class="lede">The target layout keeps the heavy data on the board: the camera and the network run on the Kria,
+    and only <code>/reflex/decision</code> (a few bytes, 30 per second) crosses the network. Today a webcam stands in for
+    the event camera and the network runs on the CPU, not on the FPGA.</p>
+
+  <div class="machines">
+    <div class="machine"><h4>Kria KV260 <span class="badge ok">rehearsed</span></h4>
+      <div class="nd real"><b>event_camera_webcam</b><br>webcam → events → windows</div>
+      <div class="nd real"><b>reflex_perception</b><br>no-learning detector (no PyTorch on the board yet)</div>
+      <div class="nd plan"><b>camera adapter + SNN on FPGA</b><br>Saturday: real sensor, RIVERLib</div></div>
+    <div class="machine"><h4>PC / laptop</h4>
+      <div class="nd real"><b>reflex_behavior</b><br>decision → sport request</div>
+      <div class="nd sim"><b>go2_sim_bridge</b><br>simulated dog (until the real one)</div>
+      <div class="nd sim"><b>reflex_web_viewer</b><br>optional dashboard</div></div>
+    <div class="machine"><h4>Go2 <span class="badge plan">Saturday</span></h4>
+      <div class="nd plan"><b>sport mode</b><br>listens on <code>/api/sport/request</code>, 192.168.123.x over Ethernet</div></div>
+  </div>
+
+  <h3>Rehearsal, 19 Nov 2026 (KV260 + Logitech C920)</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td>PC sees the board's nodes</td><td>yes, over CycloneDDS, <code>ufw</code> active, no extra rules</td></tr>
+    <tr><td><code>/reflex/decision</code> rate at the PC</td><td>30.0 Hz, 1.9 kB/s</td></tr>
+    <tr><td>Newest frame on the Kria → request on the PC</td><td>6–13 ms (clocks NTP-synchronized)</td></tr>
+    <tr><td>Simulated dog reacts to a hand in front of the webcam</td><td>yes: lean, crouch, back to stand</td></tr>
+    <tr><td>CPU on the Kria</td><td>camera node ≈ 70–85 % of one core, perception ≈ 15 %</td></tr>
+  </table></div>
+  <p class="note">This tests plumbing (arm64 install, DDS across two machines, message sizes, latency), not detection
+    quality: a 30 fps webcam is a poor event camera. Not done: the SNN on the board, anything with the FPGA.</p>
+
+  <h3>Two ways to install</h3>
+  <div class="grid two">
+    <div class="card"><b>pixi</b> <span class="badge ok">tried</span>
+      <div class="code"><div class="label"><span class="where">PC</span> copy the code</div><pre>NO_DOCKER=1 scripts/sync_kria.sh ubuntu@kria.local</pre></div>
+      <div class="code"><div class="label"><span class="where">Kria</span> once</div><pre>curl -fsSL https://pixi.sh/install.sh | PIXI_NO_PATH_UPDATE=1 bash
+cd hacklab2-durance-go2
+~/.pixi/bin/pixi install -e kria --frozen          <span class="comment"># 4.5 min, 2.4 GB</span>
+~/.pixi/bin/pixi run --frozen -e kria kria-build   <span class="comment"># after each sync</span></pre></div>
+      <div class="code"><div class="label"><span class="where">PC</span> run the camera side on the board</div><pre>ssh -t ubuntu@kria.local 'cd hacklab2-durance-go2 &amp;&amp; ~/.pixi/bin/pixi run --frozen -e kria kria-camera'</pre></div>
+      <p>Always pass <code>--frozen</code> on the board: its pixi is newer than the PC's and would rewrite the lock file.</p></div>
+    <div class="card"><b>Docker</b> <span class="badge ok">tried</span>
+      <div class="code"><div class="label"><span class="where">PC</span> copy and build the image on the board</div><pre>scripts/sync_kria.sh ubuntu@kria.local</pre></div>
+      <div class="code"><div class="label"><span class="where">PC</span> run it</div><pre>ssh -t ubuntu@kria.local docker run --rm -it --net=host \
+    --device /dev/video0 reflex-kria</pre></div>
+      <div class="code"><div class="label"><span class="where">PC</span> with arguments (they replace the default command)</div><pre>ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 reflex-kria \
+    ros2 launch reflex_ros camera.launch.py detector:=simple mirror:=true</pre></div>
+      <p>1.3 GB image. Devices and the FPGA must be passed in explicitly; a saved image works without internet.</p></div>
+  </div>
+
+  <h3>Networking</h3>
+  <ul>
+    <li>Everything uses ROS domain 0, so nothing has to be exported. On a network shared with other teams, pick a number and set
+      it everywhere: <code>export ROS_DOMAIN_ID=42</code> on the PC, <code>docker run -e ROS_DOMAIN_ID=42 …</code> on the board.
+      A mismatch gives no error, only silence.</li>
+    <li>If machines do not see each other: same <code>ROS_DOMAIN_ID</code>, same <code>RMW_IMPLEMENTATION</code>
+      (CycloneDDS), same subnet, multicast allowed by switch and firewall. Check with <code>ros2 node list</code> on both.</li>
+    <li>Whether RoboStack's CycloneDDS talks to the real Go2 is not verified. <code>docker/</code> is the fallback.</li>
+  </ul>
+</section>
+
+<!-- ================================================================ DATA -->
+<section class="tab" id="tab-data">
+  <h2>Data and training</h2>
+  <p class="lede">The network learns on simulated episodes first, then is fine-tuned on recorded takes. Hard
+    negatives are there so it cannot learn “many events = threat”.</p>
+
+  <div class="grid two">
+    <div class="card"><b>From simulation</b>
+      <div class="code"><pre>pixi run gen-data   <span class="comment"># 2000 episodes → data/synth (~10 min, 63 MB)</span>
+pixi run train      <span class="comment"># → out/models/snn.pt (~90 s)</span>
+pixi run eval       <span class="comment"># SNN vs no-learning detector, held-out windows</span>
+pixi run view-data data/synth --label left</pre></div></div>
+    <div class="card"><b>From recordings</b>
+      <div class="code"><pre><span class="comment"># a camera source must be running (ros-camera, kria-camera, ros-sim)</span>
+pixi run -e ros ros-record session:=sat_am   <span class="comment"># l c r n start, SPACE = ball arrived</span>
+pixi run build-real data/real/*              <span class="comment"># → data/real_ds</span>
+pixi run view-data data/real_ds
+pixi run finetune-real --val-session sat_pm  <span class="comment"># → out/models/snn_real.pt</span></pre></div>
+      <p>Then run the camera side with <code>detector:=snn model:=out/models/snn_real.pt</code>.</p></div>
+  </div>
+
+  <h3>Episode kinds</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Kind</th><th>What happens</th><th>Label</th></tr>
+    <tr><td><code>approach</code></td><td>ball rolled at the dog, arrives left / center / right</td><td>that side</td></tr>
+    <tr><td><code>miss</code></td><td>ball rolled past the dog, well to one side</td><td>none</td></tr>
+    <tr><td><code>crossing</code></td><td>ball crosses the view sideways without approaching</td><td>none</td></tr>
+    <tr><td><code>slow</code></td><td>ball creeps towards the dog too slowly to be a threat</td><td>none</td></tr>
+    <tr><td><code>walker</code></td><td>a person-sized shape walks across</td><td>none</td></tr>
+    <tr><td><code>idle</code></td><td>only sensor noise and camera shake</td><td>none</td></tr>
+  </table></div>
+
+  <h3>The network</h3>
+  <p>Small convolutional spiking network, 26.5k parameters, plain PyTorch, trained with surrogate gradients. Every
+    choice is a config field because Durance's RIVERLib supported layers are not known yet:</p>
+  <ul>
+    <li>leaky integrate-and-fire neurons, reset by subtraction, fixed threshold</li>
+    <li>convolution and linear layers only; no normalization, no pooling inside</li>
+    <li>binary spike input; readout keeps a coarse left / right grid, then a non-spiking leaky integrator</li>
+  </ul>
+
+  <h3>The reflex state machine</h3>
+  <div class="loop">
+    <div class="step">idle</div><span class="to">— N agreeing threats in a row →</span>
+    <div class="step">reacting</div><span class="to">— hold →</span>
+    <div class="step">refractory</div><span class="to">— rest →</span>
+    <div class="step">idle</div>
+  </div>
+  <p>The same for both detectors, in simulation and on the robot. While reacting or resting, decisions are ignored:
+    the dog's own motion floods the camera with events. Hard limits in the behavior node: lean ≤ 0.5 rad, sideways
+    speed ≤ 0.5 m/s, a watchdog when decisions stop.</p>
+</section>
+
+<!-- ================================================================ COMMANDS -->
+<section class="tab" id="tab-commands">
+  <h2>Commands</h2>
+  <p class="lede">Everything starts with <code>pixi run</code>, from the repository folder. <code>-e ros</code> selects
+    the environment with ROS 2; ROS arguments go after the command as <code>name:=value</code>. Stop anything with
+    <kbd>Ctrl</kbd>+<kbd>C</kbd>.</p>
+  <input class="cmd-search" id="cmd-search" type="search" placeholder="Filter: kria, record, park, web…" aria-label="Filter commands">
+  <div class="pills" id="cmd-pills"></div>
+  <div id="cmd-list"></div>
+
+  <h3>When something does not work</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Symptom</th><th>Cause</th></tr>
+    <tr><td>The dog reacts to nothing, odd scores, absurd latency</td><td>Two launchers at once share topics. Stop one, or isolate one: <code>ROS_DOMAIN_ID=7 pixi run -e ros ros-sim</code></td></tr>
+    <tr><td><code>ros2: command not found</code></td><td>Not inside <code>ros-shell</code>; on the Kria use <code>~/.pixi/bin/pixi</code> and <code>-e kria</code></td></tr>
+    <tr><td><code>cannot open camera 0</code></td><td>No camera on that machine, or another number: <code>device:=2</code></td></tr>
+    <tr><td>The dog does not react</td><td>No camera source running; simple detector calibrated while something moved (<code>/reflex/recalibrate</code>); <code>enabled:=false</code></td></tr>
+    <tr><td>The web dashboard does not move</td><td>The simulator was started with a plain command (<code>view</code> / <code>drive</code>); use a <code>ros-</code> one</td></tr>
+    <tr><td>Dashboard on port 8081</td><td>Another dashboard is still running on 8080</td></tr>
+    <tr><td>Keys do nothing</td><td>The terminal (<code>ros-teleop</code>, <code>ros-tricks</code>, <code>ros-record</code>) or the 3D window must have focus</td></tr>
+    <tr><td>Nodes on two machines do not see each other</td><td>Different network or <code>ROS_DOMAIN_ID</code>; <code>ros2 node list</code> on both</td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================ STATUS -->
+<section class="tab" id="tab-status">
+  <h2>Status and results</h2>
+  <p class="lede">What works, what is simulated, what waits for the hardware.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Part</th><th>State</th></tr>
+    <tr><td>Event-camera emulator, MuJoCo scene with ball launcher and head camera</td><td><span class="badge ok">working, tested</span></td></tr>
+    <tr><td>Synthetic dataset with hard negatives</td><td><span class="badge ok">working, tested</span></td></tr>
+    <tr><td>SNN (26.5k parameters) and training</td><td><span class="badge ok">trains in ~90 s</span> 81 % window accuracy on held-out simulated episodes</td></tr>
+    <tr><td>No-learning detector and reflex state machine</td><td><span class="badge ok">working, tested</span></td></tr>
+    <tr><td>Sport-mode <code>api_id</code> table, checked against Unitree's client</td><td><span class="badge warn">not tried on a robot</span></td></tr>
+    <tr><td>Closed loop over ROS 2 in simulation</td><td><span class="badge ok">working</span></td></tr>
+    <tr><td>Camera side on a Kria KV260, webcam as stand-in, PC as robot</td><td><span class="badge ok">working</span> 30 Hz, 6–13 ms to the PC</td></tr>
+    <tr><td>Recording, labelling, fine-tuning on recorded data</td><td><span class="badge ok">working with webcam takes</span> not yet with an event camera</td></tr>
+    <tr><td>Optional walking, keyboard and <code>/cmd_vel</code> driving</td><td><span class="badge sim">simulation</span></td></tr>
+    <tr><td>Camera adapter for the real sensor, SNN on the FPGA (RIVERLib), real Go2</td><td><span class="badge plan">not started: blocked on hardware</span></td></tr>
+  </table></div>
+
+  <h3>Per window, simulated (4128 held-out windows)</h3>
+  <div class="table-wrap"><table>
+    <tr><th></th><th>No-learning detector</th><th>SNN</th></tr>
+    <tr><td>Missed threats</td><td>93.5 %</td><td>16.4 %</td></tr>
+    <tr><td>Wrong side</td><td>1.8 %</td><td>8.8 %</td></tr>
+    <tr><td>False alarms, all negatives</td><td>1.1 %</td><td>14.2 %</td></tr>
+  </table></div>
+  <p>With the simulated camera shake no event-count threshold works: low enough to catch balls, it fires on everything.
+    The shake amplitude is a guess until the real dog is measured.</p>
+
+  <h3>Closed loop over ROS 2, simulated (12 shots: 9 balls, 3 hard negatives)</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Detector</th><th>Actuation delay</th><th>Correct</th><th>Missed</th><th>Wrong side</th><th>False triggers</th><th>Median margin</th></tr>
+    <tr><td>SNN</td><td>200 ms</td><td>9 / 9</td><td>0</td><td>0</td><td>2 / 3</td><td>318 ms</td></tr>
+    <tr><td>SNN</td><td>300 ms</td><td>9 / 9</td><td>0</td><td>0</td><td>2 / 3</td><td>188 ms</td></tr>
+    <tr><td>SNN</td><td>400 ms</td><td>6 / 9</td><td>3</td><td>0</td><td>2 / 3</td><td>142 ms</td></tr>
+    <tr><td>No-learning</td><td>300 ms</td><td>2 / 9</td><td>6</td><td>1</td><td>3 / 3</td><td>112 ms</td></tr>
+  </table></div>
+  <p class="note">Twelve shots is a smoke test, not a benchmark. The actuation delay (300 ms) is a guess to be replaced
+    by a measurement on the real Go2. Latency inside the simulation runs on simulated time and is not a latency claim.</p>
+
+  <h3>First hour with the real robot, in order</h3>
+  <ol>
+    <li>Find and test the emergency stop. Fenced area. Rolled balls, not thrown.</li>
+    <li>Robot standing in sport mode. Run behavior with <code>enabled:=false</code>: it logs what it would send and publishes nothing.</li>
+    <li>Send one lean by hand and watch the direction. Wrong way: flip the sign in <code>behavior_node.requests_for</code>.</li>
+    <li>Record the idle dog: its balance control already produces events. That sets the simple detector's threshold and becomes training negatives.</li>
+    <li>Measure command-to-motion delay and put it in the simulator's <code>actuation_delay_ms</code>.</li>
+  </ol>
+</section>
+
+</main>
+<footer>hacklab2-durance-go2 · HackLab #2, CIC Berlin, 21–22 Nov 2026 · Simulation and rehearsal results only.</footer>
+<script src="app.js"></script>
+</body>
+</html>
