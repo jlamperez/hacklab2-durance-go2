@@ -81,10 +81,14 @@ class SimBridge(Node):
             self.emu.reset(to_gray(self.sim.render_eye()), 0)
         self.recent = deque(maxlen=round(self.wcfg.window_ms * 1e-3 / self.sim.dt))
 
-        self.clock_pub = self.create_publisher(ClockMsg, "/clock", 10)
-        self.win_pub = self.create_publisher(EventWindow, "/reflex/events_window", qos_profile_sensor_data)
+        # As the robot only, it publishes no camera data and no clock: creating those
+        # publishers anyway would draw it as a second camera in rqt_graph.
+        self.clock_pub = self.win_pub = self.img_pub = None
+        if not self.robot_only:
+            self.clock_pub = self.create_publisher(ClockMsg, "/clock", 10)
+            self.win_pub = self.create_publisher(EventWindow, "/reflex/events_window", qos_profile_sensor_data)
+            self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", 2)   # reliable: any viewer can subscribe
         self.out_pub = self.create_publisher(String, "/reflex/sim/outcome", 10)
-        self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", 2)   # reliable: any viewer can subscribe
         self.create_subscription(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
 
         self.pending = []            # (apply_time_s, pose, api name, velocity or None)

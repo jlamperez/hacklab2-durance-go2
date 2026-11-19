@@ -19,6 +19,11 @@ Main reflex: goalkeeper / dodge. The network classifies a fast-approaching objec
         50 ms of events             none/left/center/right    Unitree sport-mode command
 ```
 
+The same thing as drawn by `rqt_graph` with the camera side on a Kria and the robot side
+on a PC:
+
+![ROS 2 graph](docs/img/rqt_graph_topics.png)
+
 Four boxes joined by three ROS 2 topics. Each box can be swapped without touching the
 others: that is how the same code runs fully simulated on one PC, with the camera side on
 a Kria board, and (the plan for the hackathon) with the real camera and the real dog.

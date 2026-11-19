@@ -26,7 +26,31 @@ pixi run -e ros ros-shell      # a shell with ROS 2 and this workspace ready
 On the real robot the bridge is replaced by two things: a camera adapter that publishes
 `/reflex/events_window`, and the Go2 itself listening on `/api/sport/request`.
 
-`rqt_graph` draws this live.
+`rqt_graph` draws this live:
+
+```bash
+pixi run -e ros rqt_graph
+```
+
+Camera side on a Kria KV260 (`event_camera_webcam`, `reflex_perception`), robot side on
+the PC (`reflex_behavior`, `go2_sim_bridge`), 19 Nov 2026. The graph does not show which
+machine a node runs on.
+
+Nodes only:
+
+![rqt_graph, nodes only](img/rqt_graph_nodes.png)
+
+Nodes and topics (`Nodes/Topics (all)` in the drop-down):
+
+![rqt_graph, nodes and topics](img/rqt_graph_topics.png)
+
+These screenshots show an arrow from `go2_sim_bridge` to `/reflex/events_window`. It was
+a leftover: in robot-only mode the bridge created that publisher without ever using it.
+Fixed since; the only source of event windows here is `event_camera_webcam`.
+
+In the drop-down, `Nodes only` shows nodes joined by topic names; `Nodes/Topics (all)`
+draws topics as boxes. Untick `Debug` to see `/rosout` and `/parameter_events`. The
+refresh button redraws after nodes start or stop.
 
 ## Commands
 
