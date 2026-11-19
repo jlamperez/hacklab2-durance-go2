@@ -174,6 +174,7 @@ class Go2Sim:
         self.mode = "pose"                  # "pose": fixed postures; "walk": the policy drives the legs
         self.command = np.zeros(3, dtype=np.float32)   # vx, vy (m/s), yaw rate (rad/s)
         self._passive = (m.dof_damping[self._v_adr].copy(), m.dof_frictionloss[self._v_adr].copy())
+        self._contact = (int(m.opt.cone), float(m.opt.impratio))
         self._steps = 0
         self.reset()
 
@@ -227,10 +228,14 @@ class Go2Sim:
             # The policy was trained on joints without passive damping or friction loss.
             m.dof_damping[self._v_adr] = 0.0
             m.dof_frictionloss[self._v_adr] = 0.0
+            # Contact model used in training. With the Menagerie one (elliptic cone, impratio
+            # 100) the same policy walks at 50-70 % of the commanded speed instead of 70-85 %.
+            m.opt.cone, m.opt.impratio = mujoco.mjtCone.mjCONE_PYRAMIDAL, 1.0
             self.gait.reset()
             self._steps = 0
         else:
             m.dof_damping[self._v_adr], m.dof_frictionloss[self._v_adr] = self._passive
+            m.opt.cone, m.opt.impratio = self._contact
         self.mode = mode
 
     def walk_towards(self, x: float, y: float, heading: float = 0.0, tol: float = 0.06) -> bool:

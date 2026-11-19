@@ -152,7 +152,8 @@ postures (stand, crouch, lean) and every earlier result are untouched.
 - `Go2Sim.enable_walking()` loads it; `set_velocity(vx, vy, wz)` walks; `set_pose(name)`
   returns to postures. The dog has two modes, `pose` and `walk`.
 - We kept the Menagerie model. In `walk` mode the simulator sets joint damping and
-  friction loss to zero and uses the policy's gains; in `pose` mode it restores them.
+  friction loss to zero, uses the policy's gains and the training contact model; in
+  `pose` mode it restores everything.
 
 Three ways to use it:
 
@@ -164,17 +165,24 @@ Three ways to use it:
 
 Measured in our simulator (MuJoCo on the CPU, a different engine from the one it was
 trained in). It never fell in these runs, including starting to walk from the crouch.
-It moves slower than commanded:
+Steady speed over 4 s, after 2 s to get going:
 
-| Command | Measured (average over 3-4 s, including the start) |
-|---|---|
-| forward 0.8 m/s | 0.61 m/s |
-| backward 0.4 m/s | 0.25 m/s |
-| sideways 0.4 m/s | 0.17 m/s |
-| turn 0.8 rad/s | 0.47 rad/s |
+| Command | Measured | Before the contact fix |
+|---|---|---|
+| forward 0.5 m/s | 0.47 (93 %) | 0.36 (73 %) |
+| forward 1.0 m/s | 0.91 (91 %) | 0.86 (86 %) |
+| backward 0.4 m/s | 0.30 (76 %) | 0.27 (67 %) |
+| sideways 0.4 m/s | 0.26 (65 %) | 0.19 (47 %) |
+| turn 0.8 rad/s | 0.72 (90 %) | 0.47 (59 %) |
 
-Whether the shortfall comes from the policy itself or from the change of engine was not
-investigated.
+The contact fix: the Menagerie model uses an elliptic friction cone with `impratio` 100;
+training used MuJoCo's defaults (pyramidal cone, `impratio` 1). Tested one setting at a
+time, the time step and the calf rotor inertia made no difference and the contact model
+explained the shortfall. `Go2Sim` now switches to the training contact model in `walk`
+mode and back in `pose` mode. Sideways and backward stay below the command; that part
+is probably the policy itself (not verified against its own simulator).
+
+The closed-loop run below was made before this fix.
 
 Closed loop with sidesteps, one run of 12 shots with the SNN and 300 ms actuation delay:
 8 of 9 balls answered on the correct side, 1 wrong side, 0 missed; 3 of 3 negatives
