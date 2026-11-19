@@ -87,6 +87,7 @@ unverified; `docker/` holds the fallback.
 
 What is left to run on the real robot, and the Kria + webcam rehearsal: `docs/real-robot.md`.
 How to look inside the running ROS 2 system: `docs/inspecting-ros.md`.
+Every command, where it runs and recipes: `docs/commands.md` (keep it in sync with `pixi.toml`).
 See `docs/questions-for-durance.md`. For sport mode versus low-level control, and why
 `unitree_mujoco` is not used (yet), see `docs/go2-control.md`. Camera model and resolution, recording format,
 RIVERLib's supported layers, and the KV260 image are all assumptions until Saturday.

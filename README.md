@@ -53,6 +53,9 @@ Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 
 ## Commands
 
+Lost between pixi, ROS and the Kria? `docs/commands.md` explains every command, where it
+runs, its arguments and step-by-step recipes.
+
 Requires [pixi](https://pixi.sh). Two environments: the default one (Python, MuJoCo,
 PyTorch) and `ros` (adds ROS 2 Humble), used as `pixi run -e ros ...`. A third one,
 `kria`, is the light arm64 environment for the board.

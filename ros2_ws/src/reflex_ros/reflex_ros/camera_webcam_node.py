@@ -45,7 +45,10 @@ class WebcamEventCamera(Node):
         self.cap.set(cv2.CAP_PROP_FPS, fps)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self.cap.isOpened():
-            raise RuntimeError(f"cannot open camera {device}")
+            import glob
+            found = ", ".join(sorted(glob.glob("/dev/video*"))) or "none"
+            raise RuntimeError(f"cannot open camera {device}. Video devices on this machine: {found}. "
+                               "Plug a camera in, or pick another with device:=N")
         # No synthetic noise: a real webcam brings its own.
         self.emu = EventEmulator(self.cfg.height, self.cfg.width,
                                  EmuConfig(c_on=contrast, c_off=contrast, noise_rate_hz=0.0, hot_pixel_frac=0.0))
