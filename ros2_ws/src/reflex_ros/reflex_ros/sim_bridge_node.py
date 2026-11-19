@@ -6,6 +6,9 @@
               /clock                  simulated time
               /reflex/sim/outcome     std_msgs/String, one JSON line per shot
 
+With robot_only it is just the robot (no camera, no balls, no /clock). Adding camera:=true
+to that keeps the dog's simulated event camera on, e.g. to watch the events while driving.
+
 It rolls balls (and hard negatives) at the dog, applies incoming requests after a
 configurable actuation delay, and scores each shot. The behavior node cannot tell this
 apart from the robot, which is the point: it is that node's test bench.
@@ -61,6 +64,9 @@ class SimBridge(Node):
         # /clock: events come from somewhere else (a webcam node, a Kria board) in real time.
         self.robot_only = bool(p("robot_only", False).value)
         self.use_viewer = bool(p("viewer", False).value)       # 3D window; robot_only mode only
+        # camera: in robot_only mode, also publish what the dog's simulated event camera sees
+        # (for driving it around and watching the events). Always on outside robot_only.
+        self.camera = bool(p("camera", False).value) or not self.robot_only
         self.viewer = None
         # locomotion: "none" = postures only (default). "rl" = a Move request makes the dog
         # really walk, using the learned policy in models/go2_walk.onnx.
@@ -79,7 +85,7 @@ class SimBridge(Node):
             self.sim.set_shake(self.rng, float(self.rng.uniform(0.2, 1.5)))
         h, w = self.sim.eye_hw
         self.emu = EventEmulator(h, w, EmuConfig.randomized(self.rng) if randomize else EmuConfig(), self.rng)
-        if not self.robot_only:
+        if self.camera:
             self.emu.reset(to_gray(self.sim.render_eye()), 0)
         self.recent = deque(maxlen=round(self.wcfg.window_ms * 1e-3 / self.sim.dt))
 
@@ -88,6 +94,7 @@ class SimBridge(Node):
         self.clock_pub = self.win_pub = self.img_pub = None
         if not self.robot_only:
             self.clock_pub = self.create_publisher(ClockMsg, "/clock", 10)
+        if self.camera:
             self.win_pub = self.create_publisher(EventWindow, "/reflex/events_window", qos_profile_sensor_data)
             self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", 2)   # reliable: any viewer can subscribe
         self.out_pub = self.create_publisher(String, "/reflex/sim/outcome", 10)
@@ -258,12 +265,13 @@ class SimBridge(Node):
                 if not self.viewer.is_running():
                     os._exit(0)      # window closed; MuJoCo's viewer teardown is unsafe, leave directly
                 self.viewer.sync()
-            return
+            if not self.camera:
+                return
         eye = sim.render_eye()
         t_us = int(sim.time * 1e6)
         self.recent.append(self.emu.step(to_gray(eye), t_us))
 
-        if self.steps % 5 == 0:
+        if self.clock_pub is not None and self.steps % 5 == 0:
             msg = ClockMsg()
             msg.clock.sec, msg.clock.nanosec = t_us // 1_000_000, (t_us % 1_000_000) * 1000
             self.clock_pub.publish(msg)
@@ -282,7 +290,10 @@ class SimBridge(Node):
         cfg = self.wcfg
         window = make_window(np.concatenate(self.recent), t_us, cfg)
         msg = EventWindow()
-        msg.header.stamp.sec, msg.header.stamp.nanosec = t_us // 1_000_000, (t_us % 1_000_000) * 1000
+        if self.robot_only:      # no /clock in this mode: everybody else runs on wall time
+            msg.header.stamp = self.get_clock().now().to_msg()
+        else:
+            msg.header.stamp.sec, msg.header.stamp.nanosec = t_us // 1_000_000, (t_us % 1_000_000) * 1000
         msg.header.frame_id = "event_camera"
         msg.window_ms = float(cfg.window_ms)
         msg.n_bins, msg.channels, msg.height, msg.width = cfg.shape

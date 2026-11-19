@@ -36,6 +36,7 @@ pixi run -e ros ros-sim     # closed loop over ROS 2 in simulation; args: detect
 pixi run -e ros ros-camera     # camera side: webcam as stand-in event camera + perception
 pixi run -e ros ros-robot-sim  # robot side: behavior + MuJoCo dog acting only as the robot
 pixi run -e ros ros-drive      # drive the walking dog over ROS 2; second terminal: ros-teleop
+                               #   camera:=true adds the simulated event camera + detector while driving
 pixi run -e ros ros-record session:=NAME   # record labelled takes from the live stream (docs/recording.md)
 pixi run -e ros ros-tricks     # keyboard for built-in tricks (Hello, Sit, ...); acrobatics off by default
 pixi run -e ros ros-web        # dashboard in the browser (viser), http://localhost:8080; listens only

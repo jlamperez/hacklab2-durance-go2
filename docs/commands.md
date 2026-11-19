@@ -58,6 +58,7 @@ Two kinds: **launchers** start part of the pipeline, **tools** attach to whateve
 | `ros-camera` | webcam on this machine | yes | no | no |
 | `ros-robot-sim` | no | no | yes | simulated, waits for decisions |
 | `ros-drive` | no | no | no | simulated, walks on `/cmd_vel` |
+| `ros-drive camera:=true` | simulated, moves with the dog | yes | no | simulated, walks on `/cmd_vel` |
 
 Only `ros-sim` is complete on its own. The others do nothing visible until their partner runs:
 
@@ -81,7 +82,9 @@ Arguments (defaults in brackets):
 - `ros-robot-sim`: `viewer:=true` (false: no MuJoCo window), `reaction:=euler|move`,
   `locomotion:=none|rl`, `actuation_delay_ms:=300.0`, `enabled:=true` (false: only log
   what it would send), `min_confidence:=0.6`, `consecutive:=2`.
-- `ros-drive`: `viewer:=true`, `actuation_delay_ms:=300.0`, `timeout_s:=0.0`.
+- `ros-drive`: `viewer:=true`, `actuation_delay_ms:=300.0`, `timeout_s:=0.0`,
+  `camera:=false` (true: the dog's simulated event camera and the detector run while you
+  drive), and with the camera `detector:=snn|simple` [snn].
 
 ### Tools (add as many as you want, each in its own terminal)
 
@@ -182,6 +185,17 @@ pixi run finetune-real --val-session sat_pm
 ```bash
 pixi run gen-data && pixi run train && pixi run eval
 ```
+
+**Drive the dog and watch its event camera** (what the sensor sees when the dog itself moves)
+```bash
+pixi run -e ros ros-drive camera:=true       # add viewer:=false to skip the MuJoCo window
+pixi run -e ros ros-teleop
+pixi run -e ros ros-web                      # events, decision and network activity
+```
+Nothing acts on the decisions here: there is no behavior node. Expect false alarms while
+walking (measured: about 15 % of windows, none standing still): the network was trained
+with a still dog, and a moving camera makes the whole scene produce events. With the
+camera on, the simulation runs at about 70 % of real time.
 
 ## When something does not work
 
