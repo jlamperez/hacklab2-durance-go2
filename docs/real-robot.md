@@ -1,7 +1,8 @@
 # From simulation to the real robot
 
-Status on 19 Nov 2026: everything runs in simulation. Nothing has touched the real Go2,
-the real event camera, Durance's toolchain, or a Kria board.
+Status on 19 Nov 2026: everything runs in simulation, and the camera side has run on a
+Kria KV260 with a webcam standing in for the event camera. Nothing has touched the real
+Go2, the real event camera or Durance's toolchain.
 
 ## Target layout
 
@@ -23,8 +24,8 @@ camera -> [camera adapter] -> /reflex/events_window
 | Recording and labelling tool | Not written | Record events to `.npz` by session, label threat / side | Camera adapter |
 | Behavior node | Done, tested against the simulator | No code. Check on the robot: Euler roll sign, which states accept each command | Robot |
 | Launch for the real setup | `camera.launch.py` (camera side) exists; behavior runs alone with `ros2 run reflex_ros behavior` | A `real.launch.py` once the camera adapter exists | - |
-| Network / DDS | Works on one machine only | Kria, laptop and Go2 on the same network (Go2: `192.168.123.x` over Ethernet, CycloneDDS). RoboStack's CycloneDDS against the Go2 is unverified | Robot |
-| Kria software | Nothing installed | ROS 2 Humble + `reflex` + the two ROS packages on arm64; `docker/kria` not written | Durance's KV260 image |
+| Network / DDS | Kria <-> PC works over CycloneDDS (19 Nov) | Kria, laptop and Go2 on the same network (Go2: `192.168.123.x` over Ethernet, CycloneDDS). RoboStack's CycloneDDS against the Go2 is unverified | Robot |
+| Kria software | `docker/kria` image built and run on a KV260 (camera side, no PyTorch) | Add PyTorch or RIVERLib, FPGA access from the container or a native install | Durance's KV260 image |
 | PC fallback | Not written | `docker/pc-humble`, in case RoboStack's DDS does not talk to the Go2 | - |
 
 ## First hour with the robot, in order
@@ -46,9 +47,30 @@ a PC runs the robot side, and they talk over ROS 2 on the network.
 A webcam at 30 fps is a poor event camera. This tests plumbing (arm64 install, DDS between
 two machines, message sizes, latency), not detection quality.
 
-Tested so far (19 Nov): both sides on the same PC with a Logitech C920. 30 windows/s,
-decisions reach behavior, the simulated dog reacts, 16-28 ms from frame to request.
-**Not tested: anything on a Kria, anything across two machines.**
+**Done on 19 Nov 2026** with a KV260 (Ubuntu 22.04, kernel 5.15 xilinx-zynqmp, 4 GB) and
+a Logitech C920, PC and board on the same home network:
+
+| Check | Result |
+|---|---|
+| Image build on the board | 4.5 min, 1.29 GB (`docker/kria/Dockerfile`) |
+| PC sees the board's nodes | yes, with `ufw` active on the PC and no extra rules |
+| `/reflex/decision` rate at the PC | 30.0 Hz, 1.9 kB/s |
+| Newest frame on the Kria to request on the PC | 6-13 ms (both clocks NTP-synchronized) |
+| Simulated dog reacts to motion in front of the webcam | yes (lean, crouch, back to stand) |
+| CPU on the Kria | camera node about 85 % of one core, perception about 15 % |
+
+Not done: the SNN on the board (needs PyTorch for arm64 in the image), anything with the
+FPGA, a pixi environment for arm64 as an alternative to Docker.
+
+Three problems found and fixed on the way, all of which would have cost time on Saturday:
+
+1. **Publishing a large `uint8[]` from Python was 40x too slow.** Assigning `bytes` to the
+   message field makes rclpy check the 72000 elements one by one: 0.25 s per window on the
+   Kria (7 windows/s instead of 30). Assigning `array.array("B", ...)` takes the fast path.
+2. **Docker's default bridge had no DNS during builds on this board.** `docker build
+   --network=host` fixes it; `--pull=false` avoids a registry lookup on every rebuild.
+3. **An rsync exclude named `data` also dropped `reflex/data`.** Excludes are now anchored
+   (`/data`).
 
 ### PC (robot side)
 
@@ -57,24 +79,36 @@ export ROS_DOMAIN_ID=42
 pixi run -e ros ros-robot-sim            # behavior + MuJoCo dog in a 3D window
 ```
 
-### Kria (camera side)
+### Kria (camera side), with Docker
 
-Assumes Ubuntu 22.04 for Kria with ROS 2 Humble from apt. The camera side needs only
-numpy, OpenCV and ROS; no PyTorch (with `detector:=simple`), no MuJoCo.
+No sudo needed if the user is in the `docker` group. From the PC:
+
+```bash
+scripts/sync_kria.sh ubuntu@kria.local   # copy the code (under 1 MB) and build the image on the board
+ssh ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 reflex-kria
+```
+
+The image holds ROS 2 Humble, CycloneDDS, OpenCV and this project's camera side, with
+`ROS_DOMAIN_ID=42`. No PyTorch, no MuJoCo: it runs the no-learning detector.
+
+Wave a hand on one side of the webcam: the dog on the PC should lean.
+
+### Kria, without Docker (not tried)
+
+Needs sudo. Ubuntu 22.04 with ROS 2 Humble from apt:
 
 ```bash
 sudo apt install ros-humble-ros-base ros-humble-rmw-cyclonedds-cpp python3-colcon-common-extensions \
-                 python3-opencv python3-numpy python3-pip
-git clone <this repo> && cd hacklab2-durance-go2
-pip install --no-deps -e .
+                 python3-opencv python3-numpy
 source /opt/ros/humble/setup.bash
 cd ros2_ws && colcon build --packages-select reflex_msgs reflex_ros && cd ..
 source ros2_ws/install/setup.bash
-export ROS_DOMAIN_ID=42 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export PYTHONPATH=$PWD ROS_DOMAIN_ID=42 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ros2 launch reflex_ros camera.launch.py detector:=simple device:=0
 ```
 
-Wave a hand on one side of the webcam: the dog on the PC should lean.
+Direct access to the FPGA is simpler this way than from a container, which may matter
+for Durance's toolchain.
 
 ### What to check
 

@@ -10,6 +10,7 @@ It rolls balls (and hard negatives) at the dog, applies incoming requests after 
 configurable actuation delay, and scores each shot. The behavior node cannot tell this
 apart from the robot, which is the point: it is that node's test bench.
 """
+from array import array
 import json
 import os
 from collections import deque
@@ -270,7 +271,7 @@ class SimBridge(Node):
         msg.header.frame_id = "event_camera"
         msg.window_ms = float(cfg.window_ms)
         msg.n_bins, msg.channels, msg.height, msg.width = cfg.shape
-        msg.data = window.tobytes()
+        msg.data = array("B", window.tobytes())   # array: fast path, bytes are checked one by one
         self.win_pub.publish(msg)
         if self.img_pub.get_subscription_count() > 0:      # only draw it if someone is watching
             h, w = self.sim.eye_hw
@@ -278,7 +279,7 @@ class SimBridge(Node):
             img = Image()
             img.header = msg.header
             img.height, img.width, img.encoding, img.step = h, w, "bgr8", 3 * w
-            img.data = bgr.tobytes()
+            img.data = array("B", bgr.tobytes())
             self.img_pub.publish(img)
 
     def write_frame(self, eye: np.ndarray) -> None:

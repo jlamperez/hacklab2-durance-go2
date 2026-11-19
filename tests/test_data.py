@@ -47,3 +47,22 @@ def test_window_shape_and_content(sim):
     assert win.shape == cfg.shape == (10, 2, 45, 80) and win.dtype == np.uint8
     lo, hi = np.searchsorted(ep.events["t"], [t_end - 50_000, t_end])
     assert win.sum() == hi - lo                 # every event in the window is counted once
+
+
+def test_make_window_equals_bins_then_downsample():
+    import numpy as np
+
+    from reflex.data.windows import WindowConfig, make_window
+    from reflex.events import repr as ev_repr
+    from reflex.events.emu import EVENT_DTYPE
+    rng = np.random.default_rng(3)
+    cfg = WindowConfig()
+    ev = np.zeros(20_000, dtype=EVENT_DTYPE)
+    ev["t"] = np.sort(rng.integers(0, 120_000, len(ev)))
+    ev["x"], ev["y"] = rng.integers(0, cfg.width, len(ev)), rng.integers(0, cfg.height, len(ev))
+    ev["p"] = rng.integers(0, 2, len(ev))
+    t_end = 100_000
+    lo, hi = np.searchsorted(ev["t"], [t_end - 50_000, t_end])
+    ref = ev_repr.downsample(ev_repr.to_bins(ev[lo:hi], cfg.height, cfg.width, t_end - 50_000, t_end, cfg.n_bins),
+                             cfg.downsample)
+    assert np.array_equal(make_window(ev, t_end, cfg), np.clip(ref, 0, 255).astype(np.uint8))

@@ -10,6 +10,7 @@ camera, so the decisions it produces say nothing about the real sensor.
 This node is also the template for the real camera adapter: replace `read_events`
 with the sensor's SDK and keep the rest.
 """
+from array import array
 import time
 
 import cv2
@@ -35,6 +36,8 @@ class WebcamEventCamera(Node):
         contrast = float(p("contrast_threshold", 0.25).value)
         self.cfg = WindowConfig()
         self.cap = cv2.VideoCapture(int(device), cv2.CAP_V4L2)
+        # Ask for compressed frames: uncompressed, a USB 2 port limits many webcams to 7.5 fps.
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
         self.cap.set(cv2.CAP_PROP_FPS, fps)
@@ -74,14 +77,14 @@ class WebcamEventCamera(Node):
         msg.header.frame_id = "event_camera"
         msg.window_ms = float(self.cfg.window_ms)
         msg.n_bins, msg.channels, msg.height, msg.width = self.cfg.shape
-        msg.data = window.tobytes()
+        msg.data = array("B", window.tobytes())   # array: fast path, bytes are checked one by one
         self.win_pub.publish(msg)
         if self.img_pub.get_subscription_count() > 0:
             bgr = ev_repr.render(ev_repr.to_frame(self.windower.recent(t_us), self.cfg.height, self.cfg.width), 1.5)
             img = Image()
             img.header = msg.header
             img.height, img.width, img.encoding, img.step = self.cfg.height, self.cfg.width, "bgr8", 3 * self.cfg.width
-            img.data = bgr.tobytes()
+            img.data = array("B", bgr.tobytes())
             self.img_pub.publish(img)
         self.frames += 1
         self.events += len(events)

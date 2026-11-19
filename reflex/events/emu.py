@@ -88,9 +88,12 @@ class EventEmulator:
         chunks = [self._emit(n_on, 1, t0, t1), self._emit(n_off, 0, t0, t1)]
 
         # Noise: background activity plus hot pixels, random polarity.
-        rate = np.where(self.hot, self.cfg.hot_rate_hz, self.cfg.noise_rate_hz)
-        n_noise = self.rng.poisson(rate * dt_s).astype(np.int32)
-        if n_noise.any():
+        noisy = self.cfg.noise_rate_hz > 0 or (self.cfg.hot_rate_hz > 0 and self.hot.any())
+        n_noise = None
+        if noisy:
+            rate = np.where(self.hot, self.cfg.hot_rate_hz, self.cfg.noise_rate_hz)
+            n_noise = self.rng.poisson(rate * dt_s).astype(np.int32)
+        if n_noise is not None and n_noise.any():
             ev = self._emit(n_noise, 1, t0, t1)
             ev["p"] = self.rng.integers(0, 2, size=len(ev), dtype=np.uint8)
             chunks.append(ev)
