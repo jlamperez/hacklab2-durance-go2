@@ -59,7 +59,16 @@ Two kinds: **launchers** start part of the pipeline, **tools** attach to whateve
 | `ros-robot-sim` | no | no | yes | simulated, waits for decisions |
 | `ros-drive` | no | no | no | simulated, walks on `/cmd_vel` |
 
-`ros-camera` and `ros-robot-sim` are two halves: run both (or the camera half on the Kria).
+Only `ros-sim` is complete on its own. The others do nothing visible until their partner runs:
+
+| If you start | It does nothing until you also start | Why |
+|---|---|---|
+| `ros-sim` | nothing else needed | camera, detector, behavior and robot are all inside |
+| `ros-robot-sim` | a camera: `kria-camera` on the Kria, or `ros-camera` on a PC with a webcam | the dog waits for decisions on `/reflex/decision` |
+| `ros-camera` / `kria-camera` | a robot: `ros-robot-sim` (or the real Go2 with the behavior node) | decisions are published but nobody acts on them |
+| `ros-drive` | a keyboard: `ros-teleop` (walking) and/or `ros-tricks` (Hello, Sit) | the dog stands still until something publishes `/cmd_vel` or a trick |
+
+`ros-web` can be added to any of them; it never replaces a partner.
 
 Arguments (defaults in brackets):
 
