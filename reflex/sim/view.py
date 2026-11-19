@@ -4,7 +4,8 @@
     pixi run view --speed 0.25    # slow motion
 
 Mouse: left-drag rotates, right-drag pans, scroll zooms. Space pauses.
-Pose keys: S stand, C crouch, L lean left, R lean right.
+Pose keys: X stand, C crouch, Q lean left, E lean right. Chosen among the letters whose
+built-in viewer shortcut can be undone (S, W, R, L, K, G toggle render options that cannot).
 This viewer shows the scene only. For the dog-eye and event-camera panels,
 record a video with `pixi run sim`.
 """
@@ -21,7 +22,7 @@ import numpy as np
 from reflex.sim.scene import POSES, BallShot, Go2Sim  # noqa: F401 (POSES: see tests)
 
 # Key -> pose. Keys arrive as GLFW key codes, which for letters are the uppercase ASCII code.
-KEY_POSES = {"S": "stand", "C": "crouch", "L": "lean_left", "R": "lean_right"}
+KEY_POSES = {"X": "stand", "C": "crouch", "Q": "lean_left", "E": "lean_right"}
 
 
 def pose_for_key(keycode: int) -> str | None:
@@ -84,7 +85,7 @@ def main() -> None:
             if cmd is not None:
                 pending.append(cmd)
 
-    print("pose keys: S stand, C crouch, L lean left, R lean right", flush=True)
+    print("pose keys: X stand, C crouch, Q lean left, E lean right", flush=True)
     if args.drive:
         print("drive keys: UP/DOWN faster/slower, LEFT/RIGHT turn, A/D sidestep, SPACE stop "
               "(each press adds speed)", flush=True)

@@ -158,7 +158,7 @@ Three ways to use it:
 
 | Command | What it does |
 |---|---|
-| `pixi run drive` | 3D window, no ROS. UP/DOWN faster/slower, LEFT/RIGHT turn, A/D sidestep, SPACE stop, plus the pose keys S/C/L/R. Each press adds speed (the viewer does not report key releases) |
+| `pixi run drive` | 3D window, no ROS. UP/DOWN faster/slower, LEFT/RIGHT turn, A/D sidestep, SPACE stop, plus the pose keys X stand, C crouch, Q/E lean left/right. Each press adds speed (the viewer does not report key releases) |
 | `pixi run -e ros ros-drive` and, in a second terminal, `pixi run -e ros ros-teleop` | The same over ROS 2: keyboard -> `/cmd_vel` -> `cmd_vel_to_sport` -> `Move` on `/api/sport/request` -> walking dog. `cmd_vel_to_sport` is robot-agnostic: run alone, it would drive a real Go2 in sport mode (not tried) |
 | `pixi run -e ros ros-sim locomotion:=rl reaction:=move move_vy:=0.5 hold_s:=1.0` | Closed loop where the reflex is a real sidestep. Between shots the simulator walks the dog back to its spot using ground truth |
 
