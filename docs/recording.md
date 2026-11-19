@@ -5,7 +5,7 @@ Three steps: record takes, look at them, fine-tune. Works with anything that pub
 
 ## 1. Record
 
-With the camera side running (and the same `ROS_DOMAIN_ID`):
+With the camera side running:
 
 ```bash
 pixi run -e ros ros-record session:=sat_am

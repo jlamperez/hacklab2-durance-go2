@@ -18,7 +18,9 @@ COPY ros2_ws/src/reflex_ros ros2_ws/src/reflex_ros
 RUN . /opt/ros/humble/setup.sh && cd ros2_ws && \
     colcon build --packages-select reflex_msgs reflex_ros --cmake-args -DCMAKE_BUILD_TYPE=Release
 
-ENV PYTHONPATH=/ws RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=42
+# ROS_DOMAIN_ID is left at the default (0). To isolate from other ROS 2 machines on the
+# network, pass the same value on both sides: docker run -e ROS_DOMAIN_ID=42 ...
+ENV PYTHONPATH=/ws RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 COPY docker/kria/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["ros2", "launch", "reflex_ros", "camera.launch.py", "detector:=simple"]

@@ -75,7 +75,6 @@ Three problems found and fixed on the way, all of which would have cost time on 
 ### PC (robot side)
 
 ```bash
-export ROS_DOMAIN_ID=42
 pixi run -e ros ros-robot-sim            # behavior + MuJoCo dog in a 3D window
 ```
 
@@ -89,7 +88,7 @@ ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 ref
 ```
 
 The image holds ROS 2 Humble, CycloneDDS, OpenCV and this project's camera side, with
-`ROS_DOMAIN_ID=42`. No PyTorch, no MuJoCo: it runs the no-learning detector.
+the default ROS domain (0). No PyTorch, no MuJoCo: it runs the no-learning detector.
 
 Wave a hand on one side of the webcam: the dog on the PC should lean.
 
@@ -103,7 +102,7 @@ sudo apt install ros-humble-ros-base ros-humble-rmw-cyclonedds-cpp python3-colco
 source /opt/ros/humble/setup.bash
 cd ros2_ws && colcon build --packages-select reflex_msgs reflex_ros && cd ..
 source ros2_ws/install/setup.bash
-export PYTHONPATH=$PWD ROS_DOMAIN_ID=42 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export PYTHONPATH=$PWD RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ros2 launch reflex_ros camera.launch.py detector:=simple device:=0
 ```
 
@@ -119,6 +118,13 @@ for Durance's toolchain.
 | Latency | The bridge logs "N ms from newest event to request". Only meaningful if both clocks are synchronized (chrony/NTP) |
 | CPU load on the Kria | `top` while it runs |
 | The SNN on the Kria's CPU | Needs PyTorch for arm64 (`pip install torch`), then `detector:=snn`. Gives a CPU baseline for `inference_ms` to compare with the FPGA later |
+
+### ROS domain
+
+Everything uses the default domain, 0, so nothing has to be exported. The Go2 is believed
+to use 0 as well (not verified). On a network shared with other ROS 2 teams, pick a
+number and set it on every machine: `export ROS_DOMAIN_ID=42` on the PC and
+`docker run -e ROS_DOMAIN_ID=42 ...` on the board. A mismatch gives no error, only silence.
 
 If the machines do not see each other: same `ROS_DOMAIN_ID`, same `RMW_IMPLEMENTATION`,
 same subnet, multicast allowed by the switch and firewall (`sudo ufw allow from <subnet>`).
