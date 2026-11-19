@@ -62,7 +62,8 @@ Three seams let simulation be swapped for the real thing:
 - `reflex/data/`: simulated episodes (threats and hard negatives), windowing, dataset generation.
 - `reflex/models/snn.py`: the network. `reflex/runtime/`: detectors (SNN, no-learning),
   reflex state machine, sport-mode command table.
-- `reflex/sim/`: standing Go2, ball launcher, head camera. By default the dog does not walk;
+- `reflex/sim/`: standing Go2, ball launcher, head camera. `scenery.py` is an optional
+  outdoor scene (`scene:=park` / `--scene park`); the default lab scene must stay as it is. By default the dog does not walk;
   reflexes are posture changes. Optional walking (`locomotion.py`, `models/go2_walk.onnx`,
   a policy trained with unitree_rl_mjlab) is off unless `enable_walking()` / `locomotion:=rl`
   is used; keep it optional. Details in `docs/go2-control.md`.

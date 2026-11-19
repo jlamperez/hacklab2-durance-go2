@@ -71,10 +71,11 @@ class SimBridge(Node):
         # locomotion: "none" = postures only (default). "rl" = a Move request makes the dog
         # really walk, using the learned policy in models/go2_walk.onnx.
         self.locomotion = p("locomotion", "none").value
+        scene = p("scene", "lab").value                        # "lab" or "park" (reflex/sim/scenery.py)
         self.homing = False
 
         self.rng = np.random.default_rng(seed)
-        self.sim = Go2Sim(seed=seed)
+        self.sim = Go2Sim(seed=seed, scene=scene)
         self.wcfg = WindowConfig()
         if self.locomotion == "rl":
             self.sim.enable_walking()

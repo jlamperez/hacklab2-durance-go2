@@ -175,3 +175,24 @@ def test_hello_raises_a_front_paw_and_ends_standing():
         assert sim.upright() > 0.6
     assert highest > 0.4
     assert not sim.busy and abs(_pitch_deg(sim)) < 5 and sim.data.qpos[2] > 0.27
+
+
+def test_park_scene_is_optional_and_keeps_the_lane_clear():
+    """The park is an extra: same dog, same ball, and nothing solid where balls travel."""
+    import mujoco
+    lab, park = Go2Sim(seed=0), Go2Sim(seed=0, scene="park")
+    assert lab.scene == "lab" and park.model.nq == lab.model.nq
+    assert park.model.ngeom > lab.model.ngeom
+    m = park.model
+    for g in range(m.ngeom):
+        name = m.geom(g).name
+        solid = m.geom_contype[g] or m.geom_conaffinity[g]
+        if m.geom_bodyid[g] == 0 and solid and name not in ("floor", "back_wall"):
+            x, y = m.geom_pos[g][:2]
+            assert not (-0.5 < x < 6.5 and abs(y) < 3.5), name
+    for _ in range(300):
+        park.step()
+    assert park.upright() > 0.95
+    assert park.render_eye().std() > 20          # not a flat picture
+    with pytest.raises(ValueError):
+        Go2Sim(seed=0, scene="moon")

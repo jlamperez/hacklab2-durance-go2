@@ -47,7 +47,7 @@ class WebViewer(Node):
         self.server = viser.ViserServer(host="0.0.0.0", port=port, verbose=False)
         self.server.gui.configure_theme(control_layout="fixed", control_width="large", dark_mode=True)
         self.server.gui.set_panel_label("Go2 reflexes")
-        self._build_scene(seed)
+        self._build_scene(seed, self.declare_parameter("scene", "lab").value)   # as the bridge's
         gui = self.server.gui
 
         with gui.add_folder("Event camera"):
@@ -106,14 +106,14 @@ class WebViewer(Node):
         self.get_logger().info(f"dashboard at http://localhost:{actual} (other machines: http://<this-pc>:{actual})")
 
     # --- 3D scene ------------------------------------------------------------------------
-    def _build_scene(self, seed: int) -> None:
+    def _build_scene(self, seed: int, scene_name: str) -> None:
         from reflex.sim.scene import build_model
         scene = self.server.scene
         scene.set_up_direction("+z")
         scene.add_grid("/floor", width=20.0, height=20.0, plane="xy", cell_size=0.5, section_size=1.0,
-                       plane_color=(110, 112, 108), plane_opacity=1.0, cell_color=(90, 90, 90),
-                       section_color=(70, 70, 70))
-        model = build_model(np.random.default_rng(seed))
+                       plane_color=(70, 105, 50) if scene_name == "park" else (110, 112, 108),
+                       plane_opacity=1.0, cell_color=(90, 90, 90), section_color=(70, 70, 70))
+        model = build_model(np.random.default_rng(seed), scene_name)
         self.handles = {b: scene.add_mesh_trimesh(f"/body/{model.body(b).name or b}", mesh)
                         for b, mesh in body_meshes(model).items()}
         self.scene_note = scene.add_label("/note", "no simulator: 3D scene idle", position=(0.0, 0.0, 0.8))

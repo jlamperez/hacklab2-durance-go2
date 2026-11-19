@@ -17,6 +17,7 @@ ARGS = {
     "reaction": "euler", "actuation_delay_ms": "300.0", "max_shots": "0", "shot_period_s": "3.0",
     "negative_fraction": "0.3", "record": "", "seed": "0", "randomize": "false",
     "min_confidence": "0.6", "consecutive": "2", "locomotion": "none", "move_vy": "0.3", "hold_s": "0.6",
+    "scene": "lab",
 }
 
 
@@ -28,6 +29,7 @@ def generate_launch_description():
         "negative_fraction": PV(LC("negative_fraction"), value_type=float),
         "record": PV(LC("record"), value_type=str), "seed": PV(LC("seed"), value_type=int),
         "randomize": PV(LC("randomize"), value_type=bool), "mode": LC("mode"), "locomotion": LC("locomotion"),
+        "scene": LC("scene"),
     }])
     perception = Node(package="reflex_ros", executable="perception", output="screen", parameters=[{
         "use_sim_time": True, "detector": LC("detector"), "model": LC("model"), "device": LC("device"),

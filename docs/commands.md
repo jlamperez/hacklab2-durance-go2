@@ -86,6 +86,16 @@ Arguments (defaults in brackets):
   `camera:=false` (true: the dog's simulated event camera and the detector run while you
   drive), and with the camera `detector:=snn|simple` [snn].
 
+Scenery: `ros-sim`, `ros-robot-sim` and `ros-drive` take `scene:=lab|park` [lab]. `park` is
+an outdoor scene built from code (grass, a gravel path, trees, benches, a brick wall, houses);
+see `reflex/sim/scenery.py`. Give `ros-web` the same value (`ros-web scene:=park`) or it draws
+the lab. The plain commands take it as `--scene park` (`pixi run view --scene park`, also
+`drive` and `sim`). The network was trained on the lab scene only: in the park it scored
+5 of 9 balls where the lab gave 9 of 9 (one run of 12 shots each), so the README numbers
+are lab numbers.
+
+![The park scene](img/park_scene.png)
+
 ### Tools (add as many as you want, each in its own terminal)
 
 | Command | What it does | Keys go to |
@@ -191,6 +201,12 @@ pixi run gen-data && pixi run train && pixi run eval
 pixi run -e ros ros-drive camera:=true       # add viewer:=false to skip the MuJoCo window
 pixi run -e ros ros-teleop
 pixi run -e ros ros-web                      # events, decision and network activity
+```
+The same in the park, which gives the camera much more to see:
+```bash
+pixi run -e ros ros-drive camera:=true scene:=park
+pixi run -e ros ros-teleop
+pixi run -e ros ros-web scene:=park
 ```
 Nothing acts on the decisions here: there is no behavior node. Expect false alarms while
 walking (measured: about 15 % of windows, none standing still): the network was trained

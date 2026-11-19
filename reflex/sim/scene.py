@@ -88,7 +88,11 @@ def _look_at(pos, target) -> list[float]:
     return [*right, *up]
 
 
-def build_model(rng: np.random.Generator | None = None) -> mujoco.MjModel:
+def build_model(rng: np.random.Generator | None = None, scene: str = "lab") -> mujoco.MjModel:
+    """`scene`: "lab" (default: checkered floor, wall, boxes) or "park" (reflex/sim/scenery.py)."""
+    from reflex.sim import scenery
+    if scene not in scenery.SCENES:
+        raise ValueError(f"unknown scene {scene!r}; choose one of {scenery.SCENES}")
     if not GO2_XML.exists():
         raise FileNotFoundError(f"{GO2_XML} not found. Run `pixi run setup` to fetch the Go2 model.")
     rng = rng or np.random.default_rng(0)
@@ -104,12 +108,7 @@ def build_model(rng: np.random.Generator | None = None) -> mujoco.MjModel:
         mat = spec.add_material(name=name, texrepeat=repeat, texuniform=True)
         mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = name
 
-    checker("floor", [0.55, 0.55, 0.52], [0.42, 0.43, 0.42], [2, 2])
-    checker("wall", [0.75, 0.72, 0.66], [0.55, 0.56, 0.60], [1.5, 1.5])
     checker("ball", [1.0, 1.0, 1.0], [0.25, 0.25, 0.25], [4, 4])   # panels, tinted by rgba
-    spec.add_texture(name="sky", type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
-                     builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
-                     rgb1=[0.62, 0.70, 0.80], rgb2=[0.30, 0.34, 0.40], width=256, height=1536)
 
     spec.visual.headlight.ambient = [0.45, 0.45, 0.45]
     spec.visual.headlight.diffuse = [0.5, 0.5, 0.5]
@@ -118,15 +117,23 @@ def build_model(rng: np.random.Generator | None = None) -> mujoco.MjModel:
     spec.visual.global_.offheight = 720
 
     w = spec.worldbody
-    w.add_light(pos=[1.5, 0, 4], dir=[0, 0, -1], diffuse=[0.6, 0.6, 0.6])
-    w.add_geom(name="floor", type=G.mjGEOM_PLANE, size=[0, 0, 0.05], material="floor")
-    w.add_geom(name="back_wall", type=G.mjGEOM_BOX, pos=[7.0, 0, 1.0], size=[0.05, 5, 1.0], material="wall")
-    # Static clutter so the background is not empty (matters once the camera shakes).
-    for i in range(6):
-        w.add_geom(name=f"clutter{i}", type=G.mjGEOM_BOX,
-                   pos=[rng.uniform(5.0, 6.6), rng.uniform(-4, 4), 0.0],
-                   size=[rng.uniform(0.1, 0.3), rng.uniform(0.1, 0.4), rng.uniform(0.2, 0.9)],
-                   rgba=[*rng.uniform(0.1, 0.9, size=3), 1.0])
+    if scene == "park":
+        scenery.add_park(spec, rng)
+    else:
+        checker("floor", [0.55, 0.55, 0.52], [0.42, 0.43, 0.42], [2, 2])
+        checker("wall", [0.75, 0.72, 0.66], [0.55, 0.56, 0.60], [1.5, 1.5])
+        spec.add_texture(name="sky", type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+                         builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
+                         rgb1=[0.62, 0.70, 0.80], rgb2=[0.30, 0.34, 0.40], width=256, height=1536)
+        w.add_light(pos=[1.5, 0, 4], dir=[0, 0, -1], diffuse=[0.6, 0.6, 0.6])
+        w.add_geom(name="floor", type=G.mjGEOM_PLANE, size=[0, 0, 0.05], material="floor")
+        w.add_geom(name="back_wall", type=G.mjGEOM_BOX, pos=[7.0, 0, 1.0], size=[0.05, 5, 1.0], material="wall")
+        # Static clutter so the background is not empty (matters once the camera shakes).
+        for i in range(6):
+            w.add_geom(name=f"clutter{i}", type=G.mjGEOM_BOX,
+                       pos=[rng.uniform(5.0, 6.6), rng.uniform(-4, 4), 0.0],
+                       size=[rng.uniform(0.1, 0.3), rng.uniform(0.1, 0.4), rng.uniform(0.2, 0.9)],
+                       rgba=[*rng.uniform(0.1, 0.9, size=3), 1.0])
 
     ball = w.add_body(name="ball", pos=[20, 0, 0.1])
     ball.add_freejoint()
@@ -155,9 +162,10 @@ class Go2Sim:
     """Standing Go2 with a PD pose controller and a ball launcher."""
 
     def __init__(self, seed: int = 0, eye_hw: tuple[int, int] = (180, 320),
-                 third_hw: tuple[int, int] = (360, 640)):
+                 third_hw: tuple[int, int] = (360, 640), scene: str = "lab"):
         self.rng = np.random.default_rng(seed)
-        self.model = build_model(self.rng)
+        self.scene = scene
+        self.model = build_model(self.rng, scene)
         self.data = mujoco.MjData(self.model)
         m = self.model
         self.dt = m.opt.timestep

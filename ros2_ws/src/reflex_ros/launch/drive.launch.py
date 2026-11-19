@@ -19,14 +19,14 @@ from launch.substitutions import LaunchConfiguration as LC
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue as PV
 
-ARGS = {"actuation_delay_ms": "300.0", "viewer": "true", "timeout_s": "0.0", "camera": "false",
+ARGS = {"actuation_delay_ms": "300.0", "viewer": "true", "timeout_s": "0.0", "camera": "false", "scene": "lab",
         "detector": "snn", "model": "out/models/snn.pt", "device": "cpu"}
 
 
 def generate_launch_description():
     bridge = Node(package="reflex_ros", executable="sim_bridge", output="screen", parameters=[{
         "robot_only": True, "locomotion": "rl", "viewer": PV(LC("viewer"), value_type=bool),
-        "camera": PV(LC("camera"), value_type=bool),
+        "camera": PV(LC("camera"), value_type=bool), "scene": LC("scene"),
         "actuation_delay_ms": PV(LC("actuation_delay_ms"), value_type=float)}],
         additional_env={"MUJOCO_GL": "glfw"})
     teleop = Node(package="reflex_ros", executable="cmd_vel_to_sport", output="screen", parameters=[{

@@ -17,10 +17,18 @@ _DEFAULT_RGBA = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float32)
 
 
 def geom_rgba(model: mujoco.MjModel, g: int) -> np.ndarray:
-    """Colour MuJoCo would draw the geom with: its own rgba if set, else its material's."""
+    """Colour MuJoCo would draw the geom with: its own rgba if set, else its material's
+    (times the average of the material's texture, if it has one)."""
     rgba, mat = model.geom_rgba[g], int(model.geom_matid[g])
-    if mat >= 0 and np.allclose(rgba, _DEFAULT_RGBA):
-        return model.mat_rgba[mat]
+    if mat < 0 or not np.allclose(rgba, _DEFAULT_RGBA):
+        return rgba
+    rgba = model.mat_rgba[mat]
+    # Textured material: the browser draws plain colours, so use the texture's average.
+    tex = int(model.mat_texid[mat, mujoco.mjtTextureRole.mjTEXROLE_RGB])
+    if tex >= 0 and int(model.tex_nchannel[tex]) == 3:
+        a0, n = int(model.tex_adr[tex]), int(model.tex_height[tex]) * int(model.tex_width[tex])
+        mean = model.tex_data[a0:a0 + 3 * n].reshape(-1, 3).mean(0) / 255.0
+        rgba = np.array([*(rgba[:3] * mean), rgba[3]], dtype=np.float32)
     return rgba
 
 

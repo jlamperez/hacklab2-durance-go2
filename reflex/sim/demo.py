@@ -82,6 +82,7 @@ def main() -> None:
     ap.add_argument("--out", default="out/demo.mp4")
     ap.add_argument("--episodes", type=int, default=3)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--scene", default="lab", choices=("lab", "park"), help="park: outdoor scenery")
     ap.add_argument("--fps", type=int, default=50, help="video frame rate")
     ap.add_argument("--steps-per-frame", type=int, default=2,
                     help="physics steps (2 ms each) per video frame; 2 at 50 fps = 0.2x speed")
@@ -91,7 +92,7 @@ def main() -> None:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(args.seed)
-    sim = Go2Sim(seed=args.seed)
+    sim = Go2Sim(seed=args.seed, scene=args.scene)
     h, w = sim.eye_hw
     sheet = []
     labels = ["left", "center", "right"]

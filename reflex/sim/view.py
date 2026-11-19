@@ -61,6 +61,7 @@ def drive_command(keycode: int, command) -> tuple[float, float, float] | None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--scene", default="lab", choices=("lab", "park"), help="park: outdoor scenery")
     ap.add_argument("--speed", type=float, default=1.0, help="1.0 = real time, 0.25 = slow motion")
     ap.add_argument("--period", type=float, default=3.0, help="simulated seconds between shots")
     ap.add_argument("--no-balls", action="store_true", help="do not roll balls; pose keys only")
@@ -70,7 +71,7 @@ def main() -> None:
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    sim = Go2Sim(seed=args.seed)
+    sim = Go2Sim(seed=args.seed, scene=args.scene)
     next_shot = float("inf") if args.no_balls else 0.5
     pending: list[str] = []   # filled by the viewer thread, drained by the main loop
 

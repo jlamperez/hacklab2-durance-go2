@@ -164,6 +164,13 @@ tricks over ROS 2, run `pixi run -e ros ros-drive` in one terminal and
 |---|---|
 | `bash scripts/setup_rl.sh` | Install unitree_rl_mjlab (to retrain the walking policy; the trained one is in `models/`) |
 | `pixi run rl-play` | Watch the walking policy in its own simulator |
+| `scene:=park` on `ros-sim`, `ros-robot-sim`, `ros-drive`, `ros-web`; `--scene park` on `view`, `drive`, `sim` | Outdoor scenery instead of the lab: grass, path, trees, benches, houses (`reflex/sim/scenery.py`) |
+| `pixi run -e ros ros-drive camera:=true` | Drive the dog with its simulated event camera and the detector running |
+
+![The optional park scene, and what the dog's camera sees in it](docs/img/park_scene.png)
+
+The park is generated from code, not from a real place. The network has only been trained
+on the lab scene: in the park it scored 5 of 9 balls against 9 of 9 in the lab (12 shots each).
 
 ## Typical sessions
 
