@@ -96,3 +96,48 @@ def test_dog_recovers_to_stand_from_every_pose(sim):
             sim.step()
         assert abs(sim.data.qpos[2] - z_stand) < 0.02, f"did not stand back up after {pose}"
         assert abs(sim.data.qpos[1]) < 0.05
+
+
+# --- optional walking --------------------------------------------------------------------
+def _walk(sim, cmd, seconds):
+    x0, y0, h0 = sim.base_pose()
+    sim.set_velocity(*cmd)
+    upright = 1.0
+    for _ in range(int(seconds / sim.dt)):
+        sim.step()
+        upright = min(upright, sim.upright())
+    x, y, h = sim.base_pose()
+    dx, dy = x - x0, y - y0
+    return dx * np.cos(h0) + dy * np.sin(h0), -dx * np.sin(h0) + dy * np.cos(h0), h - h0, upright
+
+
+def test_walking_policy_follows_commands_and_stays_up():
+    sim = Go2Sim(seed=0)
+    sim.enable_walking()
+    fwd, left, turn, up = _walk(sim, (0.8, 0, 0), 3.0)
+    assert fwd > 1.0 and abs(left) < 0.3 and up > 0.95
+    fwd, left, turn, up = _walk(sim, (0, 0.4, 0), 3.0)
+    assert left > 0.25 and up > 0.95
+    fwd, left, turn, up = _walk(sim, (0, 0, 0.8), 3.0)
+    assert turn > 0.8 and up > 0.95
+    fwd, left, turn, up = _walk(sim, (0, 0, 0), 2.0)
+    assert abs(fwd) < 0.15 and abs(left) < 0.1 and up > 0.95
+
+
+def test_postures_still_work_after_walking():
+    sim = Go2Sim(seed=0)
+    damping = sim.model.dof_damping.copy()
+    sim.enable_walking()
+    _walk(sim, (0.5, 0, 0), 1.0)
+    sim.set_pose("crouch")
+    assert sim.mode == "pose" and np.array_equal(sim.model.dof_damping, damping)
+    for _ in range(600):
+        sim.step()
+    assert sim.data.qpos[2] < 0.2 and sim.upright() > 0.95
+
+
+def test_walking_is_off_by_default():
+    sim = Go2Sim(seed=0)
+    assert sim.gait is None and sim.mode == "pose"
+    with pytest.raises(RuntimeError):
+        sim.set_velocity(0.5, 0, 0)

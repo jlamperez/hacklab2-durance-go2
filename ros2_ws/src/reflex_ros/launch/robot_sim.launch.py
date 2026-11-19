@@ -13,17 +13,18 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue as PV
 
 ARGS = {"mode": "keeper", "reaction": "euler", "actuation_delay_ms": "300.0", "viewer": "true",
-        "min_confidence": "0.6", "consecutive": "2", "enabled": "true"}
+        "min_confidence": "0.6", "consecutive": "2", "locomotion": "none", "move_vy": "0.3", "hold_s": "0.6", "enabled": "true"}
 
 
 def generate_launch_description():
     bridge = Node(package="reflex_ros", executable="sim_bridge", output="screen", parameters=[{
         "robot_only": True, "viewer": PV(LC("viewer"), value_type=bool),
-        "actuation_delay_ms": PV(LC("actuation_delay_ms"), value_type=float), "mode": LC("mode")}],
+        "actuation_delay_ms": PV(LC("actuation_delay_ms"), value_type=float), "mode": LC("mode"), "locomotion": LC("locomotion")}],
         additional_env={"MUJOCO_GL": "glfw"})
     behavior = Node(package="reflex_ros", executable="behavior", output="screen", parameters=[{
         "mode": LC("mode"), "reaction": LC("reaction"), "enabled": PV(LC("enabled"), value_type=bool),
         "min_confidence": PV(LC("min_confidence"), value_type=float),
+        "move_vy": PV(LC("move_vy"), value_type=float), "hold_s": PV(LC("hold_s"), value_type=float),
         "consecutive": PV(LC("consecutive"), value_type=int)}])
     return LaunchDescription([DeclareLaunchArgument(k, default_value=v) for k, v in ARGS.items()]
                              + [bridge, behavior,

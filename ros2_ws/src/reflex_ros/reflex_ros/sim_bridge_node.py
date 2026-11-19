@@ -59,10 +59,18 @@ class SimBridge(Node):
         self.robot_only = bool(p("robot_only", False).value)
         self.use_viewer = bool(p("viewer", False).value)       # 3D window; robot_only mode only
         self.viewer = None
+        # locomotion: "none" = postures only (default). "rl" = a Move request makes the dog
+        # really walk, using the learned policy in models/go2_walk.onnx.
+        self.locomotion = p("locomotion", "none").value
+        self.homing = False
 
         self.rng = np.random.default_rng(seed)
         self.sim = Go2Sim(seed=seed)
         self.wcfg = WindowConfig()
+        if self.locomotion == "rl":
+            self.sim.enable_walking()
+        elif self.locomotion != "none":
+            raise ValueError(f"unknown locomotion {self.locomotion!r}")
         if randomize:
             self.sim.randomize_camera(self.rng)
             self.sim.set_shake(self.rng, float(self.rng.uniform(0.2, 1.5)))
@@ -78,7 +86,8 @@ class SimBridge(Node):
         self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", qos_profile_sensor_data)
         self.create_subscription(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
 
-        self.pending = []            # (apply_time_s, pose, api name)
+        self.pending = []            # (apply_time_s, pose, api name, velocity or None)
+        self.moved = False           # the dog has walked since it was last on its spot
         self.pose = "stand"
         self.steps = 0
         self.shot = None             # dict describing the shot in flight
@@ -91,6 +100,10 @@ class SimBridge(Node):
             self.viewer = mujoco.viewer.launch_passive(self.sim.model, self.sim.data)
             self.viewer.cam.lookat[:] = [0.0, 0.0, 0.25]
             self.viewer.cam.distance, self.viewer.cam.azimuth, self.viewer.cam.elevation = 2.2, 150, -15
+            if self.locomotion == "rl":      # follow the dog
+                self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+                self.viewer.cam.trackbodyid = self.sim.model.body("base").id
+                self.viewer.cam.distance = 3.0
         if self.record and not self.robot_only:
             import imageio.v2 as imageio
             self.writer = imageio.get_writer(self.record, fps=50, codec="libx264", quality=8, macro_block_size=2)
@@ -107,6 +120,14 @@ class SimBridge(Node):
         if pose is None:
             self.get_logger().warn(f"{name}: no equivalent in the simulator, ignored")
             return
+        if self.homing:      # the dog is walking back to its spot between shots
+            return
+        velocity = None
+        if self.locomotion == "rl" and api_id == sport_api.MOVE.api_id:
+            v = json.loads(msg.parameter)
+            velocity = (float(v.get("x", 0.0)), float(v.get("y", 0.0)), float(v.get("z", 0.0)))
+        elif self.locomotion == "rl" and api_id == sport_api.STOP_MOVE.api_id:
+            velocity = (0.0, 0.0, 0.0)
         stamp_us = int(msg.header.identity.id)
         if stamp_us > 0:   # time from the newest event to the request arriving here
             now_us = self.get_clock().now().nanoseconds / 1000 if self.robot_only else self.sim.time * 1e6
@@ -114,12 +135,18 @@ class SimBridge(Node):
             if self.robot_only:
                 self.get_logger().info(f"{name} -> {pose}; {self.latencies_ms[-1]:.0f} ms from newest event to request, "
                                        f"applied after {self.delay_s * 1e3:.0f} ms more")
-        self.pending.append((self.sim.time + self.delay_s, pose, name))
+        self.pending.append((self.sim.time + self.delay_s, pose, name, velocity))
 
     def apply_due(self) -> None:
         while self.pending and self.pending[0][0] <= self.sim.time:
-            _, pose, name = self.pending.pop(0)
-            if pose == "damp":
+            _, pose, name, velocity = self.pending.pop(0)
+            if velocity is not None and not (self.sim.mode == "pose" and not any(velocity)):
+                self.sim.damped = False
+                self.sim.set_velocity(*velocity)
+                self.moved = True
+            elif velocity is not None:
+                pass                 # StopMove while standing in a posture: nothing to do
+            elif pose == "damp":
                 self.sim.damped = True
             else:
                 self.sim.damped = False
@@ -191,7 +218,14 @@ class SimBridge(Node):
     # --- main loop -----------------------------------------------------------------------
     def step(self) -> None:
         sim = self.sim
-        if self.shot is None and sim.time >= self.next_shot_t and self.pose == "stand":
+        if self.shot is None and not self.robot_only and self.moved and self.pose == "stand" and not self.pending:
+            # Between shots: walk back to the spot the balls are aimed at, then stand as before.
+            self.homing = True
+            if sim.walk_towards(0.0, 0.0, 0.0):
+                sim.set_pose("stand")
+                self.homing = self.moved = False
+                self.next_shot_t = max(self.next_shot_t, sim.time + 1.5)
+        if self.shot is None and sim.time >= self.next_shot_t and self.pose == "stand" and not self.moved:
             self.start_shot()
         self.apply_due()
         if self.shot is not None and self.shot["walker"] is not None:
@@ -199,6 +233,10 @@ class SimBridge(Node):
             sim.set_walker(x, y0 + vy * (sim.time - self.shot["t0"]))
         sim.step()
         self.steps += 1
+        if self.robot_only and sim.mode == "walk" and self.steps % 1000 == 0:
+            x, y, h = sim.base_pose()
+            self.get_logger().info(f"dog at x {x:+.2f} m, y {y:+.2f} m, heading {np.degrees(h):+.0f} deg; "
+                                   f"command {sim.command.round(2).tolist()}")
         if self.robot_only:
             if self.viewer is not None and self.steps % 8 == 0:
                 if not self.viewer.is_running():

@@ -169,6 +169,12 @@ class Go2Sim:
         self._shake: tuple | None = None             # (amplitudes, frequencies, phases)
         self._walker_mocap = m.body("walker").mocapid[0]
         self._walker_geoms = [m.geom(f"walker_{n}").id for n in ("torso", "leg_a", "leg_b")]
+        # Optional walking (reflex/sim/locomotion.py). Off unless enable_walking() is called.
+        self.gait = None
+        self.mode = "pose"                  # "pose": fixed postures; "walk": the policy drives the legs
+        self.command = np.zeros(3, dtype=np.float32)   # vx, vy (m/s), yaw rate (rad/s)
+        self._passive = (m.dof_damping[self._v_adr].copy(), m.dof_frictionloss[self._v_adr].copy())
+        self._steps = 0
         self.reset()
 
     @property
@@ -183,6 +189,8 @@ class Go2Sim:
         d.qpos[self._q_adr] = POSES["stand"]
         self.q_des = POSES["stand"].copy()
         self.damped = False      # True: motors only damp, as after Unitree's Damp command
+        self._set_mode("pose")
+        self.command[:] = 0
         self.park_ball()
         self.park_walker()
         for _ in range(int(settle_s / self.dt)):
@@ -190,7 +198,66 @@ class Go2Sim:
         d.time = 0.0
 
     def set_pose(self, name: str) -> None:
+        self._set_mode("pose")
+        self.command[:] = 0
         self.q_des = POSES[name].copy()
+
+    # --- optional walking ----------------------------------------------------------------
+    def enable_walking(self, policy_path=None) -> None:
+        """Load the walking policy. Nothing changes until set_velocity() is called."""
+        from reflex.sim.locomotion import DEFAULT_POLICY, WalkPolicy
+        self.gait = WalkPolicy(policy_path or DEFAULT_POLICY)
+        self._policy_every = max(1, round(self.gait.step_dt / self.dt))
+
+    def set_velocity(self, vx: float, vy: float, wz: float) -> None:
+        """Walk: forward and sideways speed (m/s, +y is left) and turn rate (rad/s, + is left).
+
+        Zero keeps the dog standing under the policy. Call set_pose() to go back to postures.
+        """
+        if self.gait is None:
+            raise RuntimeError("call enable_walking() first")
+        self.command[:] = self.gait.clip_command([vx, vy, wz])
+        self._set_mode("walk")
+
+    def _set_mode(self, mode: str) -> None:
+        if mode == self.mode:
+            return
+        m = self.model
+        if mode == "walk":
+            # The policy was trained on joints without passive damping or friction loss.
+            m.dof_damping[self._v_adr] = 0.0
+            m.dof_frictionloss[self._v_adr] = 0.0
+            self.gait.reset()
+            self._steps = 0
+        else:
+            m.dof_damping[self._v_adr], m.dof_frictionloss[self._v_adr] = self._passive
+        self.mode = mode
+
+    def walk_towards(self, x: float, y: float, heading: float = 0.0, tol: float = 0.06) -> bool:
+        """Set the velocity command that takes the dog to a pose. True once it is there.
+
+        Uses the simulator's ground truth; a real robot would need odometry for this.
+        """
+        px, py, h = self.base_pose()
+        ex, ey = x - px, y - py
+        eh = (heading - h + np.pi) % (2 * np.pi) - np.pi
+        if np.hypot(ex, ey) < tol and abs(eh) < 0.06:
+            self.set_velocity(0.0, 0.0, 0.0)
+            return True
+        fwd, left = ex * np.cos(h) + ey * np.sin(h), -ex * np.sin(h) + ey * np.cos(h)
+        self.set_velocity(float(np.clip(2.5 * fwd, -0.5, 0.6)), float(np.clip(4.0 * left, -0.5, 0.5)),
+                          float(np.clip(2.5 * eh, -1.0, 1.0)))
+        return False
+
+    def base_pose(self) -> tuple[float, float, float]:
+        """x, y (m) and heading (rad) of the dog."""
+        w, x, y, z = self.data.qpos[3:7]
+        return float(self.data.qpos[0]), float(self.data.qpos[1]), float(np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
+
+    def upright(self) -> float:
+        """1.0 when the trunk is level, 0 on its side, negative upside down."""
+        w, x, y, z = self.data.qpos[3:7]
+        return float(1 - 2 * (x * x + y * y))
 
     def park_ball(self) -> None:
         a, v = self._ball_qadr, self._ball_vadr
@@ -275,6 +342,15 @@ class Go2Sim:
 
     def step(self) -> None:
         d = self.data
+        if self.mode == "walk" and not self.damped:
+            g = self.gait
+            if self._steps % self._policy_every == 0:
+                g.act(d.qvel[3:6], d.qpos[3:7], self.command, d.qpos[self._q_adr], d.qvel[self._v_adr])
+            self._steps += 1
+            tau = g.kp * (g.target - d.qpos[self._q_adr]) - g.kd * d.qvel[self._v_adr]
+            d.ctrl[:] = np.clip(tau, self._ctrl_lo, self._ctrl_hi)
+            mujoco.mj_step(self.model, d)
+            return
         kp = 0.0 if self.damped else KP
         tau = kp * (self.q_des - d.qpos[self._q_adr]) - KD * d.qvel[self._v_adr]
         d.ctrl[:] = np.clip(tau, self._ctrl_lo, self._ctrl_hi)

@@ -16,7 +16,7 @@ ARGS = {
     "detector": "snn", "model": "out/models/snn.pt", "device": "cpu", "mode": "keeper",
     "reaction": "euler", "actuation_delay_ms": "300.0", "max_shots": "0", "shot_period_s": "3.0",
     "negative_fraction": "0.3", "record": "", "seed": "0", "randomize": "false",
-    "min_confidence": "0.6", "consecutive": "2",
+    "min_confidence": "0.6", "consecutive": "2", "locomotion": "none", "move_vy": "0.3", "hold_s": "0.6",
 }
 
 
@@ -27,7 +27,7 @@ def generate_launch_description():
         "shot_period_s": PV(LC("shot_period_s"), value_type=float),
         "negative_fraction": PV(LC("negative_fraction"), value_type=float),
         "record": PV(LC("record"), value_type=str), "seed": PV(LC("seed"), value_type=int),
-        "randomize": PV(LC("randomize"), value_type=bool), "mode": LC("mode"),
+        "randomize": PV(LC("randomize"), value_type=bool), "mode": LC("mode"), "locomotion": LC("locomotion"),
     }])
     perception = Node(package="reflex_ros", executable="perception", output="screen", parameters=[{
         "use_sim_time": True, "detector": LC("detector"), "model": LC("model"), "device": LC("device"),
@@ -35,6 +35,7 @@ def generate_launch_description():
     behavior = Node(package="reflex_ros", executable="behavior", output="screen", parameters=[{
         "use_sim_time": True, "mode": LC("mode"), "reaction": LC("reaction"),
         "min_confidence": PV(LC("min_confidence"), value_type=float),
+        "move_vy": PV(LC("move_vy"), value_type=float), "hold_s": PV(LC("hold_s"), value_type=float),
         "consecutive": PV(LC("consecutive"), value_type=int),
     }])
     return LaunchDescription(

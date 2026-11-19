@@ -88,3 +88,9 @@ simulation running slower than real time, so this is not a latency claim.
 `docs/real-robot.md` lists what is left before this runs on a Go2, and a rehearsal that
 needs no Durance hardware: a Kria board with a webcam (emulated event camera) sending
 decisions over ROS 2 to the simulated dog on a PC. Tested on one PC only so far.
+
+## Optional: a dog that walks
+
+`pixi run drive` opens the simulator with a learned walking policy: arrow keys drive the
+dog. `pixi run -e ros ros-drive` plus `ros-teleop` does the same through ROS 2 and the
+Go2's `Move` command. Off by default; see `docs/go2-control.md`.

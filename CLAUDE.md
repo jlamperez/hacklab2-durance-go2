@@ -27,11 +27,13 @@ pixi run eval           # SNN vs simple detector on held-out windows
 pixi run view-data PATH # look inside a dataset folder or an event recording; --sheet/--video save files
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
+pixi run drive          # same viewer with the walking policy: arrow keys drive the dog (optional mode)
 pixi run -e ros ros-build   # build ros2_ws (unitree messages, reflex_msgs, reflex_ros)
 pixi run -e ros ros-sim     # closed loop over ROS 2 in simulation; args: detector:=snn|simple
                             #   max_shots:=N actuation_delay_ms:=300.0 record:=out/x.mp4
 pixi run -e ros ros-camera     # camera side: webcam as stand-in event camera + perception
 pixi run -e ros ros-robot-sim  # robot side: behavior + MuJoCo dog acting only as the robot
+pixi run -e ros ros-drive      # drive the walking dog over ROS 2; second terminal: ros-teleop
 pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rqt commands
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
 ```
@@ -54,8 +56,10 @@ Three seams let simulation be swapped for the real thing:
 - `reflex/data/`: simulated episodes (threats and hard negatives), windowing, dataset generation.
 - `reflex/models/snn.py`: the network. `reflex/runtime/`: detectors (SNN, no-learning),
   reflex state machine, sport-mode command table.
-- `reflex/sim/`: standing Go2, ball launcher, head camera. The dog does not walk in
-  simulation; reflexes are posture changes. Walking is sport mode's job on the real robot.
+- `reflex/sim/`: standing Go2, ball launcher, head camera. By default the dog does not walk;
+  reflexes are posture changes. Optional walking (`locomotion.py`, `models/go2_walk.onnx`,
+  a policy trained with unitree_rl_mjlab) is off unless `enable_walking()` / `locomotion:=rl`
+  is used; keep it optional. Details in `docs/go2-control.md`.
 - `ros2_ws/src/reflex_msgs`: `EventWindow`, `ReflexDecision`.
 - `ros2_ws/src/reflex_ros`: three nodes. `sim_bridge` (MuJoCo behind the robot's and the
   camera's topics, with a configurable actuation delay, scores every shot), `perception`

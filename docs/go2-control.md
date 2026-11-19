@@ -141,9 +141,66 @@ The trained policy (from `deploy/robots/go2/config/policy/velocity/v0/params/dep
   PD controller with gains 20/20/40 and damping 1/1/2 (abduction/hip/knee).
 - Command ranges: vx -0.5..1.0 m/s, vy -0.5..0.5 m/s, yaw rate -1..1 rad/s.
 
-Not integrated into our simulation yet. To do that: run the exported `policy.onnx` at
-50 Hz inside `Go2Sim`, build the 47-number observation, and feed it a velocity command
-(keyboard, or the `Move` request from the bridge).
+#### Walking inside our simulator (optional mode)
+
+Integrated on 19 Nov 2026 as an addition: nothing changes unless it is switched on. The
+postures (stand, crouch, lean) and every earlier result are untouched.
+
+- `models/go2_walk.onnx` is the exported policy (764 kB, in git), with its provenance and
+  interface in `models/go2_walk.json`.
+- `reflex/sim/locomotion.py` runs it with onnxruntime at 50 Hz and builds its observation.
+- `Go2Sim.enable_walking()` loads it; `set_velocity(vx, vy, wz)` walks; `set_pose(name)`
+  returns to postures. The dog has two modes, `pose` and `walk`.
+- We kept the Menagerie model. In `walk` mode the simulator sets joint damping and
+  friction loss to zero and uses the policy's gains; in `pose` mode it restores them.
+
+Three ways to use it:
+
+| Command | What it does |
+|---|---|
+| `pixi run drive` | 3D window, no ROS. UP/DOWN faster/slower, LEFT/RIGHT turn, A/D sidestep, SPACE stop, plus the pose keys S/C/L/R. Each press adds speed (the viewer does not report key releases) |
+| `pixi run -e ros ros-drive` and, in a second terminal, `pixi run -e ros ros-teleop` | The same over ROS 2: keyboard -> `/cmd_vel` -> `cmd_vel_to_sport` -> `Move` on `/api/sport/request` -> walking dog. `cmd_vel_to_sport` is robot-agnostic: run alone, it would drive a real Go2 in sport mode (not tried) |
+| `pixi run -e ros ros-sim locomotion:=rl reaction:=move move_vy:=0.5 hold_s:=1.0` | Closed loop where the reflex is a real sidestep. Between shots the simulator walks the dog back to its spot using ground truth |
+
+Measured in our simulator (MuJoCo on the CPU, a different engine from the one it was
+trained in). It never fell in these runs, including starting to walk from the crouch.
+It moves slower than commanded:
+
+| Command | Measured (average over 3-4 s, including the start) |
+|---|---|
+| forward 0.8 m/s | 0.61 m/s |
+| backward 0.4 m/s | 0.25 m/s |
+| sideways 0.4 m/s | 0.17 m/s |
+| turn 0.8 rad/s | 0.47 rad/s |
+
+Whether the shortfall comes from the policy itself or from the change of engine was not
+investigated.
+
+Closed loop with sidesteps, one run of 12 shots with the SNN and 300 ms actuation delay:
+8 of 9 balls answered on the correct side, 1 wrong side, 0 missed; 3 of 3 negatives
+(balls that miss) triggered a reaction. That is worse on negatives than the posture-only
+run (2 of 3), but the shots are not the same ones and 12 is too few to conclude anything.
+One known difference: after walking back, the dog stands within 6 cm and 3.4 degrees of
+its spot, not exactly on it.
+
+#### MuJoCo and MuJoCo Warp
+
+The policy was trained in MuJoCo Warp and runs here in regular MuJoCo. They are the same
+simulator in two implementations:
+
+| | MuJoCo | MuJoCo Warp |
+|---|---|---|
+| Runs on | CPU | NVIDIA GPU |
+| Built for | one robot, or a few | thousands of robots in parallel |
+| Typical use | control, visualization, tests, debugging | reinforcement-learning training |
+| Features | all | a subset; newer and still changing |
+| Version here | 4.0.1 (pixi environment) | mujoco-warp with MuJoCo 3.5.0 (`third_party/unitree_rl_mjlab/.venv`) |
+
+Same model files and equations, small numerical and solver differences. Training used
+4096 dogs at once on the GPU; our simulator has one dog and spends most of its time
+rendering the camera, so the CPU version is the right one for it. That the policy walks
+in both is a (weak) sign it is not tied to one engine. The "subset" and single-robot
+speed statements come from general knowledge of the two, not from measurements here.
 
 #### Its Go2 model versus the Menagerie one
 

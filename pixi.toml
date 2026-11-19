@@ -15,6 +15,7 @@ opencv-python-headless = "*"
 imageio = "*"
 imageio-ffmpeg = "*"
 matplotlib = "*"
+onnxruntime = "*"   # runs the optional walking policy (models/go2_walk.onnx)
 pytest = "*"
 torch = { version = ">=2.7", index = "https://download.pytorch.org/whl/cu128" }
 
@@ -31,6 +32,7 @@ eval = "python -m reflex.eval"
 rl-play = "bash scripts/play_rl.sh"   # optional: watch the RL walking policy (third_party/unitree_rl_mjlab)
 view-data = "python -m reflex.viz.view_npz"
 view = { cmd = "python -m reflex.sim.view", env = { MUJOCO_GL = "glfw" } }
+drive = { cmd = "python -m reflex.sim.view --drive --no-balls", env = { MUJOCO_GL = "glfw" } }   # walk the dog with the arrow keys
 
 # --- ROS 2 Humble (RoboStack). Separate environment: `pixi run -e ros ...`
 [feature.ros]
@@ -40,6 +42,7 @@ channels = ["robostack-humble", "conda-forge"]
 ros-humble-ros-base = "*"
 ros-humble-rmw-cyclonedds-cpp = "*"
 ros-humble-rosidl-generator-dds-idl = "*"
+ros-humble-teleop-twist-keyboard = "*"   # keyboard -> /cmd_vel
 ros-humble-rqt-graph = "*"        # node/topic graph
 ros-humble-rqt-image-view = "*"   # shows /reflex/debug/events_image
 colcon-common-extensions = "*"
@@ -66,6 +69,14 @@ cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros came
 [feature.ros.tasks.ros-robot-sim]
 # Robot side, simulated: behavior + MuJoCo dog acting only as the robot, with a 3D window.
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros robot_sim.launch.py \"$@\"' --"
+
+[feature.ros.tasks.ros-drive]
+# Drive the simulated dog over ROS 2: /cmd_vel -> Move request -> walking dog in a 3D window.
+# In a second terminal: pixi run -e ros ros-teleop
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros drive.launch.py \"$@\"' --"
+
+[feature.ros.tasks.ros-teleop]
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run teleop_twist_keyboard teleop_twist_keyboard'"
 
 [feature.ros.tasks.ros-shell]
 # An interactive shell with ROS 2 and this workspace ready, for ros2 / rqt commands.

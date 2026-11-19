@@ -1,0 +1,16 @@
+{
+  "what": "Go2 velocity-tracking walking policy (flat ground), exported by unitree_rl_mjlab",
+  "task": "Unitree-Go2-Flat",
+  "repo": "https://github.com/unitreerobotics/unitree_rl_mjlab",
+  "repo_commit": "1425b15",
+  "trained": "2026-11-18/19, PPO (rsl_rl), 4096 envs, 10000 iterations, RTX 5090",
+  "checkpoint": "model_10000.pt",
+  "step_dt": 0.02,
+  "obs": ["base_ang_vel(3)", "projected_gravity(3)", "command vx vy wz(3)", "phase sin cos(2, period 0.6 s, zero when |command| < 0.1)", "joint_pos - default(12)", "joint_vel(12)", "last_action(12)"],
+  "joint_order": ["FL_hip", "FL_thigh", "FL_calf", "FR_hip", "FR_thigh", "FR_calf", "RL_hip", "RL_thigh", "RL_calf", "RR_hip", "RR_thigh", "RR_calf"],
+  "default_joint_pos": [-0.1, 0.9, -1.8, 0.1, 0.9, -1.8, -0.1, 0.9, -1.8, 0.1, 0.9, -1.8],
+  "action_scale": 0.25,
+  "stiffness": [20, 20, 40],
+  "damping": [1, 1, 2],
+  "command_ranges": {"vx": [-0.5, 1.0], "vy": [-0.5, 0.5], "wz": [-1.0, 1.0]}
+}
