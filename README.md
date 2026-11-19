@@ -98,6 +98,27 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 | `pixi run -e ros ros-teleop` | Keyboard that publishes `/cmd_vel` (second terminal, with `ros-drive`) |
 | `pixi run -e ros ros-shell` | Shell with ROS 2 ready, for `ros2 topic echo`, `rqt_graph`, ... |
 
+Which command plays which part. The simulator can be the camera and the robot at once,
+or the robot only:
+
+| Command | Event source | Robot | Simulator publishes event windows? |
+|---|---|---|---|
+| `ros-sim` | simulator (balls rolled at the dog) | simulator | yes |
+| `ros-camera` + `ros-robot-sim` | webcam on this PC | simulator | no, the webcam node does |
+| Kria camera + `ros-robot-sim` | webcam on the Kria | simulator | no, the Kria does |
+| `ros-drive` + `ros-teleop` | none (keyboard driving) | simulator, walking | no |
+| at the hackathon | real event camera on the Kria | real Go2 | no simulator |
+
+To watch the event stream of any of them, from `pixi run -e ros ros-shell`:
+
+```bash
+ros2 run rqt_image_view rqt_image_view /reflex/debug/events_image   # events as a picture
+rqt_graph                                                           # nodes and topics
+ros2 topic echo /reflex/decision                                    # what the detector says
+```
+
+More in `docs/inspecting-ros.md`.
+
 ### Kria board
 
 | Command | What it does |
