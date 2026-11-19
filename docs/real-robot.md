@@ -85,7 +85,7 @@ No sudo needed if the user is in the `docker` group. From the PC:
 
 ```bash
 scripts/sync_kria.sh ubuntu@kria.local   # copy the code (under 1 MB) and build the image on the board
-ssh ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 reflex-kria
+ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 reflex-kria
 ```
 
 The image holds ROS 2 Humble, CycloneDDS, OpenCV and this project's camera side, with

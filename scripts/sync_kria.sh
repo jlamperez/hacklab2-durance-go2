@@ -15,4 +15,4 @@ rsync -az --delete \
   ./ "$target":hacklab2-durance-go2/
 # --network=host: on some boards the default Docker bridge has no working DNS during builds.
 ssh "$target" 'cd hacklab2-durance-go2 && docker build --network=host --pull=false -q -f docker/kria/Dockerfile -t reflex-kria .'
-echo "run it with:  ssh $target docker run --rm -it --net=host --device /dev/video0 reflex-kria"
+echo "run it with:  ssh -t $target docker run --rm -it --net=host --device /dev/video0 reflex-kria"
