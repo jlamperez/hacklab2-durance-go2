@@ -156,7 +156,7 @@ tricks over ROS 2, run `pixi run -e ros ros-drive` in one terminal and
 | `scripts/sync_kria.sh ubuntu@kria.local` | Copy the code to the board and build its Docker image |
 | `ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 reflex-kria` | Run the camera side on the board |
 | `NO_DOCKER=1 scripts/sync_kria.sh ubuntu@kria.local` | Copy only, for the pixi route |
-| on the board: `pixi install -e kria --frozen`, `pixi run -e kria kria-build`, `pixi run -e kria kria-camera` | Same camera side without Docker (`docs/real-robot.md`) |
+| on the board: `pixi install -e kria --frozen`, `pixi run --frozen -e kria kria-build`, `pixi run --frozen -e kria kria-camera` | Same camera side without Docker (`docs/real-robot.md`) |
 
 ### Optional extra
 

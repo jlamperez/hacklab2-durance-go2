@@ -111,9 +111,18 @@ Reach it with `ssh ubuntu@kria.local`. pixi is at `~/.pixi/bin/pixi` (not on the
 
 | Command, run on the board | What it does |
 |---|---|
-| `~/.pixi/bin/pixi run -e kria kria-build` | build the workspace (after copying new code) |
-| `~/.pixi/bin/pixi run -e kria kria-camera` | webcam as event camera + detector; same arguments as `ros-camera` |
-| `~/.pixi/bin/pixi run -e kria kria-shell` | a shell where `ros2` works |
+| `~/.pixi/bin/pixi run --frozen -e kria kria-build` | build the workspace (after copying new code) |
+| `~/.pixi/bin/pixi run --frozen -e kria kria-camera` | webcam as event camera + detector; same arguments as `ros-camera` |
+| `~/.pixi/bin/pixi run --frozen -e kria kria-shell` | a shell where `ros2` works |
+
+`--frozen` makes pixi use the lock file as it is. Always pass it on the board: its pixi is
+newer than the PC's, and without the flag it may try to rewrite the lock file.
+
+Without logging in first, straight from a PC terminal (`-t` so that `Ctrl+C` reaches the board):
+
+```bash
+ssh -t ubuntu@kria.local 'cd hacklab2-durance-go2 && ~/.pixi/bin/pixi run --frozen -e kria kria-camera'
+```
 
 From the PC: `bash scripts/sync_kria.sh` copies the code to the board and rebuilds the
 Docker image; `NO_DOCKER=1 bash scripts/sync_kria.sh` copies only (then `kria-build`).
@@ -137,7 +146,7 @@ pixi run -e ros ros-sim detector:=simple max_shots:=10     # afterwards, not at 
 
 **Kria as the camera, simulated dog on the PC** (the rehearsal for Saturday)
 ```bash
-~/.pixi/bin/pixi run -e kria kria-camera     # on the Kria
+~/.pixi/bin/pixi run --frozen -e kria kria-camera     # on the Kria
 pixi run -e ros ros-robot-sim                # on the PC
 pixi run -e ros ros-web                      # on the PC, optional
 ```
@@ -163,7 +172,7 @@ pixi run -e ros ros-tricks
 
 **Record data, then fine-tune**
 ```bash
-~/.pixi/bin/pixi run -e kria kria-camera     # or any other camera source
+~/.pixi/bin/pixi run --frozen -e kria kria-camera     # or any other camera source
 pixi run -e ros ros-record session:=sat_am
 pixi run -e ros ros-record session:=sat_pm   # later, a second session
 pixi run finetune-real --val-session sat_pm
