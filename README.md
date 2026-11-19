@@ -49,7 +49,8 @@ Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 ## Commands
 
 Requires [pixi](https://pixi.sh). Two environments: the default one (Python, MuJoCo,
-PyTorch) and `ros` (adds ROS 2 Humble), used as `pixi run -e ros ...`.
+PyTorch) and `ros` (adds ROS 2 Humble), used as `pixi run -e ros ...`. A third one,
+`kria`, is the light arm64 environment for the board.
 Arguments after a `ros-*` command are `name:=value` pairs.
 
 ### Setup (once)
@@ -98,6 +99,8 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 |---|---|
 | `scripts/sync_kria.sh ubuntu@kria.local` | Copy the code to the board and build its Docker image |
 | `ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 reflex-kria` | Run the camera side on the board |
+| `NO_DOCKER=1 scripts/sync_kria.sh ubuntu@kria.local` | Copy only, for the pixi route |
+| on the board: `pixi install -e kria --frozen`, `pixi run -e kria kria-build`, `pixi run -e kria kria-camera` | Same camera side without Docker (`docs/real-robot.md`) |
 
 ### Optional extra
 

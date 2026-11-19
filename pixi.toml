@@ -2,7 +2,7 @@
 name = "hacklab2-durance-go2"
 description = "Reflexes for a Unitree Go2 using event vision and a spiking neural network (Durance AI track, HackLab #2)"
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+platforms = ["linux-64", "linux-aarch64"]   # aarch64 only for the `kria` environment
 
 [dependencies]
 python = "3.11.*"
@@ -91,5 +91,46 @@ cmd = "bash --rcfile scripts/ros_bashrc -i"
 [feature.ros.activation.env]
 RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
 
+# --- PC only. The default and ros environments carry MuJoCo and PyTorch with CUDA.
+[feature.pc]
+platforms = ["linux-64"]
+
+# --- Kria board (arm64): camera side only. ROS 2 Humble, OpenCV, numpy; no MuJoCo, no PyTorch.
+#     On the board:  pixi install -e kria && pixi run -e kria kria-build && pixi run -e kria kria-camera
+[feature.kria]
+channels = ["robostack-humble", "conda-forge"]
+platforms = ["linux-64", "linux-aarch64"]
+
+[feature.kria.dependencies]
+python = "3.11.*"
+numpy = "*"
+opencv = "*"
+ros-humble-ros-base = "*"
+ros-humble-rmw-cyclonedds-cpp = "*"
+ros-humble-rosidl-generator-dds-idl = "*"
+colcon-common-extensions = "*"
+empy = "==3.3.4"
+lark = "*"
+compilers = "*"
+cmake = "*"
+make = "*"
+
+[feature.kria.activation.env]
+RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
+PYTHONPATH = "$PIXI_PROJECT_ROOT"      # the reflex package, without installing it
+
+[feature.kria.tasks.kria-build]
+cmd = "colcon build --symlink-install --packages-select reflex_msgs reflex_ros --cmake-args -DCMAKE_BUILD_TYPE=Release -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python -DPython3_EXECUTABLE=$CONDA_PREFIX/bin/python -DPython_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_STRATEGY=LOCATION -DPython3_FIND_STRATEGY=LOCATION"
+cwd = "ros2_ws"
+
+[feature.kria.tasks.kria-camera]
+# Camera side: webcam as stand-in event camera + perception. Arguments: detector:=simple mirror:=true ...
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros camera.launch.py \"$@\"' --"
+
+[feature.kria.tasks.kria-shell]
+cmd = "bash --rcfile scripts/ros_bashrc -i"
+
 [environments]
-ros = ["ros"]
+default = ["pc"]
+ros = ["pc", "ros"]
+kria = { features = ["kria"], no-default-feature = true }

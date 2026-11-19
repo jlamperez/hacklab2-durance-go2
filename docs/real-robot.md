@@ -59,8 +59,7 @@ a Logitech C920, PC and board on the same home network:
 | Simulated dog reacts to motion in front of the webcam | yes (lean, crouch, back to stand) |
 | CPU on the Kria | camera node about 85 % of one core, perception about 15 % |
 
-Not done: the SNN on the board (needs PyTorch for arm64 in the image), anything with the
-FPGA, a pixi environment for arm64 as an alternative to Docker.
+Not done: the SNN on the board (needs PyTorch for arm64), anything with the FPGA.
 
 Three problems found and fixed on the way, all of which would have cost time on Saturday:
 
@@ -92,7 +91,37 @@ the default ROS domain (0). No PyTorch, no MuJoCo: it runs the no-learning detec
 
 Wave a hand on one side of the webcam: the dog on the PC should lean.
 
-### Kria, without Docker (not tried)
+### Kria (camera side), with pixi
+
+No sudo and no Docker: pixi installs into the user's home, and the same `pixi.toml` has a
+`kria` environment for arm64 (ROS 2 Humble from RoboStack, OpenCV, numpy; no MuJoCo, no
+PyTorch). The nodes run as normal processes, so devices and the FPGA are reached directly.
+
+```bash
+# on the PC
+NO_DOCKER=1 scripts/sync_kria.sh ubuntu@kria.local
+# on the board
+curl -fsSL https://pixi.sh/install.sh | PIXI_NO_PATH_UPDATE=1 bash     # once; installs ~/.pixi/bin/pixi
+cd hacklab2-durance-go2
+~/.pixi/bin/pixi install -e kria --frozen       # 4.5 min, 2.4 GB
+~/.pixi/bin/pixi run --frozen -e kria kria-build     # 1 min
+~/.pixi/bin/pixi run --frozen -e kria kria-camera    # arguments: detector:=simple mirror:=true
+```
+
+Tried on 19 Nov 2026 on the same KV260: 30 windows/s, decisions reach the PC at 30 Hz,
+the simulated dog reacts, camera node at about 70 % of one core. Same result as Docker.
+`--frozen` uses the lock file as it is (the board had a newer pixi than the PC).
+
+| | Docker | pixi |
+|---|---|---|
+| Needs sudo | no (user in the `docker` group) | no |
+| Size on the board | 1.3 GB image | 2.4 GB environment |
+| First setup | 4.5 min | 4.5 min + 1 min build |
+| Devices, FPGA | passed in explicitly (`--device`, `--privileged`) | direct |
+| Board without internet | load a saved image (`docker save` / `docker load`) | not without preparing a package cache first |
+| Same commands as on the PC | no | yes |
+
+### Kria, with apt (not tried)
 
 Needs sudo. Ubuntu 22.04 with ROS 2 Humble from apt:
 

@@ -75,8 +75,9 @@ Frame convention: dog at the origin, +x forward, +y left, +z up. Labels
 
 ## Environment
 
-pixi, two environments: `default` (Python, MuJoCo, PyTorch with CUDA) and `ros`
-(adds ROS 2 Humble from RoboStack with CycloneDDS). Humble because it is what
+pixi, three environments: `default` (Python, MuJoCo, PyTorch with CUDA), `ros` (adds
+ROS 2 Humble from RoboStack with CycloneDDS), both linux-64 only, and `kria` (arm64 and
+linux-64: ROS 2 + OpenCV, camera side only, for the board). Humble because it is what
 `unitree_ros2` supports. Whether RoboStack's CycloneDDS talks to the real Go2 is
 unverified; `docker/` holds the fallback.
 
