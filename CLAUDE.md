@@ -86,6 +86,13 @@ linux-64: ROS 2 + OpenCV, camera side only, for the board). Humble because it is
 `unitree_ros2` supports. Whether RoboStack's CycloneDDS talks to the real Go2 is
 unverified; `docker/` holds the fallback.
 
+## Durance's toolchain
+
+Notes from Durance's login-only docs (Kria login, Go2 networking, cross-compiling the ROS 2
+node, deploying an SNN to the FPGA, camera config): `docs/durance-riversdk.md`. Read it
+before working on the Kria, the real robot or the FPGA export. Where it conflicts with the
+assumptions below, it wins.
+
 ## What we do not know yet
 
 What is left to run on the real robot, and the Kria + webcam rehearsal: `docs/real-robot.md`.

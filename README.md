@@ -36,7 +36,10 @@ Two loops around that pipeline:
 
 ## Status
 
-Nothing has touched the real Go2, the real event camera or Durance's toolchain.
+Nothing has touched the real Go2 yet. The real event camera (GenX320 on the Kria) has: about
+100 labelled takes in four sessions recorded on 21 Nov, camera on a stand, not on the robot
+(`docs/recording-real-data.md`). Durance's example model was deployed on the board by the team;
+our own SNN has not been.
 
 | Part | State |
 |---|---|
@@ -49,7 +52,8 @@ Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
 | Recording, labelling and fine-tuning on recorded data | working with webcam takes; not yet with a real event camera |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
-| Camera adapter for the real sensor, SNN on the FPGA (RIVERLib), real Go2 | not started: blocked on hardware |
+| Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov |
+| Camera adapter for the live ROS pipeline, our SNN on the FPGA (RIVER), real Go2 | not started |
 
 ## Commands
 
@@ -204,6 +208,9 @@ pixi run -e ros ros-robot-sim                  # and the camera side with detect
 |---|---|
 | `docs/real-robot.md` | What is left before the real robot, first hour with it, the Kria rehearsal and its results |
 | `docs/recording.md` | Recording takes, the labelling rule, fine-tuning |
+| `docs/recording-real-data.md` | How to record, replay, relabel and share real event-camera data; what we have so far |
+| `docs/data-plan-follow.md` | What to record with the real event camera for following the ball |
+| `docs/durance-riversdk.md` | Notes from Durance's docs: Kria, Go2 networking, ROS 2 build, FPGA deployment, capture |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
 | `docs/questions-for-durance.md` | What to ask at the opening |
