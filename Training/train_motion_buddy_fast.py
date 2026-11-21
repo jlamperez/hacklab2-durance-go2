@@ -8,7 +8,7 @@ Same benchmark data and splits as the original. Changes:
    side drawn log-uniformly from CROP_SIDES, and resamples it to 320x320.
    Validation and test crops are fixed per sample. The varying side doubles as
    scale augmentation, since our camera's lens and ball size are unknown:
-   sides below 320 px zoom in (the ball looks up to 2x bigger), sides above
+   sides below 320 px zoom in (the ball looks up to 4x bigger), sides above
    zoom out. Zoomed-in pixels fill their whole footprint so the ball stays solid.
 2. The dataset yields sparse pixel indices. The dense frame is built on the
    device and repeated over time with ``expand`` instead of real copies.
@@ -50,7 +50,7 @@ CHECKPOINT = Path("ball_heatmap_best.pt")
 SENSOR = 320
 SOURCE_WIDTH = base.CAMERA_WIDTH
 SOURCE_HEIGHT = base.CAMERA_HEIGHT
-CROP_SIDES = (160.0, 720.0)
+CROP_SIDES = (80.0, 720.0)
 CROP_MARGIN = 16.0
 HEATMAP_STRIDE = 8
 HEAT = SENSOR // HEATMAP_STRIDE
