@@ -25,8 +25,12 @@ removes most of the confusion.
 | `pixi run -e ros ros-build` | after cloning, and after changing a message, a launch file or `setup.py` |
 | `pixi run test` | any time; 73 tests, about 25 s |
 
-Not in git, copy by hand to a new machine: `out/models/snn.pt` (the trained network),
-`data/` (datasets and recordings).
+Not in git, copy by hand to a new machine: `data/` (datasets and recordings).
+
+The trained network is in git as `models/snn.pt` (with `models/snn.json`, its metrics on
+simulated data). Commands default to `out/models/snn.pt`, where `pixi run train` writes;
+on a new machine either `mkdir -p out/models && cp models/snn.* out/models/`, or pass
+`model:=models/snn.pt`.
 
 ## Plain commands (no ROS)
 

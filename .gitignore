@@ -12,3 +12,4 @@ third_party/
 ros2_ws/src/unitree_api
 ros2_ws/src/unitree_go
 !models/*.onnx
+!models/*.pt
