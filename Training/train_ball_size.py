@@ -10,13 +10,18 @@ position, so zoomed-in crops get proportionally larger radius labels.
 
 Network: a small spiking U-Net. The encoder goes down to a 10x10 grid so a
 cell sees about 200 px (zoomed-in balls reach ~140 px across), the decoder
-comes back to the 40x40 grid through nearest upsampling, and additive skips
-from the 20x20 and 40x40 encoder layers keep the position precise. The head
-has 1 + RADIUS_BINS spiking channels: channel 0 is the position heatmap; the
-others vote for log-spaced radius bins and are read at the predicted cell.
-Only ops the RIVER exporter lowers are used: square ConvLIFs, upsample
-directly followed by a ConvLIF (UpConvLIF) and additions (extra incoming
-edges).
+comes back to an 80x80 grid (4 px cells) through nearest upsampling, and
+additive skips from the 20x20, 40x40 and 80x80 encoder layers keep the
+position precise. The head is read like this, all on the 80x80 grid:
+
+- channel 0: position heatmap; the peak cell is the coarse position;
+- RADIUS_BINS channels: votes for log-spaced radius bins;
+- 2 x OFFSET_BINS channels: votes for where the ball sits inside the cell,
+  along x and along y.
+
+Radius and offsets are read at the peak cell. Only ops the RIVER exporter
+lowers are used: square ConvLIFs, upsample directly followed by a ConvLIF
+(UpConvLIF) and additions (extra incoming edges).
 
 Crops, splits, data loading and video writing come from the fast script. The
 export writes ``ball_model.json`` and ``ball_parameters.{json,txt}``, with
@@ -43,11 +48,15 @@ from riverops.nn import (
     FixedPointFormat, NearestUpsample, QuantConfig, SpikingConvBN2d, prepare_qat,
 )
 
-ARCHITECTURE = "unet-v1"
+ARCHITECTURE = "unet-v2"
 CHECKPOINT = Path("ball_size_best.pt")
 SENSOR = fast.SENSOR
-HEAT = fast.HEAT
-STRIDE = fast.HEATMAP_STRIDE
+HEAT = 80
+STRIDE = SENSOR // HEAT
+HEAT_SIGMA = 1.5
+OFFSET_BINS = 4
+OFFSET_SIGMA = 0.5
+OFFSET_WEIGHT = 1.0
 RADIUS_BINS = 8
 RADIUS_RANGE = (1.5, 64.0)
 RADIUS_CENTERS = np.geomspace(*RADIUS_RANGE, RADIUS_BINS)
@@ -58,6 +67,10 @@ RADIUS_FRACTION = 0.8
 RADIUS_MIN_EVENTS = 6.0
 RADIUS_SMOOTH = 4
 RADIUS_FALLBACK = 5.0
+RADIUS_CHANNELS = slice(1, 1 + RADIUS_BINS)
+X_OFFSET_CHANNELS = slice(RADIUS_CHANNELS.stop, RADIUS_CHANNELS.stop + OFFSET_BINS)
+Y_OFFSET_CHANNELS = slice(X_OFFSET_CHANNELS.stop, X_OFFSET_CHANNELS.stop + OFFSET_BINS)
+HEAD_CHANNELS = Y_OFFSET_CHANNELS.stop
 
 
 def window_radius(pixels, xy):
@@ -199,11 +212,12 @@ def _conv(in_channels, out_channels, kernel_size, stride=1, padding=None, first_
 
 
 class SizeUNet(nn.Module):
-    """Spiking U-Net on [B, T, 1, 320, 320]; returns head spikes [B, T, 1 + RADIUS_BINS, 40, 40].
+    """Spiking U-Net on [B, T, 1, 320, 320]; returns head spikes [B, T, HEAD_CHANNELS, 80, 80].
 
     Grid (cell size) and receptive field per stage:
       enc1 80x80 (4 px, 8)  enc2-3 40x40 (8 px, 36)  enc4-5 20x20 (16 px, 92)
-      enc6-7 10x10 (32 px, 204)  dec1/mix1 20x20  dec2/mix2/head 40x40 (~300).
+      enc6-7 10x10 (32 px, 204)  dec1/mix1 20x20  dec2/mix2 40x40
+      dec3/mix3/head 80x80 (~300).
     Modules are registered in forward order, which is the export order.
     """
 
@@ -222,15 +236,20 @@ class SizeUNet(nn.Module):
         self.up2 = NearestUpsample((2, 2))
         self.dec2 = _conv(64, 32, 3)
         self.mix2 = _conv(32, 32, 3)
-        self.head = _conv(32, 1 + RADIUS_BINS, 1, padding=0)
+        self.up3 = NearestUpsample((2, 2))
+        self.dec3 = _conv(32, 16, 3)
+        self.mix3 = _conv(16, 16, 3)
+        self.head = _conv(16, HEAD_CHANNELS, 1, padding=0)
 
     def forward(self, x):
-        e3 = self.enc3(self.enc2(self.enc1(x)))
+        e1 = self.enc1(x)
+        e3 = self.enc3(self.enc2(e1))
         e5 = self.enc5(self.enc4(e3))
         e7 = self.enc7(self.enc6(e5))
         m1 = self.mix1(self.dec1(self.up1(e7)) + e5)
         m2 = self.mix2(self.dec2(self.up2(m1)) + e3)
-        return self.head(m2)
+        m3 = self.mix3(self.dec3(self.up3(m2)) + e1)
+        return self.head(m3)
 
 
 class SizedBallDetector(nn.Module):
@@ -241,7 +260,7 @@ class SizedBallDetector(nn.Module):
         self.body = SizeUNet()
 
     def forward(self, x):
-        """Spike counts, [B, 1 + RADIUS_BINS, HEAT, HEAT]."""
+        """Spike counts, [B, HEAD_CHANNELS, HEAT, HEAT]."""
         return self.body(x).sum(dim=1)
 
 
@@ -285,40 +304,81 @@ def _log_centers(device):
     return torch.log(torch.as_tensor(RADIUS_CENTERS, dtype=torch.float32, device=device))
 
 
-def radius_logits(counts, rows, cols, time_steps):
-    """Radius-bin logits read at one cell per sample, [B, RADIUS_BINS]."""
+def _offset_centers(device):
+    """Centre of each offset bin, in pixels from the cell's top-left corner."""
+    width = STRIDE / OFFSET_BINS
+    return (torch.arange(OFFSET_BINS, device=device, dtype=torch.float32) + 0.5) * width
+
+
+def cell_logits(counts, channels, rows, cols, time_steps):
+    """Logits of a channel group read at one cell per sample, [B, len(channels)]."""
     batch = torch.arange(counts.shape[0], device=counts.device)
-    return counts[batch, 1:, rows, cols] * (fast.LOGIT_SCALE / time_steps)
+    return counts[batch, channels, rows, cols] * (fast.LOGIT_SCALE / time_steps)
+
+
+def _bin_targets(position, count, sigma):
+    """Normalized Gaussian over ``count`` bins around a fractional bin ``position``."""
+    bins = torch.arange(count, device=position.device, dtype=torch.float32)
+    target = torch.exp(-(bins[None, :] - position[:, None]).square() / (2 * sigma ** 2))
+    return target / target.sum(dim=1, keepdim=True)
+
+
+def _soft_cross_entropy(logits, target):
+    return -(target * logits.log_softmax(dim=1)).sum(dim=1)
+
+
+def heatmap_targets(positions):
+    """Normalized Gaussian (HEAT_SIGMA cells) over the HEAT x HEAT grid, flattened."""
+    centers = (torch.arange(HEAT, device=positions.device, dtype=torch.float32) + 0.5) * STRIDE
+    dx = (centers[None, None, :] - positions[:, 0, None, None]) / STRIDE
+    dy = (centers[None, :, None] - positions[:, 1, None, None]) / STRIDE
+    target = torch.exp(-(dx.square() + dy.square()) / (2 * HEAT_SIGMA ** 2))
+    return (target / target.sum(dim=(1, 2), keepdim=True)).flatten(1)
 
 
 def compute_loss(counts, targets, time_steps):
-    """Heatmap cross-entropy plus radius-bin cross-entropy at the true cell."""
+    """Heatmap cross-entropy, plus offset and radius cross-entropy at the true cell."""
     positions, radii = targets[:, :2], targets[:, 2]
-    loss = fast.compute_loss(counts[:, 0], positions, time_steps)
+    heat_logits = counts[:, 0].flatten(1) * (fast.LOGIT_SCALE / time_steps)
+    loss = _soft_cross_entropy(heat_logits, heatmap_targets(positions)).mean()
+
     rows = (positions[:, 1] / STRIDE).long().clamp(0, HEAT - 1)
     cols = (positions[:, 0] / STRIDE).long().clamp(0, HEAT - 1)
+    bin_width = STRIDE / OFFSET_BINS
+    for channels, offset in (
+        (X_OFFSET_CHANNELS, positions[:, 0] - cols * STRIDE),
+        (Y_OFFSET_CHANNELS, positions[:, 1] - rows * STRIDE),
+    ):
+        target = _bin_targets(offset / bin_width - 0.5, OFFSET_BINS, OFFSET_SIGMA)
+        logits = cell_logits(counts, channels, rows, cols, time_steps)
+        loss = loss + OFFSET_WEIGHT * _soft_cross_entropy(logits, target).mean() / 2
+
     log_centers = _log_centers(counts.device)
     log_radius = radii.clamp(min=1e-3).log().clamp(log_centers[0], log_centers[-1])
     step = float(np.log(RADIUS_CENTERS[1] / RADIUS_CENTERS[0]))
-    target = torch.exp(
-        -((log_centers[None, :] - log_radius[:, None]) / step).square()
-        / (2 * RADIUS_SIGMA ** 2)
-    )
-    target = target / target.sum(dim=1, keepdim=True)
-    log_probs = radius_logits(counts, rows, cols, time_steps).log_softmax(dim=1)
-    radius_loss = -(target * log_probs).sum(dim=1)
+    target = _bin_targets((log_radius - log_centers[0]) / step, RADIUS_BINS, RADIUS_SIGMA)
+    logits = cell_logits(counts, RADIUS_CHANNELS, rows, cols, time_steps)
+    radius_loss = _soft_cross_entropy(logits, target)
     known = (radii > 0).to(radius_loss.dtype)
     return loss + RADIUS_WEIGHT * (radius_loss * known).sum() / known.sum().clamp(min=1.0)
 
 
 def decode(counts, time_steps):
-    """(x, y, radius) in sensor pixels per sample."""
-    heat = counts[:, 0]
-    xy = fast.decode_positions(heat)
-    index = heat.flatten(1).argmax(dim=1)
-    probs = radius_logits(counts, index // HEAT, index % HEAT, time_steps).softmax(dim=1)
-    radius = torch.exp((probs * _log_centers(counts.device)).sum(dim=1))
-    return torch.cat((xy, radius[:, None]), dim=1)
+    """(x, y, radius) in sensor pixels per sample.
+
+    Peak cell of the heatmap, plus the expected in-cell offset along x and y,
+    plus the expected log-radius, all read at that cell.
+    """
+    index = counts[:, 0].flatten(1).argmax(dim=1)
+    rows, cols = index // HEAT, index % HEAT
+    offsets = _offset_centers(counts.device)
+    x_probs = cell_logits(counts, X_OFFSET_CHANNELS, rows, cols, time_steps).softmax(dim=1)
+    y_probs = cell_logits(counts, Y_OFFSET_CHANNELS, rows, cols, time_steps).softmax(dim=1)
+    x = cols * STRIDE + (x_probs * offsets).sum(dim=1)
+    y = rows * STRIDE + (y_probs * offsets).sum(dim=1)
+    r_probs = cell_logits(counts, RADIUS_CHANNELS, rows, cols, time_steps).softmax(dim=1)
+    radius = torch.exp((r_probs * _log_centers(counts.device)).sum(dim=1))
+    return torch.stack((x, y, radius), dim=1)
 
 
 def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
@@ -403,7 +463,7 @@ def train(batch_size, epochs, time_steps):
     model.eval()
     with torch.no_grad():
         counts = model(example_frames.unsqueeze(0).to(device))
-    if tuple(counts.shape[1:]) != (1 + RADIUS_BINS, HEAT, HEAT):
+    if tuple(counts.shape[1:]) != (HEAD_CHANNELS, HEAT, HEAT):
         raise RuntimeError(f"Unexpected output shape {tuple(counts.shape)}")
     print("Output shape:", tuple(counts.shape), flush=True)
 
@@ -434,6 +494,7 @@ def train(batch_size, epochs, time_steps):
                 "crop_sides": fast.CROP_SIDES,
                 "time_steps": time_steps,
                 "heatmap_stride": STRIDE,
+                "offset_bins": OFFSET_BINS,
                 "radius_centers": RADIUS_CENTERS.tolist(),
                 "architecture": ARCHITECTURE,
             }, CHECKPOINT)
