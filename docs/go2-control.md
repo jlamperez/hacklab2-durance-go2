@@ -31,8 +31,9 @@ do not fight over the motors. The exact procedure for the Go2 at the hackathon i
 
 ### What sport mode costs: reaction time
 
-Sport mode adds its own latency and ramps. The plan assumes about 300 ms from command to
-motion; that number is an estimate, **unverified**, and is measured on Saturday. A
+Sport mode adds its own latency and ramps. Measured on the real Go2 on 21 Nov 2026 (`docs/real-robot.md`): a
+lean starts about 70 ms after the command and is 90 % done at about 270 ms; a Move starts
+within about 50 ms but covers only 3 cm in the first 300 ms. A
 low-level "flinch" could start within tens of milliseconds, which would look much more
 like a reflex. The camera and the SNN react in milliseconds, so the dog may be the
 bottleneck.

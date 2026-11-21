@@ -45,6 +45,7 @@ camera -> [camera adapter] -> /reflex/events_window
 4. Record the idle dog (standing, nothing in front). Its balance control already produces
    events: this sets the simple detector's threshold and becomes training negatives.
 5. Measure command-to-motion delay and put it in `actuation_delay_ms` of the simulator.
+   **Done 21 Nov 2026**: see the table below; default now 150 ms.
 
 ## First session with the real Go2, 21 Nov 2026
 
@@ -83,8 +84,20 @@ The board runs BusyBox: no `timeout`, and `head` needs `-n`.
 `behavior` now sends Pose(true) before a lean and Euler 0, Pose(false), BalanceStand on
 the way back (`sport_api.requests_for_pose`).
 
-**Not measured yet.** Delay from command to motion (the simulator assumes 300 ms) and how
-fast a lean completes (visibly slow on the robot). `error_code` in `/sportmodestate` reads
+**Measured** (script on the Kria, `/sportmodestate` at 300 Hz, robot replies `code 0`):
+
+| Reaction | Starts | 50 % | 90 % | Reaches |
+|---|---|---|---|---|
+| Lean: Pose(true), Euler x=+0.3 | 70 ms | 180 ms | 270 ms | 0.14 rad (8°), not the 0.3 asked |
+| Sidestep: Move y=+0.3 for 1 s | ~50 ms | | | 3 cm at 0.3 s, 7 cm at 0.5 s, 20 cm at 1 s |
+
+The simulator's default `actuation_delay_ms` is now 150 ms: its lean completes about
+120 ms after the delay, which puts 90 % near the real 270 ms. Known gap: the simulated
+lean (`POSES` in `reflex/sim/scene.py`) shifts the trunk 4 cm towards the named side and
+rolls 12.5° *away* from it; the real Euler lean rolls 8° *towards* it. How far the real
+trunk moves sideways was not measured.
+
+`error_code` in `/sportmodestate` reads
 100 and `foot_force` reads zeros; meaning unknown.
 
 **Event camera.** `river-tools capture --host root@durance-kria.local` shows the live
