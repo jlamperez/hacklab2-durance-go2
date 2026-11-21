@@ -498,8 +498,11 @@ class VideoWriter(base.VideoWriter):
         self._closed = False
 
 
-def render_frame(flat, prediction, truth, caption):
-    """Sensor frame, upscaled; red prediction ring and, if given, green truth ring."""
+def render_frame(flat, prediction, truth, caption, prediction_radius=6.0, truth_radius=6.0):
+    """Sensor frame, upscaled; red prediction ring and, if given, green truth ring.
+
+    Radii are in sensor pixels.
+    """
     image = np.zeros((SENSOR * SENSOR, 3), dtype=np.uint8)
     image[flat.numpy()] = 210
     image = image.reshape(SENSOR, SENSOR, 3)
@@ -508,14 +511,14 @@ def render_frame(flat, prediction, truth, caption):
     draw = ImageDraw.Draw(picture)
     size = SENSOR * DISPLAY_SCALE
 
-    def ring(xy, color):
+    def ring(xy, radius, color):
         x, y = float(xy[0]) * DISPLAY_SCALE, float(xy[1]) * DISPLAY_SCALE
-        radius = 12
+        radius = max(float(radius), 2.0) * DISPLAY_SCALE
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline=color, width=3)
 
     if truth is not None:
-        ring(truth, (80, 220, 80))
-    ring(prediction, (240, 60, 60))
+        ring(truth, truth_radius, (80, 220, 80))
+    ring(prediction, prediction_radius, (240, 60, 60))
     draw.rectangle((0, 0, size, 28), fill=(0, 0, 0))
     draw.text((8, 6), caption, fill=(255, 255, 255))
     legend = "green ground truth    red prediction" if truth is not None else "red prediction"
