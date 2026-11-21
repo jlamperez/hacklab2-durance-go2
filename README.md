@@ -36,9 +36,12 @@ Two loops around that pipeline:
 
 ## Status
 
-Our nodes have not driven the real Go2, and nothing has run on the real event camera or on
-Durance's FPGA. Durance's toolchain has been used off the board: riverops to export the
-ball detector, riversdk.dev to build its firmware (both builds so far failed in place-and-route).
+Our nodes have not driven the real Go2, and none of our networks has run on the real event
+camera or on Durance's FPGA. The real event camera has been used for recording: about 100
+labelled takes in four sessions on 21 Nov, camera on a stand, not on the robot
+(`docs/recording-real-data.md`); the team also ran Durance's own example model on the board.
+Durance's toolchain has been used off the board: riverops to export the ball detector,
+riversdk.dev to build its firmware (both builds so far failed in place-and-route).
 
 | Part | State |
 |---|---|
@@ -49,8 +52,10 @@ ball detector, riversdk.dev to build its firmware (both builds so far failed in 
 | Sport-mode `api_id` table, checked against Unitree's client | done; commands and signs checked by hand on the real Go2, 21 Nov (`docs/real-robot.md`) |
 | Closed loop over ROS 2 in simulation | working; results below |
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
-| Recording, labelling and fine-tuning on recorded data | working with webcam takes; not yet with a real event camera |
+| Recording over ROS with the webcam stand-in (`ros-record`), labelling and fine-tuning | working with webcam takes |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
+| Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov; about 100 takes |
+| Real-camera takes as training data (`capture/` HDF5 -> network windows) | not started: `build-real` still expects the ROS recorder's format |
 | Ball detector (riverops U-Net, `models/ball/`, trained by the team on the Tübingen event-camera ball dataset, branch `feat/training`) | exported from its checkpoint with `PROVENANCE.md`; runs on the PC in the board's integer arithmetic (matches riverops' fixed-point emulation); sees simulated balls when they are close, 2/400 false frames idle; in the ROS loop in simulation (`detector:=ball`, results below) |
 | Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | failed in place-and-route twice (job #30 and a retry); probably too large for the KV260, not confirmed |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
@@ -91,9 +96,27 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 | `pixi run train` | Train the SNN on `data/synth` -> `out/models/snn.pt` |
 | `pixi run eval` | SNN versus the no-learning detector on the same held-out windows |
 | `pixi run view-data PATH` | Browse a dataset folder, or play an event recording. `--label left`, `--kind crossing`, `--sheet out/x.png` |
-| `pixi run -e ros ros-record session:=NAME` | Record labelled takes from the live stream -> `data/real/NAME` |
+| `pixi run -e ros ros-record session:=NAME` | Record labelled takes from the live ROS stream (webcam stand-in) -> `data/real/NAME`. For the real event camera use `capture/`, below |
 | `pixi run build-real data/real/*` | Recorded takes -> training set `data/real_ds` (labels derived from the arrival mark) |
 | `pixi run finetune-real --val-session NAME` | Build + fine-tune the SNN on recorded data -> `out/models/snn_real.pt` |
+
+### Record real event-camera data (Kria + GenX320, no ROS)
+
+Guided recording with Durance's `river-tools`: the laptop starts the camera on the Kria over SSH,
+shows what to do for each take, and saves labelled takes as HDF5 in `data/river_samples/<session>/`.
+Runs as Python modules from the repo root, in an environment with `river-tools` and `h5py`
+(not pixi; setup in `docs/recording-real-data.md`).
+
+![The guided recorder during a take](docs/img/capture_record_recording.png)
+
+| Command | What it does |
+|---|---|
+| `python -m capture.record --session NAME --plan cross` | Guided recording. SPACE start / end, M mark, B redo, N skip, Q quit. Plans: `follow`, `cross`, `center`; the same session name resumes |
+| `python -m capture.record --session NAME --list` | Print the session's plan |
+| `python -m capture.replay data/river_samples/NAME` | Play the takes with label, marks and event-rate timeline (also `.bin` files and Durance's dataset) |
+| `python -m capture.relabel data/river_samples/NAME 19 40 --note "..."` | A take showed something else: move it to the right take of the plan |
+| `python -m capture.summarize --plan-session NAME` | Tables of what is recorded, and which takes are missing |
+| `python -m capture.bin_to_h5 FOLDER` | Convert river-tools `.bin` recordings to HDF5 |
 
 ### Run the loop over ROS 2
 
@@ -194,7 +217,7 @@ ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 ref
 pixi run -e ros ros-robot-sim                                                             # terminal 2
 ```
 
-Record real takes and fine-tune (camera side running as above):
+Record webcam takes over ROS and fine-tune (camera side running as above):
 
 ```bash
 pixi run -e ros ros-record session:=sat_am     # l / c / r / n start a take, SPACE = ball arrived
@@ -203,12 +226,25 @@ pixi run finetune-real --val-session sat_pm
 pixi run -e ros ros-robot-sim                  # and the camera side with detector:=snn model:=out/models/snn_real.pt
 ```
 
+Record with the real event camera (Kria plugged into the laptop, `river-tools` environment):
+
+```bash
+ssh root@durance-kria.local despot_test_camera                 # once after every boot
+python -m capture.record --session sun_cross3 --plan cross     # guided takes
+python -m capture.replay data/river_samples/sun_cross3         # check them
+python -m capture.summarize --plan-session sun_cross3
+```
+
 ## Documentation
 
 | File | Contents |
 |---|---|
 | `docs/real-robot.md` | What is left before the real robot, first hour with it, the Kria rehearsal and its results |
 | `docs/recording.md` | Recording takes, the labelling rule, fine-tuning |
+| `capture/README.md` | The capture tools at a glance: screenshots, quick start, what each module does |
+| `docs/recording-real-data.md` | How to record, replay, relabel and share real event-camera data; what we have so far |
+| `docs/data-plan-follow.md` | What to record with the real event camera for following the ball |
+| `docs/durance-riversdk.md` | Notes from Durance's docs: Kria, Go2 networking, ROS 2 build, FPGA deployment, capture |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
 | `docs/durance-kria-image.md` | What is on Durance's KV260 microSD image, and what it changes for us |

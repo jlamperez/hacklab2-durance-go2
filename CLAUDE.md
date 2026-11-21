@@ -10,8 +10,10 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
 
 - **Everything in English**: code, comments, docs, commit messages.
 - **Say what is simulated.** On 21 Nov 2026 sport-mode commands sent by hand moved the real
-  Go2 (`docs/real-robot.md`); our nodes have not driven it, and the SNN has not run on the
-  real event camera or Durance's FPGA. Keep the status table in `README.md` honest.
+  Go2 (`docs/real-robot.md`); our nodes have not driven it. The real event camera has been used
+  for recording only (`capture/`, about 100 takes, camera on a stand); none of our networks has
+  run on the real event camera or Durance's FPGA (the team ran Durance's own example model on
+  the board). Keep the status table in `README.md` honest.
 - **Never write a Unitree `api_id` from memory.** Each one is checked against
   `ros2_sport_client` in `unitree_ros2` and recorded with its source file and commit.
 - Keep the model small and in plain PyTorch. It has to be ported to Durance's RIVERLib,
@@ -48,6 +50,17 @@ pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rq
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
 ```
 
+Real event camera (laptop with the Kria plugged in; Python env with Durance's `river-tools` and
+`h5py`, not pixi; see `docs/recording-real-data.md`):
+
+```bash
+python -m capture.record --session NAME --plan follow|cross|center   # guided, labelled takes -> data/river_samples/NAME
+python -m capture.replay data/river_samples/NAME                    # play takes with labels and marks
+python -m capture.relabel data/river_samples/NAME SRC DST --note .. # fix a take's label
+python -m capture.summarize --plan-session NAME                     # what is recorded / missing
+python -m capture.bin_to_h5 FOLDER                                  # river-tools .bin -> .h5
+```
+
 Rendering is headless (`MUJOCO_GL=egl`). To check a visual result, open `out/demo.png`.
 
 ## Architecture
@@ -74,6 +87,9 @@ Three seams let simulation be swapped for the real thing:
   (`sim_sport.PostureMode`). Optional walking (`locomotion.py`, `models/go2_walk.onnx`,
   a policy trained with unitree_rl_mjlab) is off unless `enable_walking()` / `locomotion:=rl`
   is used; keep it optional. Details in `docs/go2-control.md`.
+- `capture/`: recording real event-camera data with Durance's `river-tools` (no ROS); file
+  format in `reflex/events/h5.py` (one HDF5 per take: t, x, y, p + attributes). Never commit
+  river-tools, Durance's dataset or recordings (`data/` is ignored).
 - `ros2_ws/src/reflex_msgs`: `EventWindow`, `ReflexDecision`.
 - `ros2_ws/src/reflex_ros`: three nodes. `sim_bridge` (MuJoCo behind the robot's and the
   camera's topics, with a configurable actuation delay, scores every shot), `perception`
@@ -91,6 +107,13 @@ ROS 2 Humble from RoboStack with CycloneDDS), both linux-64 only, and `kria` (ar
 linux-64: ROS 2 + OpenCV, camera side only, for the board). Humble because it is what
 `unitree_ros2` supports. Whether RoboStack's CycloneDDS talks to the real Go2 is
 unverified; `docker/` holds the fallback.
+
+## Durance's toolchain
+
+Notes from Durance's login-only docs (Kria login, Go2 networking, cross-compiling the ROS 2
+node, deploying an SNN to the FPGA, camera config): `docs/durance-riversdk.md`. Read it
+before working on the Kria, the real robot or the FPGA export. Where it conflicts with the
+assumptions below, it wins.
 
 ## What we do not know yet
 
