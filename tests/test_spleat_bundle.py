@@ -85,3 +85,56 @@ def test_added_inputs_must_agree_in_shape(tmp_path):
     model["nodes"][2]["upscaling"] = 1  # c stays 5x5, a is 10x10: cannot be added into d
     with pytest.raises(BundleError, match="disagree"):
         run(tmp_path, model, tiny_params(model))
+
+
+def fake_firmware(tmp_path, model_sha):
+    import io
+    import tarfile
+    fw = tmp_path / "fw"
+    fw.mkdir()
+    with tarfile.open(fw / "firmware-kv260.tar.gz", "w:gz") as tar:
+        for name, data in (("spleat.bit.bin", b"bitstream"), ("spleat.dtbo", b"overlay")):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    (fw / "PROVENANCE.md").write_text(f"| Model file | `m.json`, sha256 `{model_sha}` |\n")
+    return fw
+
+
+def test_firmware_is_added_to_the_deploy_profile_when_built_from_this_model(tmp_path):
+    import hashlib
+    model = tiny_model()
+    mp, pp = tmp_path / "m.json", tmp_path / "p.json"
+    mp.write_text(json.dumps(model))
+    pp.write_text(json.dumps(tiny_params(model)))
+    fw = fake_firmware(tmp_path, hashlib.sha256(mp.read_bytes()).hexdigest())
+    m = build(mp, pp, tmp_path / "out", 4096.0, firmware=fw)
+    out = tmp_path / "out"
+    assert (out / "spleat.bit.bin").read_bytes() == b"bitstream"
+    profile = (out / "deploy.yaml").read_text()
+    for name in ("weights.txt", "config.yaml", "metavision_camera.json", "spleat.bit.bin", "spleat.dtbo"):
+        sha = hashlib.sha256((out / name).read_bytes()).hexdigest()
+        assert f"  - source: {name}\n" in profile and f'sha256: "{sha}"' in profile
+    assert "/usr/lib/firmware/xilinx/spleat/spleat.dtbo" in profile
+    assert m["firmware"]["files"]["spleat.dtbo"] == hashlib.sha256(b"overlay").hexdigest()
+
+
+def test_firmware_built_from_another_model_is_refused(tmp_path):
+    model = tiny_model()
+    mp, pp = tmp_path / "m.json", tmp_path / "p.json"
+    mp.write_text(json.dumps(model))
+    pp.write_text(json.dumps(tiny_params(model)))
+    fw = fake_firmware(tmp_path, "0" * 64)
+    with pytest.raises(BundleError, match="different architecture"):
+        build(mp, pp, tmp_path / "out", 4096.0, firmware=fw)
+
+
+def test_camera_frequency_follows_the_checkpoint_window(tmp_path):
+    import torch
+    model = tiny_model()
+    mp, pp = tmp_path / "m.json", tmp_path / "p.json"
+    mp.write_text(json.dumps(model))
+    pp.write_text(json.dumps(tiny_params(model)))
+    torch.save({"window_ms": 5.0}, tmp_path / "c.pt")
+    build(mp, pp, tmp_path / "out", 4096.0, checkpoint=tmp_path / "c.pt")
+    assert json.loads((tmp_path / "out" / "metavision_camera.json").read_text())["frequency"] == 200.0

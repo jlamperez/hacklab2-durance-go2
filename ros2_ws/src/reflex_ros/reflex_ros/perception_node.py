@@ -42,7 +42,8 @@ class PerceptionNode(Node):
             self.get_logger().info(f"SNN detector from {model} on {device}")
         elif self.kind == "ball":
             self.detector = BallDetector(BallConfig(model_dir=ball_dir, p_ball=p_ball or None, device=device))
-            self.get_logger().info(f"ball detector from {ball_dir} on {device}, "
+            self.get_logger().info(f"ball detector from {ball_dir} ({self.detector.files['architecture']}, "
+                                   f"{self.detector.window_ms:g} ms windows) on {device}, "
                                    f"P(ball) threshold {self.detector.threshold}")
         elif self.kind == "simple":
             self.detector = SimpleDetector(SimpleConfig())
@@ -53,7 +54,7 @@ class PerceptionNode(Node):
         else:
             raise ValueError(f"unknown detector {self.kind!r}")
         self._calib, self._t0 = [], None
-        self._expected = window_config(self.kind)
+        self._expected = window_config(self.kind, ball_dir)
         self._warned_window = False
         self._calibrate_for = float(self.calibrate_s)
         if self.kind == "simple":

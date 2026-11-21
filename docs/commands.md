@@ -45,8 +45,10 @@ on a new machine either `mkdir -p out/models && cp models/snn.* out/models/`, or
 | `pixi run train` | trains the network into `out/models/snn.pt` | nothing |
 | `pixi run eval` | network versus simple detector on held-out windows | nothing |
 | `pixi run view-data PATH` | browse a dataset folder or a recording | window; `--sheet`, `--video` save files |
-| `pixi run spleat-bundle MODEL.json PARAMS.json` | riverops export (model + parameters JSON) into the files for the KV260: `weights.txt`, `config.yaml`, `metavision_camera.json`, plus a README saying where each value comes from | nothing; writes `out/spleat/<model>/` |
-| `pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt` | ball-detector checkpoint into `ball_model.json`, `ball_parameters.json/.txt`, `ball_readout.json` with the training code's own exporter, plus `PROVENANCE.md`. Separate pixi environment; needs `third_party/riverops-0.2.0-py3-none-any.whl` (Durance, not in git) | nothing; writes `models/ball/` |
+| `pixi run spleat-bundle MODEL.json PARAMS.json [--firmware models/firmware/JOB] [--checkpoint CKPT.pt]` | riverops export into the files for the KV260: `weights.txt`, `config.yaml`, `metavision_camera.json`, with `--firmware` the bitstream (refused if built from another model graph), and `deploy.yaml` for `river-tools deploy`; `--checkpoint` sets the camera frequency from the model's event window. README says where each value comes from | nothing; writes `out/spleat/<model>/` |
+| `pixi run spleat-read [--host 192.168.77.1] [--save out/x.bin]` | read the FPGA results from the Kria's SPLEAT server (port 3333): size, values, `(x, y, P(ball))` per message. Needs the camera client running on the board | nothing; prints per message |
+| `pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt [OUT_DIR] [--script train_ball_small.py --commit SHA]` | ball-detector checkpoint into `<prefix>_model.json`, `_parameters.json/.txt`, `_readout.json` with the training code's own exporter, plus `PROVENANCE.md` (with the event window the checkpoint was trained on). Defaults: `train_ball_size.py` at `cc540f2`, into `models/ball`. Separate pixi environment; needs `third_party/riverops-0.2.0-py3-none-any.whl` (Durance, not in git) | nothing; writes OUT_DIR |
+| `pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy PROFILE.yaml root@192.168.77.1 [--check-only\|--replace]` | Durance's river-tools: copy the files of a profile (`spleat-bundle`'s `deploy.yaml`) to the Kria, verifying sha256; also `capture`, `play`. Needs `third_party/river_tools-0.1.0-py3-none-any.whl`, setup in `docs/deploy-fpga.md` | nothing; copies over SSH |
 | `pixi run build-real data/real/*` | recorded sessions into a training set, `data/real_ds` | nothing |
 | `pixi run finetune-real` | the previous step, then fine-tune into `out/models/snn_real.pt` | nothing |
 | `pixi run rl-play` | watch the walking policy inside mjlab (optional extra) | 3D window; `--viewer viser` for the browser |
@@ -85,7 +87,8 @@ Only `ros-sim` is complete on its own. The others do nothing visible until their
 
 Arguments (defaults in brackets):
 
-- `ros-sim`: `detector:=snn|simple|ball` [snn] (`ball`: Durance's ball network from `models/ball`,
+- `ros-sim`: `detector:=snn|simple|ball` [snn] (`ball`: Durance's ball network from `ball_dir:=models/ball`
+  [models/ball], or `models/ball_small`; its event window is read from the checkpoint,
   `device:=cuda` to run it on the GPU), `max_shots:=N` [0, endless], `negative_fraction:=0.3`,
   `actuation_delay_ms:=70.0`, `record:=out/x.mp4`, `mode:=keeper|dodge`,
   `reaction:=euler|move`, `locomotion:=none|rl`, `move_vy:=0.3`, `hold_s:=0.6`,

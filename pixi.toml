@@ -37,6 +37,7 @@ build-real = "python -m reflex.data.recording"   # recorded sessions -> training
 finetune-real = "bash scripts/finetune_real.sh"   # build + fine-tune on recorded data + evaluate
 view-data = "python -m reflex.viz.view_npz"
 spleat-bundle = "python -m reflex.deploy.spleat_bundle"   # riverops model + parameters JSON -> files for the KV260: spleat-bundle MODEL.json PARAMS.json
+spleat-read = "python -u -m reflex.runtime.spleat_client"   # read the FPGA results from the Kria (port 3333): spleat-read --host 192.168.77.1
 view = { cmd = "python -m reflex.sim.view", env = { MUJOCO_GL = "glfw" } }
 drive = { cmd = "python -m reflex.sim.view --drive --no-balls", env = { MUJOCO_GL = "glfw" } }   # walk the dog with the arrow keys
 follow-sim = "python -m reflex.sim.follow_sim"   # follow a scripted ball, no ROS: prints a summary, --video out/follow.mp4
