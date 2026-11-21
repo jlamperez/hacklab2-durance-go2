@@ -33,7 +33,7 @@ from reflex.events import repr as ev_repr
 from reflex.events.emu import EmuConfig, EventEmulator
 from reflex.runtime import sport_api
 from reflex.runtime.reflex_fsm import BEHAVIORS
-from reflex.runtime.sim_sport import pose_for_request
+from reflex.runtime.sim_sport import PostureMode, pose_for_request
 from reflex.sim.scene import BallShot, Go2Sim, to_gray
 from reflex.viz.web_scene import pack_state
 from reflex_msgs.msg import EventWindow
@@ -42,16 +42,21 @@ from unitree_api.msg import Request
 WINDOW_STRIDE_STEPS = 10     # one window every 20 ms of simulated time
 STATE_STRIDE_STEPS = 16      # body poses for the web viewer, about 30 per second
 NEGATIVES = ("miss", "crossing", "walker")
+# The walking policy covers about 75 % of the distance the real Go2 did for the same Move
+# (y=0.3 for 1 s: 16 cm against 22 cm, 21 Nov 2026). Its x/y commands are scaled up by this.
+RL_TRACKING_GAIN = 1.35
 
 
 class SimBridge(Node):
     def __init__(self):
         super().__init__("go2_sim_bridge")
         p = self.declare_parameter
-        delay_ms = float(p("actuation_delay_ms", 300.0).value)
-        if not 200.0 <= delay_ms <= 400.0:
-            self.get_logger().warn(f"actuation_delay_ms={delay_ms:.0f} is outside the 200-400 ms range "
-                                   "assumed for the real Go2")
+        # Default measured on the real Go2 (21 Nov 2026): a lean starts 70 ms after the command.
+        # With it the simulated lean is 10/50/90 % done at 82/134/310 ms; the real one at 107/180/273.
+        delay_ms = float(p("actuation_delay_ms", 70.0).value)
+        if not 20.0 <= delay_ms <= 400.0:
+            self.get_logger().warn(f"actuation_delay_ms={delay_ms:.0f} is outside the 20-400 ms range "
+                                   "plausible for the real Go2")
         self.delay_s = delay_ms / 1e3
         self.period = float(p("shot_period_s", 3.0).value)
         self.neg_frac = float(p("negative_fraction", 0.3).value)
@@ -105,6 +110,7 @@ class SimBridge(Node):
         self.create_subscription(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
 
         self.pending = []            # (apply_time_s, pose, api name, velocity or None)
+        self.posture = PostureMode()   # Euler acts only after Pose(true), Move only without it
         self.moved = False           # the dog has walked since it was last on its spot
         self.pose = "stand"
         self.steps = 0
@@ -133,18 +139,23 @@ class SimBridge(Node):
     # --- requests from the behavior node -------------------------------------------------
     def on_request(self, msg: Request) -> None:
         api_id = int(msg.header.identity.api_id)
-        pose = pose_for_request(api_id, msg.parameter)
         name = sport_api.BY_ID[api_id].name if api_id in sport_api.BY_ID else f"api_id {api_id}"
+        if not self.posture.handle(api_id, msg.parameter):
+            if api_id != sport_api.POSE.api_id:
+                self.get_logger().info(f"{name}: accepted but no effect with posture mode "
+                                       f"{'on' if self.posture.on else 'off'}, as on the real Go2")
+            return
+        pose = pose_for_request(api_id, msg.parameter)
         if pose is None:
             self.get_logger().warn(f"{name}: no equivalent in the simulator, ignored")
             return
         if self.homing:      # the dog is walking back to its spot between shots
             return
         velocity = None
-        if self.locomotion == "rl" and api_id == sport_api.MOVE.api_id:
+        if api_id == sport_api.MOVE.api_id:
             v = json.loads(msg.parameter)
             velocity = (float(v.get("x", 0.0)), float(v.get("y", 0.0)), float(v.get("z", 0.0)))
-        elif self.locomotion == "rl" and api_id == sport_api.STOP_MOVE.api_id:
+        elif api_id == sport_api.STOP_MOVE.api_id:
             velocity = (0.0, 0.0, 0.0)
         stamp_us = int(msg.header.identity.id)
         if stamp_us > 0:   # time from the newest event to the request arriving here
@@ -159,12 +170,18 @@ class SimBridge(Node):
     def apply_due(self) -> None:
         while self.pending and self.pending[0][0] <= self.sim.time:
             _, pose, name, velocity = self.pending.pop(0)
-            if velocity is not None and not (self.sim.mode == "pose" and not any(velocity)):
-                self.sim.damped = False
-                self.sim.set_velocity(*velocity)
-                self.moved = True
+            if velocity is not None and self.locomotion == "rl":
+                if not (self.sim.mode == "pose" and not any(velocity)):   # StopMove while posing: nothing to do
+                    vx, vy, wz = velocity
+                    self.sim.damped = False
+                    self.sim.set_velocity(vx * RL_TRACKING_GAIN, vy * RL_TRACKING_GAIN, wz)
+                    self.moved = True
             elif velocity is not None:
-                pass                 # StopMove while standing in a posture: nothing to do
+                # No walking policy: the dog keeps its posture and is moved as a whole with the
+                # real Go2's sidestep profile (Go2Sim.set_slide).
+                self.sim.damped = False
+                self.sim.set_slide(*velocity)
+                self.moved = self.moved or any(velocity)
             elif pose == "damp":
                 self.sim.damped = True
             elif pose in ("sit", "hello"):

@@ -44,12 +44,13 @@ Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 | Synthetic dataset with hard negatives (miss, crossing, slow, walker, idle) | working, tested |
 | SNN (26.5k parameters, plain PyTorch) and training | trains in ~90 s; 81 % window accuracy on held-out simulated episodes |
 | No-learning detector and reflex state machine | working, tested |
-| Sport-mode `api_id` table, checked against Unitree's client | done, tested; not tried on a robot |
+| Sport-mode `api_id` table, checked against Unitree's client | done; commands and signs checked by hand on the real Go2, 21 Nov (`docs/real-robot.md`) |
 | Closed loop over ROS 2 in simulation | working; results below |
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
 | Recording, labelling and fine-tuning on recorded data | working with webcam takes; not yet with a real event camera |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
-| Camera adapter for the real sensor, SNN on the FPGA (RIVERLib), real Go2 | not started: blocked on hardware |
+| Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
+| Camera adapter for the real sensor, SNN on the FPGA (SPLEAT), our nodes driving the real Go2 | not started |
 
 ## Commands
 
@@ -94,7 +95,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 
 | Command | What it does |
 |---|---|
-| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple`, `max_shots:=12`, `actuation_delay_ms:=300.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
+| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple`, `max_shots:=12`, `actuation_delay_ms:=70.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
 | `pixi run -e ros ros-camera` | Camera side only: webcam as stand-in event camera + perception. `mirror:=true` |
 | `pixi run -e ros ros-robot-sim` | Robot side only: behavior + simulated dog in a 3D window |
 | `pixi run -e ros ros-drive` | Simulated dog driven by `/cmd_vel`, converted to the Go2's `Move` command |
@@ -206,6 +207,7 @@ pixi run -e ros ros-robot-sim                  # and the camera side with detect
 | `docs/recording.md` | Recording takes, the labelling rule, fine-tuning |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
+| `docs/durance-kria-image.md` | What is on Durance's KV260 microSD image, and what it changes for us |
 | `docs/questions-for-durance.md` | What to ask at the opening |
 | `CLAUDE.md` | Rules and architecture notes for working on this repository with an agent |
 
@@ -243,7 +245,8 @@ windows, listens on `/api/sport/request`), perception and behavior. One run, 12 
 
 Twelve shots is a smoke test, not a benchmark. The two SNN false triggers are both balls
 crossing sideways. The actuation delay is the time the simulated dog waits before it
-starts moving; 300 ms is a guess to be replaced by a measurement on the real Go2.
+starts moving. These runs used 300 ms, a guess; the default is now 70 ms, measured on the real Go2
+on 21 Nov (`docs/real-robot.md`).
 From newest event to request on the wire: about 6-10 ms of simulated time, with the
 simulation running slower than real time, so this is not a latency claim.
 

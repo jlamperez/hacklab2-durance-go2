@@ -37,6 +37,9 @@ STAND_DOWN = SportCommand("StandDown", 1005, "ROBOT_SPORT_API_ID_STANDDOWN")
 RECOVERY_STAND = SportCommand("RecoveryStand", 1006, "ROBOT_SPORT_API_ID_RECOVERYSTAND")
 EULER = SportCommand("Euler", 1007, "ROBOT_SPORT_API_ID_EULER")
 MOVE = SportCommand("Move", 1008, "ROBOT_SPORT_API_ID_MOVE")
+# Posture mode on/off. On the real Go2 (21 Nov 2026) Euler was accepted (code 0) but did
+# nothing until Pose(true) was sent; in posture mode Move turns the trunk instead of walking.
+POSE = SportCommand("Pose", 1028, "ROBOT_SPORT_API_ID_POSE")
 SIT = SportCommand("Sit", 1009, "ROBOT_SPORT_API_ID_SIT")
 RISE_SIT = SportCommand("RiseSit", 1010, "ROBOT_SPORT_API_ID_RISESIT")
 HELLO = SportCommand("Hello", 1016, "ROBOT_SPORT_API_ID_HELLO")
@@ -58,7 +61,7 @@ BACK_FLIP = SportCommand("BackFlip", 2043, "ROBOT_SPORT_API_ID_BACKFLIP")
 GESTURES = (SIT, RISE_SIT, HELLO, STRETCH, CONTENT, DANCE1, DANCE2, SCRAPE, HEART)
 ACROBATICS = (FRONT_FLIP, FRONT_JUMP, FRONT_POUNCE, LEFT_FLIP, BACK_FLIP)
 
-ALL = (DAMP, BALANCE_STAND, STOP_MOVE, STAND_UP, STAND_DOWN, RECOVERY_STAND, EULER, MOVE) + GESTURES + ACROBATICS
+ALL = (DAMP, BALANCE_STAND, STOP_MOVE, STAND_UP, STAND_DOWN, RECOVERY_STAND, EULER, MOVE, POSE) + GESTURES + ACROBATICS
 BY_ID = {c.api_id: c for c in ALL}
 
 # Note: the client at this commit has no BodyHeight command. To lower the trunk on the
@@ -71,5 +74,37 @@ def move_params(vx: float, vy: float, vyaw: float) -> str:
 
 
 def euler_params(roll: float, pitch: float, yaw: float) -> str:
-    """SportClient::Euler: js["x"]=roll, js["y"]=pitch, js["z"]=yaw (rad)."""
+    """SportClient::Euler: js["x"]=roll, js["y"]=pitch, js["z"]=yaw (rad).
+
+    Roll follows the right-hand rule about +x (forward): roll > 0 lowers the right side.
+    Checked on the real Go2 on 21 Nov 2026. Only acts in posture mode (see POSE).
+    """
     return json.dumps({"x": float(roll), "y": float(pitch), "z": float(yaw)})
+
+
+def pose_params(flag: bool) -> str:
+    """SportClient::Pose: js["data"]=flag (true enters posture mode, false leaves it)."""
+    return json.dumps({"data": bool(flag)})
+
+
+def requests_for_pose(pose: str, last_pose: str, reaction: str, roll: float, vy: float) -> list:
+    """Sport-mode requests that take the robot from `last_pose` to `pose`.
+
+    pose: lean_left / lean_right / crouch / stand. reaction: "euler" leans the trunk,
+    "move" steps sideways. Signs follow the dog frame (+y is left); leaning left needs a
+    negative roll. Euler only acts in posture mode, and Move only walks outside it, so a
+    lean enters posture mode and the way back leaves it before BalanceStand.
+    """
+    side = {"lean_left": 1.0, "lean_right": -1.0}.get(pose)
+    if side is not None:
+        if reaction == "move":
+            return [(MOVE, move_params(0.0, side * vy, 0.0))]
+        return [(POSE, pose_params(True)), (EULER, euler_params(-side * roll, 0.0, 0.0))]
+    if pose == "crouch":
+        return [(STAND_DOWN, "")]
+    # Back to standing: undo whatever the last reaction was.
+    if last_pose == "crouch":
+        return [(STAND_UP, ""), (BALANCE_STAND, "")]
+    if reaction == "move":
+        return [(STOP_MOVE, "")]
+    return [(EULER, euler_params(0.0, 0.0, 0.0)), (POSE, pose_params(False)), (BALANCE_STAND, "")]

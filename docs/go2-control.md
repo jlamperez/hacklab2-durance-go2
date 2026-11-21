@@ -31,8 +31,11 @@ do not fight over the motors. The exact procedure for the Go2 at the hackathon i
 
 ### What sport mode costs: reaction time
 
-Sport mode adds its own latency and ramps. The plan assumes about 300 ms from command to
-motion; that number is an estimate, **unverified**, and is measured on Saturday. A
+Sport mode adds its own latency and ramps. Measured on the real Go2 on 21 Nov 2026 (`docs/real-robot.md`): a
+lean starts about 70 ms after the command and is 90 % done at about 270 ms; a Move starts
+within about 50 ms but covers only 3 cm in the first 300 ms. A lean barely moves the trunk sideways (under 1 cm):
+it tilts the dog, it does not take it out of a ball's path. The simulator's lean and its
+70 ms default delay are fitted to these measurements. A
 low-level "flinch" could start within tens of milliseconds, which would look much more
 like a reflex. The camera and the SNN react in milliseconds, so the dog may be the
 bottleneck.
@@ -62,6 +65,7 @@ to Unitree's header. Commands used or likely to be used:
 | `RecoveryStand` | 1006 | Get up after a fall |
 | `Euler` | 1007 | Lean the trunk (roll, pitch, yaw) |
 | `Move` | 1008 | Walk (vx, vy, vyaw) |
+| `Pose` | 1028 | Posture mode on/off; Euler only acts with it on (real Go2, 21 Nov) |
 | `Hello` | 1016 | Wave |
 
 ### Tricks
