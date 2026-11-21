@@ -9,6 +9,7 @@ removes most of the confusion.
 | ROS | `pixi run -e ros ros-NAME` | PC or laptop | yes | yes |
 | Kria | `pixi run -e kria kria-NAME` | the Kria board | yes | yes, from the PC |
 | Capture | `python -m capture.NAME` | laptop with the Kria plugged in | no | no |
+| ROS on a Mac | `pixi run -e sim-arm ros-NAME` | arm64 Docker container on Apple Silicon | yes | yes, http://localhost:8080 |
 
 - `-e ros` selects the environment that contains ROS 2. Without it, `ros2` does not exist.
 - All commands are run from the repository folder (`hacklab2-durance-go2`).
@@ -66,6 +67,8 @@ Two kinds: **launchers** start part of the pipeline, **tools** attach to whateve
 | `ros-robot-sim` | no | no | yes | simulated, waits for decisions |
 | `ros-drive` | no | no | no | simulated, walks on `/cmd_vel` |
 | `ros-drive camera:=true` | simulated, moves with the dog | yes | no | simulated, walks on `/cmd_vel` |
+| `ros-follow-sim` | simulated, moves with the dog, a ball rolled by script | target node (centroid) | `ros-follow` (or `follow:=true`) | simulated, walks |
+| `ros-events-sim` | GenX320 recordings, or the live KV260 camera | target node, or the ball SNN with `tracker:=snn` (or simple detector) | follow node, enabled (or reflex) | simulated, walks |
 
 Only `ros-sim` is complete on its own. The others do nothing visible until their partner runs:
 
@@ -75,6 +78,8 @@ Only `ros-sim` is complete on its own. The others do nothing visible until their
 | `ros-robot-sim` | a camera: `kria-camera` on the Kria, or `ros-camera` on a PC with a webcam | the dog waits for decisions on `/reflex/decision` |
 | `ros-camera` / `kria-camera` | a robot: `ros-robot-sim` (or the real Go2 with the behavior node) | decisions are published but nobody acts on them |
 | `ros-drive` | a keyboard: `ros-teleop` (walking) and/or `ros-tricks` (Hello, Sit) | the dog stands still until something publishes `/cmd_vel` or a trick |
+| `ros-follow-sim` | `ros-follow`, then press `f` (or start it with `follow:=true`) | the follow node starts disabled, on purpose |
+| `ros-events-sim source:=live` | the camera sender on the board (`kria_host:=...` starts it) | no events until `despot_debug_camera` connects; with a recording nothing else is needed |
 
 `ros-web` can be added to any of them; it never replaces a partner.
 
@@ -95,6 +100,20 @@ Arguments (defaults in brackets):
   `camera:=false` (true: the dog's simulated event camera and the detector run while you
   drive), and with the camera `detector:=snn|simple|ball` [snn].
 
+- `ros-follow-sim`: `follow:=false` (true: the follow node runs inside and starts by itself),
+  `mode:=walk|gaze|look`, `vfov_deg:=60.0`, `viewer:=true`, `actuation_delay_ms:=300.0`, `target_start_s:=5.0` (the
+  ball waits this long so the target node can calibrate), `zone_top:=0.3`. Details:
+  `docs/follow.md`.
+- `ros-events-sim`: `source:=PATH[,PATH]|live` [data/river], `behavior:=follow|reflex`,
+  `speed:=1.0`, `loop:=true`, `gap_s:=1.0`, `still_first:=true` (the session's still scene
+  plays first, for calibration), `exclude:='*take_002*'`, `flip_x:=false`, `flip_y:=false`,
+  live: `port:=3333`, `kria_host:=root@durance-kria.local`; follow: `follow:=true`,
+  `mode:=walk|gaze|look`, `hfov_deg:=90.0`, `vfov_deg:=90.0`, `camera_on_trunk:=false` (look
+  mode; open loop), `zone_top:=0.3`, `min_events:=0.0`, `tracker:=centroid|snn`; snn: `ball_model:=out/models/ball_small_best.pt`, `ball_min_p:=0.55`,
+  `ball_min_pixels:=20`, `fullres_ms:=20.0`; reflex:
+  `reaction:=euler|move`, `min_confidence:=0.6`; robot: `viewer:=true`, `scene:=lab`,
+  `actuation_delay_ms` [300 walking, 70 reflex]. Details: `docs/events-sim.md`.
+
 Scenery: `ros-sim`, `ros-robot-sim` and `ros-drive` take `scene:=lab|park` [lab]. `park` is
 an outdoor scene built from code (grass, a gravel path, trees, benches, a brick wall, houses);
 see `reflex/sim/scenery.py`. Give `ros-web` the same value (`ros-web scene:=park`) or it draws
@@ -113,6 +132,10 @@ are lab numbers.
 | `ros-web` | dashboard at `http://localhost:8080`; `port:=8081` | the browser |
 | `ros-teleop` | keyboard to `/cmd_vel`; needs `ros-drive` | its terminal: `i` forward, `,` back, `j` / `l` turn, `J` / `L` sideways, `k` stop |
 | `ros-tricks` | keyboard to built-in tricks; `allow_acrobatics:=true` | its terminal: `h` Hello, `s` Sit, `u` RiseSit, `!` Damp |
+| `ros-follow` | follow node: `/reflex/target` to Move / StopMove (or Euler with `mode:=gaze` / `mode:=look`); starts disabled. `max_vx:=0.3`, `max_wz:=0.5`, `max_travel_m:=3.0`, `dry_run:=true` | its terminal: `f` start, `SPACE` stop, `!` Damp, `q` quit |
+| `ros-look` | follow node in look mode: nine trunk gestures (Euler yaw + pitch), never walks; starts disabled. `look_yaw:=0.3`, `look_pitch:=0.2`, `camera_on_trunk:=true`, `invert_pitch:=false`, `dry_run:=true` (`docs/follow.md`) | its terminal: `f` start, `SPACE` stop, `1`-`9` a gesture (numpad layout), `!` Damp, `q` quit |
+| `ros-event-camera` | event camera node alone, onto `/reflex/events_window`: `source:=PATH` (replay) or `source:=live`; same arguments as `ros-events-sim` | — |
+| `ros-target` | target node alone: `/reflex/events_window` to `/reflex/target`; `zone_top:=0.0` for a drone | — |
 | `ros-record session:=NAME` | record labelled takes from the live stream | its terminal: `l` `c` `r` `n` start, `SPACE` hit, `x` cancel, `u` undo, `q` quit |
 | `ros-shell` | a shell where `ros2` and `rqt` work | — |
 
@@ -126,7 +149,45 @@ ros2 topic hz /reflex/events_window
 rqt_graph
 ros2 run rqt_image_view rqt_image_view /reflex/debug/events_image
 ros2 service call /reflex/recalibrate std_srvs/srv/Trigger     # simple detector only
+ros2 topic echo /reflex/target                                  # where the target is (u, v, confidence)
+ros2 topic echo /reflex/debug/follow                            # follow node: state, burst, travel
+ros2 service call /reflex/follow/enable std_srvs/srv/SetBool "{data: false}"   # stop following
+ros2 service call /reflex/target/recalibrate std_srvs/srv/Trigger
 ```
+
+## Simulation on a Mac (Apple Silicon)
+
+`default` and `ros` are `linux-64` only (PyTorch with CUDA). Under amd64 emulation (QEMU) in
+Docker on a Mac, `sim_bridge` and `web_viewer` grow to the whole VM's memory and get
+OOM-killed (seen 21 Nov 2026: ~7 GB each; building the lab scene natively takes ~270 MB).
+`sim-arm` runs natively in an arm64 container: ROS 2, MuJoCo, the walking policy, the web
+dashboard and PyTorch on the CPU (conda-forge's `cpu` build; the PyPI wheel for arm64 Linux
+pulls in CUDA). So `ros-sim detector:=snn` works, and so do `test`, `gen-data`, `train` and
+`eval`, slower than on the PC's GPU, and `ros-events-sim tracker:=snn` (the ball SNN,
+`docs/events-sim.md`; also needs `riverops-0/` and `Training/`). The reflex SNN still does
+not fit `ros-events-sim`: it expects 320x180 windows, not the camera's 320x320.
+No GLFW windows: use `viewer:=false` and `ros-web`.
+
+```bash
+# on the Mac, from the repository folder
+docker run -it --platform linux/arm64 --name go2arm \
+  -v "$PWD":/ws -v go2arm-cache:/root/.cache -w /ws -p 8080:8080 \
+  ghcr.io/prefix-dev/pixi:latest bash
+
+# inside the container, once
+pixi config set --global detached-environments true    # env in the volume, not in /ws/.pixi
+apt-get update && apt-get install -y git libegl1 libegl-mesa0 libgl1-mesa-dri libglib2.0-0
+bash scripts/setup.sh                                   # if third_party/ is missing (`pixi run setup` needs default)
+rm -rf ros2_ws/build ros2_ws/install ros2_ws/log        # drop an amd64 build, if any
+pixi run -e sim-arm ros-build
+
+# then
+pixi run -e sim-arm ros-events-sim source:=data/river/sat_follow2 viewer:=false
+pixi run -e sim-arm ros-web          # second shell: docker exec -it go2arm bash
+```
+
+Later: `docker start -ai go2arm`. DDS stays inside the container; the real Go2 and the Kria
+cannot be reached from Docker on macOS.
 
 ## On the Kria
 
@@ -136,6 +197,7 @@ Reach it with `ssh ubuntu@kria.local`. pixi is at `~/.pixi/bin/pixi` (not on the
 |---|---|
 | `~/.pixi/bin/pixi run --frozen -e kria kria-build` | build the workspace (after copying new code) |
 | `~/.pixi/bin/pixi run --frozen -e kria kria-camera` | webcam as event camera + detector; same arguments as `ros-camera` |
+| `~/.pixi/bin/pixi run --frozen -e kria kria-event-camera` | the real event camera onto `/reflex/events_window`; start `despot_debug_camera --host 127.0.0.1 --port 3333` first. Untested |
 | `~/.pixi/bin/pixi run --frozen -e kria kria-shell` | a shell where `ros2` works |
 
 `--frozen` makes pixi use the lock file as it is. Always pass it on the board: its pixi is
@@ -188,6 +250,17 @@ pixi run -e ros ros-sim detector:=simple max_shots:=10     # afterwards, not at 
 ~/.pixi/bin/pixi run --frozen -e kria kria-camera     # on the Kria
 pixi run -e ros ros-robot-sim                # on the PC
 pixi run -e ros ros-web                      # on the PC, optional
+```
+
+**Watch the simulated dog follow the recorded ball** (`docs/events-sim.md`)
+```bash
+pixi run -e ros ros-events-sim source:=data/river/sat_follow2 exclude:='*take_002*'
+pixi run -e ros ros-web                      # optional: the events next to the dog
+```
+
+**Live KV260 event camera, simulated dog**
+```bash
+pixi run -e ros ros-events-sim source:=live kria_host:=root@durance-kria.local
 ```
 
 **Webcam on the PC as the camera** (needs a camera plugged into the PC)
@@ -251,4 +324,6 @@ camera on, the simulation runs at about 70 % of real time.
 | the web dashboard does not move | the simulator was started with a plain command (`pixi run view` / `drive`); use the `ros-` one |
 | dashboard on port 8081 | another dashboard is still running on 8080 |
 | keys do nothing | `ros-teleop`, `ros-tricks`, `ros-record`: their terminal must have focus; `view` / `drive`: the 3D window must |
+| `event_camera`: `Address already in use` | `river-tools capture` (or another event camera node) holds port 3333; stop it or pass `port:=3334` |
+| `event_camera`: `No module named 'h5py'` | the environment predates h5py in `pixi.toml`: `pixi install -a` (on the Kria, replay needs it too; live does not) |
 | nodes on two machines do not see each other | different network or `ROS_DOMAIN_ID`; check with `ros2 node list` on both |

@@ -1,5 +1,5 @@
 from reflex.runtime import sport_api as api
-from reflex.runtime.sim_sport import pose_for_request
+from reflex.runtime.sim_sport import euler_for_request, pose_for_request
 
 
 def test_move_and_euler_lean_to_the_commanded_side():
@@ -59,3 +59,11 @@ def test_behavior_sequences_take_effect_in_posture_mode():
     effects = [(c.name, pm.handle(c.api_id, p)) for c, p in there + back]
     assert effects == [("Pose", False), ("Euler", True), ("Euler", True), ("Pose", False), ("BalanceStand", True)]
     assert pm.handle(api.MOVE.api_id, api.move_params(0, 0.3, 0))   # free to walk afterwards
+
+
+def test_euler_with_yaw_or_pitch_turns_the_trunk_and_roll_alone_still_leans():
+    assert euler_for_request(api.EULER.api_id, api.euler_params(0.0, 0.2, -0.3)) == (0.0, 0.2, -0.3)
+    assert euler_for_request(api.EULER.api_id, api.euler_params(0.3, 0.0, 0.0)) is None
+    assert euler_for_request(api.EULER.api_id, api.euler_params(0.0, 0.0, 0.0)) is None
+    assert euler_for_request(api.MOVE.api_id, api.move_params(0.0, 0.3, 0.0)) is None
+    assert euler_for_request(api.EULER.api_id, "not json") is None

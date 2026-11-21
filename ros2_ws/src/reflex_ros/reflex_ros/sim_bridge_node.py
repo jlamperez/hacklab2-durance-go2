@@ -8,6 +8,8 @@
 
 With robot_only it is just the robot (no camera, no balls, no /clock). Adding camera:=true
 to that keeps the dog's simulated event camera on, e.g. to watch the events while driving.
+Adding target_path:=true moves a ball along a scripted path in front of the dog, for the
+follow node to chase (reflex/sim/follow_sim.py, TargetPath).
 
 It rolls balls (and hard negatives) at the dog, applies incoming requests after a
 configurable actuation delay, and scores each shot. The behavior node cannot tell this
@@ -35,7 +37,8 @@ from reflex.events import repr as ev_repr
 from reflex.events.emu import EmuConfig, EventEmulator
 from reflex.runtime import sport_api
 from reflex.runtime.reflex_fsm import BEHAVIORS
-from reflex.runtime.sim_sport import PostureMode, pose_for_request
+from reflex.runtime.sim_sport import PostureMode, euler_for_request, pose_for_request
+from reflex.sim.follow_sim import TargetPath, place_ball
 from reflex.sim.scene import BallShot, Go2Sim, to_gray
 from reflex.viz.web_scene import pack_state
 from reflex_msgs.msg import EventWindow
@@ -79,6 +82,10 @@ class SimBridge(Node):
         # really walk, using the learned policy in models/go2_walk.onnx.
         self.locomotion = p("locomotion", "none").value
         scene = p("scene", "lab").value                        # "lab" or "park" (reflex/sim/scenery.py)
+        # target_path: a ball rolled by script in front of the dog, something to follow.
+        # It starts moving after target_start_s, so detectors can calibrate on a still scene.
+        self.target_path = TargetPath() if bool(p("target_path", False).value) else None
+        self.target_start_s = float(p("target_start_s", 5.0).value)
         self.homing = False
 
         self.rng = np.random.default_rng(seed)
@@ -114,7 +121,7 @@ class SimBridge(Node):
         self.latency_pub = self.create_publisher(Float32, "/reflex/debug/latency_ms", 10)
         self.create_subscription(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
 
-        self.pending = []            # (apply_time_s, pose, api name, velocity or None)
+        self.pending = []            # (apply_time_s, pose, api name, velocity or None, trunk angles or None)
         self.posture = PostureMode()   # Euler acts only after Pose(true), Move only without it
         self.moved = False           # the dog has walked since it was last on its spot
         self.pose = "stand"
@@ -150,7 +157,8 @@ class SimBridge(Node):
                 self.get_logger().info(f"{name}: accepted but no effect with posture mode "
                                        f"{'on' if self.posture.on else 'off'}, as on the real Go2")
             return
-        pose = pose_for_request(api_id, msg.parameter)
+        angles = euler_for_request(api_id, msg.parameter)   # Euler with yaw or pitch: turn the trunk
+        pose = "trunk" if angles is not None else pose_for_request(api_id, msg.parameter)
         if pose is None:
             self.get_logger().warn(f"{name}: no equivalent in the simulator, ignored")
             return
@@ -170,11 +178,11 @@ class SimBridge(Node):
             if self.robot_only:
                 self.get_logger().info(f"{name} -> {pose}; {self.latencies_ms[-1]:.0f} ms from newest event to request, "
                                        f"applied after {self.delay_s * 1e3:.0f} ms more")
-        self.pending.append((self.sim.time + self.delay_s, pose, name, velocity))
+        self.pending.append((self.sim.time + self.delay_s, pose, name, velocity, angles))
 
     def apply_due(self) -> None:
         while self.pending and self.pending[0][0] <= self.sim.time:
-            _, pose, name, velocity = self.pending.pop(0)
+            _, pose, name, velocity, angles = self.pending.pop(0)
             if velocity is not None and self.locomotion == "rl":
                 if not (self.sim.mode == "pose" and not any(velocity)):   # StopMove while posing: nothing to do
                     vx, vy, wz = velocity
@@ -189,6 +197,9 @@ class SimBridge(Node):
                 self.moved = self.moved or any(velocity)
             elif pose == "damp":
                 self.sim.damped = True
+            elif pose == "trunk":
+                self.sim.damped = False
+                self.sim.set_trunk(*angles)
             elif pose in ("sit", "hello"):
                 self.sim.damped = False
                 self.sim.play(pose)
@@ -272,6 +283,8 @@ class SimBridge(Node):
         if self.shot is None and sim.time >= self.next_shot_t and self.pose == "stand" and not self.moved:
             self.start_shot()
         self.apply_due()
+        if self.target_path is not None:
+            place_ball(sim, *self.target_path.at(max(0.0, sim.time - self.target_start_s)))
         if self.shot is not None and self.shot["walker"] is not None:
             x, y0, vy = self.shot["walker"]
             sim.set_walker(x, y0 + vy * (sim.time - self.shot["t0"]))

@@ -19,6 +19,7 @@ onnxruntime = "*"   # runs the optional walking policy (models/go2_walk.onnx)
 viser = ">=1.0"      # web viewer (3D scene + panels in the browser)
 trimesh = "*"
 pytest = "*"
+h5py = "*"           # event-camera recordings (data/river/*/*.h5)
 torch = { version = ">=2.7", index = "https://download.pytorch.org/whl/cu128" }
 
 [activation.env]
@@ -38,6 +39,7 @@ view-data = "python -m reflex.viz.view_npz"
 spleat-bundle = "python -m reflex.deploy.spleat_bundle"   # riverops model + parameters JSON -> files for the KV260: spleat-bundle MODEL.json PARAMS.json
 view = { cmd = "python -m reflex.sim.view", env = { MUJOCO_GL = "glfw" } }
 drive = { cmd = "python -m reflex.sim.view --drive --no-balls", env = { MUJOCO_GL = "glfw" } }   # walk the dog with the arrow keys
+follow-sim = "python -m reflex.sim.follow_sim"   # follow a scripted ball, no ROS: prints a summary, --video out/follow.mp4
 
 # --- ROS 2 Humble (RoboStack). Separate environment: `pixi run -e ros ...`
 [feature.ros]
@@ -82,6 +84,37 @@ cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros driv
 
 [feature.ros.tasks.ros-teleop]
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run teleop_twist_keyboard teleop_twist_keyboard'"
+
+[feature.ros.tasks.ros-follow-sim]
+# Follow a scripted ball over ROS 2: simulated dog + its event camera + target node.
+# In a second terminal: pixi run -e ros ros-follow (press f). Or add follow:=true.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros follow_sim.launch.py \"$@\"' --"
+
+[feature.ros.tasks.ros-look]
+# Follow node in look mode: nine trunk gestures (Euler yaw + pitch), never walks. Keys 1-9: a gesture
+# by hand (numpad layout), f start, SPACE stop.  pixi run -e ros ros-look dry_run:=true look_yaw:=0.15
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros follow --ros-args -p mode:=look $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+
+[feature.ros.tasks.ros-events-sim]
+# Real events drive the simulated dog: a recording (or the live KV260 camera) -> target/follow
+# (or perception/behavior) -> MuJoCo dog. Arguments go to the launch file, e.g.
+#   pixi run -e ros ros-events-sim source:=data/river/sat_follow2
+#   pixi run -e ros ros-events-sim source:=live kria_host:=root@durance-kria.local
+#   pixi run -e ros ros-events-sim source:=data/river/sat_follow2 behavior:=reflex
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros events_sim.launch.py \"$@\"' --"
+
+[feature.ros.tasks.ros-event-camera]
+# Event camera node alone: replay (source:=PATH) or live (source:=live) onto /reflex/events_window.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros event_camera --ros-args $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+
+[feature.ros.tasks.ros-follow]
+# Follow node with its keyboard (f start, SPACE stop, ! Damp). Simulated or real robot.
+#   pixi run -e ros ros-follow mode:=gaze max_vx:=0.2
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros follow --ros-args $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+
+[feature.ros.tasks.ros-target]
+# Target node alone (events -> /reflex/target), e.g. next to the camera on the Kria side.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros target --ros-args $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
 
 [feature.ros.tasks.ros-record]
 # Record labelled clips from the live event stream:  pixi run -e ros ros-record session:=sat_am
@@ -138,10 +171,65 @@ cwd = "ros2_ws"
 # Camera side: webcam as stand-in event camera + perception. Arguments: detector:=simple mirror:=true ...
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros camera.launch.py \"$@\"' --"
 
+[feature.kria.tasks.kria-event-camera]
+# The real event camera on the board: start `despot_debug_camera --host 127.0.0.1 --port 3333`,
+# then this. Publishes /reflex/events_window for a robot side elsewhere on the network.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros event_camera --ros-args -p source:=live $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+
 [feature.kria.tasks.kria-shell]
 cmd = "bash --rcfile scripts/ros_bashrc -i"
+
+# --- Simulation on Apple Silicon (arm64 Linux, e.g. Docker on a Mac): ROS 2 + MuJoCo + viewer,
+#     no PyTorch. Same ros-* tasks as `ros`: ros-events-sim, ros-follow-sim, ros-web, ros-drive, ...
+#     Anything with the SNN (ros-sim's default detector:=snn, train, eval) needs `default` or `ros`.
+#     Docker on a Mac: see "Simulation on a Mac" in docs/commands.md.
+[feature.simarm]
+platforms = ["linux-aarch64"]
+
+[feature.simarm.dependencies]
+python = "3.11.*"
+numpy = "*"
+opencv = "*"
+h5py = "*"
+matplotlib-base = "*"
+# PyTorch, CPU only, from conda-forge. Not the PyPI wheel: for linux-aarch64 it pulls in
+# CUDA 13 (several GB), and Docker on a Mac has no GPU anyway.
+pytorch = { version = ">=2.7", build = "cpu*" }
+pydantic = ">=2.13"   # riverops needs it
+
+[feature.simarm.activation.env]
+MUJOCO_GL = "egl"
+# riverops from the unpacked wheel (its metadata pins torch 2.14, so it is not installed),
+# and the ball detector scripts from feat/training.
+PYTHONPATH = "$PIXI_PROJECT_ROOT/riverops-0:$PIXI_PROJECT_ROOT/Training"
+
+# The top-level tasks belong to the default feature, which sim-arm leaves out. Same commands here.
+# No `view` / `drive`: no GLFW windows in the container.
+[feature.simarm.tasks]
+test = "pytest -q tests"
+sim = "python -m reflex.sim.demo"
+gen-data = "python -m reflex.data.generate"
+train = "python -m reflex.train"
+eval = "python -m reflex.eval"
+build-real = "python -m reflex.data.recording"
+finetune-real = "bash scripts/finetune_real.sh"
+view-data = "python -m reflex.viz.view_npz"
+follow-sim = "python -m reflex.sim.follow_sim"
+
+
+[feature.simarm.pypi-dependencies]
+reflex = { path = ".", editable = true }
+mujoco = ">=3.3"
+imageio = "*"
+imageio-ffmpeg = "*"
+onnxruntime = "*"
+viser = ">=1.0"
+trimesh = "*"
+pytest = "*"
 
 [environments]
 default = ["pc"]
 ros = ["pc", "ros"]
 kria = { features = ["kria"], no-default-feature = true }
+sim-arm = { features = ["ros", "simarm"], no-default-feature = true }
+

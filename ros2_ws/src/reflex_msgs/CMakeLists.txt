@@ -6,6 +6,7 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/EventWindow.msg"
   "msg/ReflexDecision.msg"
+  "msg/Target.msg"
   DEPENDENCIES std_msgs
 )
 ament_export_dependencies(rosidl_default_runtime)

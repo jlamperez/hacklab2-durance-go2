@@ -25,6 +25,10 @@ setup(
             "recorder = reflex_ros.recorder_node:main",
             "tricks = reflex_ros.tricks_node:main",
             "web_viewer = reflex_ros.web_viewer_node:main",
+            "target = reflex_ros.target_node:main",
+            "ball_target = reflex_ros.ball_target_node:main",
+            "follow = reflex_ros.follow_node:main",
+            "event_camera = reflex_ros.event_camera_node:main",
         ],
     },
 )

@@ -44,6 +44,11 @@ pixi run -e ros ros-robot-sim  # robot side: behavior + MuJoCo dog acting only a
 pixi run -e ros ros-drive      # drive the walking dog over ROS 2; second terminal: ros-teleop
                                #   camera:=true adds the simulated event camera + detector while driving
 pixi run -e ros ros-record session:=NAME   # record labelled takes from the live stream (docs/recording.md)
+pixi run follow-sim     # dog follows a scripted ball, headless, no ROS; --video out/follow.mp4
+pixi run -e ros ros-follow-sim # simulated dog + camera + scripted ball + target node (docs/follow.md)
+pixi run -e ros ros-events-sim # recordings (source:=data/river/...) or live KV260 (source:=live) drive the
+                               #   simulated dog; behavior:=follow|reflex, tracker:=centroid|snn (docs/events-sim.md)
+pixi run -e ros ros-follow     # follow node, keyboard: f start, SPACE stop, ! Damp; starts disabled
 pixi run -e ros ros-tricks     # keyboard for built-in tricks (Hello, Sit, ...); acrobatics off by default
 pixi run -e ros ros-web        # dashboard in the browser (viser), http://localhost:8080; listens only
 pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rqt commands
@@ -71,7 +76,7 @@ Three seams let simulation be swapped for the real thing:
 
 | Seam | Before the hackathon | At the hackathon |
 |---|---|---|
-| Event source, `reflex/events/io.py` | MuJoCo emulated camera, phone clips | Durance camera adapter |
+| Event source, `reflex/events/io.py`, `sources.py` | MuJoCo emulated camera, phone clips | `event_camera` node: GenX320 recordings, live KV260 stream |
 | Inference backend, `reflex/runtime/` | PyTorch, ONNX on CPU, simple detector | SPLEAT server on the KV260 (RIVERLib?) |
 | Robot, topic `/api/sport/request` | `go2_sim_bridge` on MuJoCo | the real Go2, same message |
 
@@ -90,7 +95,12 @@ Three seams let simulation be swapped for the real thing:
 - `capture/`: recording real event-camera data with Durance's `river-tools` (no ROS); file
   format in `reflex/events/h5.py` (one HDF5 per take: t, x, y, p + attributes). Never commit
   river-tools, Durance's dataset or recordings (`data/` is ignored).
-- `ros2_ws/src/reflex_msgs`: `EventWindow`, `ReflexDecision`.
+- `ros2_ws/src/reflex_msgs`: `EventWindow`, `ReflexDecision`, `Target`.
+- Following (`docs/follow.md`): `reflex/runtime/target.py` (the `u, v, confidence` contract and
+  the centroid tracker), `reflex/runtime/follow.py` (move-stop-look controller, all safety
+  limits), nodes `target` and `follow`. `reflex/runtime/ball_snn.py` + node `ball_target`: Theodor's
+  ball SNN (`Training/` from feat/training, needs riverops) as a second target source, fed by
+  `/reflex/events_fullres` (`tracker:=snn`, docs/events-sim.md).
 - `ros2_ws/src/reflex_ros`: three nodes. `sim_bridge` (MuJoCo behind the robot's and the
   camera's topics, with a configurable actuation delay, scores every shot), `perception`
   (window -> decision), `behavior` (decision -> `unitree_api/msg/Request`, all safety
