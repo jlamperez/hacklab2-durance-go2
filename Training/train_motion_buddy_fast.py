@@ -1,16 +1,20 @@
-"""Heatmap variant of ``train_motion_buddy.py``: same data, splits and export.
+"""Heatmap variant of ``train_motion_buddy.py`` at the 320x320 camera resolution.
 
-Changes:
+Same benchmark data and splits as the original. Changes:
 
-1. The dataset yields sparse pixel indices. The dense frame is built on the
+1. Every sample is a SENSOR x SENSOR (320x320) frame, the resolution of our
+   camera recordings (``reflex-events-v1`` files). Training takes a random
+   square crop of the 1280x720 benchmark frame that contains the ball, with a
+   side drawn from CROP_SIDES, and resamples it to 320x320. Validation and test
+   crops are fixed per sample. The varying side doubles as scale augmentation,
+   since our camera's lens and ball size are unknown.
+2. The dataset yields sparse pixel indices. The dense frame is built on the
    device and repeated over time with ``expand`` instead of real copies.
-2. The input is the 720x1280 sensor, not a zero-padded 1280x1280 square.
-3. Larger batches, and loss and error are accumulated on the device, so there
-   is no host sync per batch.
-4. 4 time steps instead of 8 (``--time-steps``). The same frame is still fed at
+3. Larger batches, and loss and error are accumulated on the device.
+4. 4 time steps instead of 8 (``--time-steps``). The same frame is fed at
    every step; T only sets the spike-count resolution and the cost.
-5. Fully convolutional spiking network. The last layer is a 45x80 map of
-   spiking neurons, one per 16x16 px cell; its spike counts are the ball
+5. Fully convolutional spiking network. The last layer is a 40x40 map of
+   spiking neurons, one per 8x8 px cell; its spike counts are the ball
    heatmap. Training uses cross-entropy over the cells against a Gaussian
    around the true position. Decoding (argmax cell, then a spike-weighted
    centroid over its 3x3 neighbourhood) runs off-chip. All kernels and strides
@@ -21,10 +25,11 @@ Checkpoints are not interchangeable with the original. The export still writes
 
     python train_motion_buddy_fast.py
     python train_motion_buddy_fast.py visualize
-    python train_motion_buddy_fast.py predict path/to/recording.hdf5
+    python train_motion_buddy_fast.py predict data/recording.h5
 """
 
 import argparse
+import subprocess
 from pathlib import Path
 
 import h5py
@@ -37,40 +42,93 @@ from torch.utils.data import DataLoader, Dataset
 import train_motion_buddy as base
 from riverops.nn import SpikingConvBN2d
 
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 TIME_STEPS = 4
 CHECKPOINT = Path("ball_heatmap_best.pt")
-HEIGHT = base.CAMERA_HEIGHT
-WIDTH = base.CAMERA_WIDTH
-HEATMAP_STRIDE = 16
-HEAT_H = HEIGHT // HEATMAP_STRIDE
-HEAT_W = WIDTH // HEATMAP_STRIDE
+SENSOR = 320
+SOURCE_WIDTH = base.CAMERA_WIDTH
+SOURCE_HEIGHT = base.CAMERA_HEIGHT
+CROP_SIDES = (320.0, 720.0)
+CROP_MARGIN = 16.0
+HEATMAP_STRIDE = 8
+HEAT = SENSOR // HEATMAP_STRIDE
 TARGET_SIGMA = 1.0
 LOGIT_SCALE = 16.0
+DISPLAY_SCALE = 2
 
 
-class SparseBallDataset(Dataset):
-    """Yields the flat sensor indices (y * WIDTH + x) hit in each 1 ms window."""
+def _crop_origin(rng, center, side, limit):
+    """Crop start along one axis so ``center`` lies inside, CROP_MARGIN from the edge."""
+    low = max(0.0, center - side + CROP_MARGIN)
+    high = min(limit - side, center - CROP_MARGIN)
+    if low < high:
+        return float(rng.uniform(low, high))
+    return float(np.clip(center - side / 2, 0.0, limit - side))
 
-    def __init__(self, events, offsets, positions):
-        flat = events[:, 0].astype(np.int32) * WIDTH + events[:, 1].astype(np.int32)
-        self.flat = torch.from_numpy(flat)
+
+def random_crop(rng):
+    """New crop for every call: (x0, y0, side) in benchmark pixels."""
+    def crop(index, xy):
+        side = float(rng.uniform(*CROP_SIDES))
+        return (
+            _crop_origin(rng, xy[0], side, SOURCE_WIDTH),
+            _crop_origin(rng, xy[1], side, SOURCE_HEIGHT),
+            side,
+        )
+    return crop
+
+
+def fixed_crop(seed):
+    """Same random crop for a given index on every call."""
+    def crop(index, xy):
+        return random_crop(np.random.default_rng((seed, index)))(index, xy)
+    return crop
+
+
+def fit_crop(width, height):
+    """Whole width x height frame, centered and scaled to fit the sensor."""
+    side = float(max(width, height))
+    return lambda index, xy: ((width - side) / 2, (height - side) / 2, side)
+
+
+class SensorDataset(Dataset):
+    """Windows of (y, x) source pixels resampled into the SENSOR x SENSOR frame.
+
+    ``crop(index, xy)`` returns the square (x0, y0, side), in source pixels,
+    that is mapped onto the sensor. Items are (flat indices y * SENSOR + x,
+    position in sensor pixels). ``positions=None`` means unlabeled.
+    """
+
+    def __init__(self, events, offsets, positions, crop):
+        self.events = np.ascontiguousarray(events)
         self.offsets = np.ascontiguousarray(offsets)
-        self.positions = torch.from_numpy(np.ascontiguousarray(positions)).to(torch.float32)
+        self.labeled = positions is not None
+        count = len(self.offsets) - 1
+        self.positions = (
+            np.ascontiguousarray(positions, dtype=np.float32) if self.labeled
+            else np.zeros((count, 2), dtype=np.float32)
+        )
+        self.crop = crop
 
     def __len__(self):
         return int(self.positions.shape[0])
 
     def __getitem__(self, index):
-        start, end = int(self.offsets[index]), int(self.offsets[index + 1])
-        return self.flat[start:end], self.positions[index]
+        xy = self.positions[index]
+        x0, y0, side = self.crop(index, xy)
+        scale = SENSOR / side
+        pixels = self.events[self.offsets[index]:self.offsets[index + 1]].astype(np.float32)
+        x = np.floor((pixels[:, 1] - x0) * scale)
+        y = np.floor((pixels[:, 0] - y0) * scale)
+        keep = (x >= 0) & (x < SENSOR) & (y >= 0) & (y < SENSOR)
+        flat = np.unique(y[keep].astype(np.int64) * SENSOR + x[keep].astype(np.int64))
+        position = np.array(((xy[0] - x0) * scale, (xy[1] - y0) * scale), dtype=np.float32)
+        return torch.from_numpy(flat), torch.from_numpy(position)
 
 
 def collate(batch):
     pixels, positions = zip(*batch)
-    flat = torch.cat([
-        p.to(torch.int64) + i * HEIGHT * WIDTH for i, p in enumerate(pixels)
-    ])
+    flat = torch.cat([p + i * SENSOR * SENSOR for i, p in enumerate(pixels)])
     return flat, torch.stack(positions)
 
 
@@ -83,23 +141,23 @@ def make_loader(dataset, batch_size, shuffle=False):
 
 
 def to_frames(flat, batch_size, device, time_steps):
-    """Scatter flat indices into [B, T, 1, H, W] on the device; T is a view."""
-    frames = torch.zeros(batch_size * HEIGHT * WIDTH, device=device)
+    """Scatter flat indices into [B, T, 1, SENSOR, SENSOR] on the device; T is a view."""
+    frames = torch.zeros(batch_size * SENSOR * SENSOR, device=device)
     frames[flat.to(device, non_blocking=True)] = 1.0
-    return frames.view(batch_size, 1, 1, HEIGHT, WIDTH).expand(
+    return frames.view(batch_size, 1, 1, SENSOR, SENSOR).expand(
         -1, time_steps, -1, -1, -1,
     )
 
 
 def dense_sample(dataset, index, time_steps):
     flat, position = dataset[index]
-    frame = torch.zeros(HEIGHT * WIDTH)
-    frame[flat.to(torch.int64)] = 1.0
-    return frame.view(1, HEIGHT, WIDTH).repeat(time_steps, 1, 1, 1), position
+    frame = torch.zeros(SENSOR * SENSOR)
+    frame[flat] = 1.0
+    return frame.view(1, SENSOR, SENSOR).repeat(time_steps, 1, 1, 1), position
 
 
 class HeatmapBallDetector(nn.Module):
-    """Spatial sizes (H x W): 720x1280 -> 180x320 -> 90x160 -> 45x80 (x3 layers)."""
+    """Spatial sizes: 320x320 -> 80x80 -> 40x40 (x4 layers), one output channel."""
 
     def __init__(self):
         super().__init__()
@@ -110,31 +168,29 @@ class HeatmapBallDetector(nn.Module):
             "reset_mode": "HARD",
         }
         self.net = nn.Sequential(
-            SpikingConvBN2d(1, 8, kernel_size=8, stride=4, padding=2,
+            SpikingConvBN2d(1, 16, kernel_size=8, stride=4, padding=2,
                             bias=False, first_layer=True, **lif),
-            SpikingConvBN2d(8, 16, kernel_size=4, stride=2, padding=1, bias=False, **lif),
             SpikingConvBN2d(16, 32, kernel_size=4, stride=2, padding=1, bias=False, **lif),
+            SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
             SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
             SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
             SpikingConvBN2d(32, 1, kernel_size=1, bias=False, **lif),
         )
 
     def forward(self, x):
-        """Spike counts per heatmap cell, [B, HEAT_H, HEAT_W]."""
+        """Spike counts per heatmap cell, [B, HEAT, HEAT]."""
         return self.net(x).sum(dim=1)[:, 0]
 
 
 def _cell_centers(device):
-    rows = (torch.arange(HEAT_H, device=device, dtype=torch.float32) + 0.5) * HEATMAP_STRIDE
-    cols = (torch.arange(HEAT_W, device=device, dtype=torch.float32) + 0.5) * HEATMAP_STRIDE
-    return rows, cols
+    return (torch.arange(HEAT, device=device, dtype=torch.float32) + 0.5) * HEATMAP_STRIDE
 
 
 def heatmap_targets(positions):
     """Normalized Gaussian over the cells around each (x, y), flattened."""
-    rows, cols = _cell_centers(positions.device)
-    dx = (cols[None, None, :] - positions[:, 0, None, None]) / HEATMAP_STRIDE
-    dy = (rows[None, :, None] - positions[:, 1, None, None]) / HEATMAP_STRIDE
+    centers = _cell_centers(positions.device)
+    dx = (centers[None, None, :] - positions[:, 0, None, None]) / HEATMAP_STRIDE
+    dy = (centers[None, :, None] - positions[:, 1, None, None]) / HEATMAP_STRIDE
     target = torch.exp(-(dx.square() + dy.square()) / (2 * TARGET_SIGMA ** 2))
     return (target / target.sum(dim=(1, 2), keepdim=True)).flatten(1)
 
@@ -149,13 +205,13 @@ def decode_positions(counts):
     batch = counts.shape[0]
     index = counts.flatten(1).argmax(dim=1)
     offsets = torch.arange(-1, 2, device=counts.device)
-    rows = ((index // HEAT_W)[:, None] + offsets).clamp(0, HEAT_H - 1)
-    cols = ((index % HEAT_W)[:, None] + offsets).clamp(0, HEAT_W - 1)
+    rows = ((index // HEAT)[:, None] + offsets).clamp(0, HEAT - 1)
+    cols = ((index % HEAT)[:, None] + offsets).clamp(0, HEAT - 1)
     batch_index = torch.arange(batch, device=counts.device)[:, None, None]
     weights = counts[batch_index, rows[:, :, None], cols[:, None, :]] + 1e-6
-    centers_y, centers_x = _cell_centers(counts.device)
-    y = (centers_y[rows][:, :, None] * weights).sum(dim=(1, 2)) / weights.sum(dim=(1, 2))
-    x = (centers_x[cols][:, None, :] * weights).sum(dim=(1, 2)) / weights.sum(dim=(1, 2))
+    centers = _cell_centers(counts.device)
+    y = (centers[rows][:, :, None] * weights).sum(dim=(1, 2)) / weights.sum(dim=(1, 2))
+    x = (centers[cols][:, None, :] * weights).sum(dim=(1, 2)) / weights.sum(dim=(1, 2))
     return torch.stack((x, y), dim=1)
 
 
@@ -195,7 +251,7 @@ def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
 
 
 def infer_positions(model, dataset, device, batch_size, time_steps):
-    """Return predicted camera pixels, shape (N, 2), in dataset order."""
+    """Return predicted sensor pixels, shape (N, 2), in dataset order."""
     predicted = []
     model.eval()
     with torch.no_grad():
@@ -207,25 +263,33 @@ def infer_positions(model, dataset, device, batch_size, time_steps):
     return np.concatenate(predicted, axis=0)
 
 
+def benchmark_splits():
+    """Train, validation and test SensorDatasets over the benchmark."""
+    train_arrays, validation_arrays, test_arrays = base._read_splits(base.ensure_dataset())
+    return (
+        SensorDataset(*train_arrays, random_crop(np.random.default_rng(base.SEED))),
+        SensorDataset(*validation_arrays, fixed_crop(base.SEED + 1)),
+        SensorDataset(*test_arrays, fixed_crop(base.SEED + 2)),
+    )
+
+
 def train(batch_size, epochs, time_steps):
     torch.manual_seed(base.SEED)
     torch.backends.cudnn.benchmark = True
     device = base.pick_device()
     print("Device:", device, flush=True)
 
-    dataset = base.ensure_dataset()
-    train_arrays, validation_arrays, test_arrays = base._read_splits(dataset)
-    train_dataset = SparseBallDataset(*train_arrays)
-    validation_dataset = SparseBallDataset(*validation_arrays)
+    train_dataset, validation_dataset, test_dataset = benchmark_splits()
     train_loader = make_loader(train_dataset, batch_size, shuffle=True)
     validation_loader = make_loader(validation_dataset, batch_size)
     print("Training frames:", len(train_dataset))
     print("Validation frames:", len(validation_dataset))
+    print(f"Sensor: {SENSOR}x{SENSOR}, crop sides {CROP_SIDES[0]:.0f}-{CROP_SIDES[1]:.0f} px")
     print("Batch size:", batch_size)
     print("Time steps:", time_steps)
 
     example_frames = base.save_sample_figure(
-        [dense_sample(train_dataset, 0, time_steps)], Path("ball_sample.png"),
+        [dense_sample(validation_dataset, 0, time_steps)], Path("ball_sample.png"),
     )
 
     model = HeatmapBallDetector().to(device)
@@ -233,7 +297,7 @@ def train(batch_size, epochs, time_steps):
     print("Running one forward pass", flush=True)
     with torch.no_grad():
         counts = model(example_frames.unsqueeze(0).to(device))
-    if tuple(counts.shape[1:]) != (HEAT_H, HEAT_W):
+    if tuple(counts.shape[1:]) != (HEAT, HEAT):
         raise RuntimeError(f"Unexpected output shape {tuple(counts.shape)}")
     prediction = decode_positions(counts)[0].cpu().tolist()
     print("Output shape:", tuple(counts.shape), flush=True)
@@ -261,8 +325,8 @@ def train(batch_size, epochs, time_steps):
                 "model_state_dict": model.state_dict(),
                 "epoch": epoch,
                 "validation_error": validation_error,
-                "camera_width": WIDTH,
-                "camera_height": HEIGHT,
+                "sensor": SENSOR,
+                "crop_sides": CROP_SIDES,
                 "time_steps": time_steps,
                 "heatmap_stride": HEATMAP_STRIDE,
             }, CHECKPOINT)
@@ -275,15 +339,14 @@ def train(batch_size, epochs, time_steps):
 
     checkpoint = torch.load(CHECKPOINT, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
-    test_loader = make_loader(SparseBallDataset(*test_arrays), batch_size)
     print("Test", flush=True)
     test_loss, test_error = run_epoch(
-        model, test_loader, device, time_steps, log_prefix="Test",
+        model, make_loader(test_dataset, batch_size), device, time_steps, log_prefix="Test",
     )
     print("Best epoch:", checkpoint["epoch"])
     print(f"Best validation error: {checkpoint['validation_error']:.2f} px")
     print(f"Test loss: {test_loss:.4f}")
-    print(f"Test error: {test_error:.2f} px")
+    print(f"Test error: {test_error:.2f} px (sensor pixels)")
 
     base.export_model(model, example_frames, device)
 
@@ -294,138 +357,202 @@ def load_model(checkpoint_path, device):
             f"No checkpoint at {checkpoint_path}. Train first with: "
             "python train_motion_buddy_fast.py"
         )
-    model = HeatmapBallDetector().to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    if checkpoint.get("sensor") != SENSOR:
+        raise ValueError(
+            f"{checkpoint_path} was not trained at {SENSOR}x{SENSOR}; retrain."
+        )
+    model = HeatmapBallDetector().to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     time_steps = int(checkpoint["time_steps"])
     print("Time steps:", time_steps)
     return model, time_steps
 
 
-def recording_windows(path, step_us, use_labels=True):
-    """Return (events, offsets, xy) for one HDF5 file.
+def check_hdf5(path):
+    """Fail early, with a hint, when ``path`` is not a readable HDF5 file."""
+    if not path.is_file():
+        raise FileNotFoundError(f"No recording at {path}")
+    if h5py.is_hdf5(path):
+        return
+    with path.open("rb") as handle:
+        head = handle.read(64)
+    hints = {
+        b"version https://git-lfs": "it is a Git LFS pointer; run `git lfs pull` in its repo",
+        b"% evt": "it looks like a Prophesee .raw file",
+        b"% format": "it looks like a Prophesee .raw file",
+        b"#!AER-DAT": "it looks like an iniVation AEDAT file",
+        b"PK": "it looks like a zip or .npz archive",
+    }
+    hint = next(
+        (text for prefix, text in hints.items() if head.startswith(prefix)),
+        f"first bytes: {head[:16]!r}",
+    )
+    raise ValueError(
+        f"{path} ({path.stat().st_size} bytes) is not an HDF5 file: {hint}."
+    )
 
-    With ``gt_x/gt_y/gt_t`` (and ``use_labels``) there is one window per label,
-    as in training. Otherwise there is one ACC_TIME window every ``step_us``
-    and ``xy`` is None. Events need ``event_x/event_y/event_t`` with t in µs.
+
+def read_recording(path):
+    """Return (x, y, t, width, height, labels) from either supported layout.
+
+    ``reflex-events-v1``: ``events/{x,y,t,p}`` with ``width``/``height`` attributes.
+    Benchmark: ``event_{x,y,t}`` on a 1280x720 sensor, optional ``gt_{x,y,t}``.
+    Times are in µs. ``labels`` is (gt_x, gt_y, gt_t) or None.
     """
     with h5py.File(path, "r") as handle:
-        keys = set(handle.keys())
-        missing = {"event_x", "event_y", "event_t"} - keys
+        if isinstance(handle.get("events"), h5py.Group):
+            unit = handle.attrs.get("t_unit", "us")
+            if unit != "us":
+                raise ValueError(f"{path}: t_unit is {unit!r}, expected 'us'")
+            group = handle["events"]
+            x, y, t = group["x"][()], group["y"][()], group["t"][()]
+            width = int(handle.attrs.get("width", int(x.max()) + 1))
+            height = int(handle.attrs.get("height", int(y.max()) + 1))
+            return x, y, t, width, height, None
+        missing = {"event_x", "event_y", "event_t"} - set(handle.keys())
         if missing:
-            raise KeyError(f"{path} has no {', '.join(sorted(missing))}")
-        if use_labels and {"gt_x", "gt_y", "gt_t"} <= keys:
-            return base.recording_to_samples(path)
-        ev_x = base._column(handle, "event_x").astype(np.float64)
-        ev_y = base._column(handle, "event_y").astype(np.float64)
-        ev_t = base._column(handle, "event_t").astype(np.float64)
-    if ev_t.size == 0:
+            raise KeyError(
+                f"{path}: neither events/{{x,y,t}} nor {', '.join(sorted(missing))}"
+            )
+        x, y, t = (base._column(handle, f"event_{key}") for key in "xyt")
+        labels = None
+        if {"gt_x", "gt_y", "gt_t"} <= set(handle.keys()):
+            labels = tuple(base._column(handle, f"gt_{key}").astype(np.float64) for key in "xyt")
+        return x, y, t, SOURCE_WIDTH, SOURCE_HEIGHT, labels
+
+
+def recording_dataset(path, step_us, window_us, use_labels=True):
+    """One window per label, or one every ``step_us``, fitted to the sensor."""
+    x, y, t, width, height, labels = read_recording(path)
+    if t.size == 0:
         raise ValueError(f"{path} has no events")
-    order = np.argsort(ev_t, kind="mergesort")
-    ev_x, ev_y, ev_t = ev_x[order], ev_y[order], ev_t[order]
-    times = np.arange(ev_t[0] + base.ACC_TIME, ev_t[-1] + step_us, step_us)
-    starts = np.searchsorted(ev_t, times - base.ACC_TIME, side="left")
-    ends = np.searchsorted(ev_t, times, side="right")
-    pixels = [base._window_pixels(ev_x[s:e], ev_y[s:e]) for s, e in zip(starts, ends)]
+    if width > SOURCE_WIDTH or height > SOURCE_HEIGHT:
+        raise ValueError(f"{path}: {width}x{height} sensors are not supported")
+    t = t.astype(np.float64)
+    order = np.argsort(t, kind="mergesort")
+    x, y, t = x[order], y[order], t[order]
+    xy = None
+    if use_labels and labels is not None:
+        gx, gy, gt = labels
+        visible = (gx >= 0) & (gy >= 0) & (gx < width) & (gy < height)
+        order = np.argsort(gt[visible], kind="mergesort")
+        ends = gt[visible][order]
+        xy = np.stack((gx[visible][order], gy[visible][order]), axis=1)
+    else:
+        ends = np.arange(t[0] + window_us, t[-1] + step_us, step_us)
+    starts = np.searchsorted(t, ends - window_us, side="left")
+    stops = np.searchsorted(t, ends, side="right")
+    pixels = [base._window_pixels(x[a:b], y[a:b]) for a, b in zip(starts, stops)]
     offsets = np.zeros(len(pixels) + 1, dtype=np.int64)
     offsets[1:] = np.cumsum([len(window) for window in pixels])
     events = np.concatenate(pixels, axis=0) if offsets[-1] else np.zeros((0, 2), np.uint16)
-    return events, offsets, None
+    print(
+        f"{path.name}: {width}x{height}, {len(pixels)} windows of "
+        f"{window_us / 1000:g} ms, median {int(np.median(np.diff(offsets)))} px per window",
+        flush=True,
+    )
+    return SensorDataset(events, offsets, xy, fit_crop(width, height))
 
 
-def render_prediction(events, prediction, caption):
-    """Event frame with only the red prediction ring, for unlabeled files."""
-    image = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    if len(events):
-        image[events[:, 0], events[:, 1]] = 210
+class VideoWriter(base.VideoWriter):
+    """``base.VideoWriter`` for square frames of any size."""
+
+    def __init__(self, path, fps, size):
+        self.path = Path(path)
+        self.proc = subprocess.Popen(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-f", "rawvideo", "-pix_fmt", "rgb24",
+                "-s", f"{size}x{size}",
+                "-r", str(fps),
+                "-i", "-",
+                "-an",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                str(self.path),
+            ],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.frames = 0
+        self._closed = False
+
+
+def render_frame(flat, prediction, truth, caption):
+    """Sensor frame, upscaled; red prediction ring and, if given, green truth ring."""
+    image = np.zeros((SENSOR * SENSOR, 3), dtype=np.uint8)
+    image[flat.numpy()] = 210
+    image = image.reshape(SENSOR, SENSOR, 3)
+    image = image.repeat(DISPLAY_SCALE, axis=0).repeat(DISPLAY_SCALE, axis=1)
     picture = Image.fromarray(image)
     draw = ImageDraw.Draw(picture)
-    x, y, radius = float(prediction[0]), float(prediction[1]), 12
-    draw.ellipse((x - radius, y - radius, x + radius, y + radius),
-                 outline=(240, 60, 60), width=3)
-    draw.rectangle((0, 0, WIDTH, 28), fill=(0, 0, 0))
+    size = SENSOR * DISPLAY_SCALE
+
+    def ring(xy, color):
+        x, y = float(xy[0]) * DISPLAY_SCALE, float(xy[1]) * DISPLAY_SCALE
+        radius = 12
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline=color, width=3)
+
+    if truth is not None:
+        ring(truth, (80, 220, 80))
+    ring(prediction, (240, 60, 60))
+    draw.rectangle((0, 0, size, 28), fill=(0, 0, 0))
     draw.text((8, 6), caption, fill=(255, 255, 255))
-    draw.text((8, HEIGHT - 22), "red prediction", fill=(255, 255, 255))
+    legend = "green ground truth    red prediction" if truth is not None else "red prediction"
+    draw.text((8, size - 22), legend, fill=(255, 255, 255))
     return np.asarray(picture)
 
 
-def write_predictions(model, device, writer, path, batch_size, time_steps,
-                      step_us, use_labels=True):
-    """Append one video frame per window of ``path``; return per-frame errors."""
-    print("Predicting", path.name, flush=True)
-    events, offsets, xy = recording_windows(path, step_us, use_labels)
-    count = len(offsets) - 1
-    positions = xy if xy is not None else np.zeros((count, 2), dtype=np.float32)
-    predicted = infer_positions(
-        model, SparseBallDataset(events, offsets, positions), device, batch_size,
-        time_steps,
-    )
-    errors = []
-    for index in range(count):
-        window = events[offsets[index]:offsets[index + 1]]
-        caption = (
-            f"{path.name}  {index + 1}/{count}  "
-            f"pred ({predicted[index, 0]:.0f}, {predicted[index, 1]:.0f})"
-        )
-        if xy is None:
-            writer.write(render_prediction(window, predicted[index], caption))
-            continue
-        error = float(np.linalg.norm(predicted[index] - xy[index]))
-        errors.append(error)
-        caption += (
-            f"  gt ({xy[index, 0]:.0f}, {xy[index, 1]:.0f})  error {error:.1f} px"
-        )
-        writer.write(base.render_detection(window, predicted[index], xy[index], caption))
-    return errors
-
-
-def _write_video(model, device, paths, output_path, fps, batch_size, time_steps,
-                 step_us, use_labels=True):
-    writer = base.VideoWriter(output_path, fps)
+def write_video(model, device, dataset, name, output_path, fps, batch_size, time_steps):
+    """Render every window of ``dataset`` with its prediction into an mp4."""
+    predicted = infer_positions(model, dataset, device, batch_size, time_steps)
+    writer = VideoWriter(output_path, fps, SENSOR * DISPLAY_SCALE)
     errors = []
     try:
-        for path in paths:
-            errors += write_predictions(
-                model, device, writer, path, batch_size, time_steps, step_us, use_labels,
+        for index in range(len(dataset)):
+            flat, position = dataset[index]
+            caption = (
+                f"{name}  {index + 1}/{len(dataset)}  "
+                f"pred ({predicted[index, 0]:.0f}, {predicted[index, 1]:.0f})"
             )
+            truth = position.numpy() if dataset.labeled else None
+            if truth is not None:
+                error = float(np.linalg.norm(predicted[index] - truth))
+                errors.append(error)
+                caption += f"  gt ({truth[0]:.0f}, {truth[1]:.0f})  err {error:.1f}"
+            writer.write(render_frame(flat, predicted[index], truth, caption))
     finally:
         writer.close()
     print(f"Wrote {writer.frames} frames to {Path(output_path).resolve()}")
     if errors:
-        print(f"Mean error: {float(np.mean(errors)):.2f} px")
+        print(f"Mean error: {float(np.mean(errors)):.2f} px (sensor pixels)")
 
 
 def visualize_test(checkpoint_path, output_path, fps, batch_size):
-    """Run the checkpoint on hand-labeled takes 7 and 8 and write an mp4."""
+    """Run the checkpoint on the fixed test crops (takes 7 and 8) and write an mp4."""
     device = base.pick_device()
     print("Device:", device, flush=True)
-    dataset_dir = base.ensure_dataset()
     model, time_steps = load_model(checkpoint_path, device)
-    test_paths = [
-        path for path in base._recordings(dataset_dir / "hand_labeled")
-        if base._hand_labeled_bucket(path) == "test"
-    ]
-    if not test_paths:
-        raise FileNotFoundError("No hand-labeled test recordings (takes 7 and 8).")
-    _write_video(model, device, test_paths, output_path, fps, batch_size, time_steps,
-                 step_us=base.ACC_TIME)
+    test_dataset = benchmark_splits()[2]
+    write_video(model, device, test_dataset, "test 7-8", output_path, fps,
+                batch_size, time_steps)
 
 
 def predict_recording(recording, checkpoint_path, output_path, fps, batch_size,
-                      step_ms, use_labels):
-    """Run the checkpoint on any HDF5 event file and write an mp4."""
-    if not recording.is_file():
-        raise FileNotFoundError(f"No recording at {recording}")
+                      step_ms, window_ms, use_labels):
+    """Run the checkpoint on one HDF5 event file and write an mp4."""
+    check_hdf5(recording)
     device = base.pick_device()
     print("Device:", device, flush=True)
     model, time_steps = load_model(checkpoint_path, device)
+    dataset = recording_dataset(recording, step_ms * 1000.0, window_ms * 1000.0, use_labels)
     output_path = output_path or Path(f"{recording.stem}_pred.mp4")
-    _write_video(model, device, [recording], output_path, fps, batch_size, time_steps,
-                 step_us=step_ms * 1000.0, use_labels=use_labels)
+    write_video(model, device, dataset, recording.name, output_path, fps,
+                batch_size, time_steps)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Heatmap spiking ball detector training.")
+    parser = argparse.ArgumentParser(description="Heatmap spiking ball detector, 320x320.")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     subparsers = parser.add_subparsers(dest="command")
     train_parser = subparsers.add_parser("train", help="train on the benchmark and export")
@@ -436,7 +563,7 @@ def main():
     view.add_argument("--output", type=Path, default=Path("ball_heatmap_test.mp4"))
     view.add_argument("--fps", type=int, default=15)
     predict = subparsers.add_parser(
-        "predict", help="write a prediction video for any HDF5 event file",
+        "predict", help="write a prediction video for an HDF5 event file",
     )
     predict.add_argument("recording", type=Path)
     predict.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
@@ -445,6 +572,8 @@ def main():
     predict.add_argument("--fps", type=int, default=30)
     predict.add_argument("--step-ms", type=float, default=5.0,
                          help="window spacing for files without labels")
+    predict.add_argument("--window-ms", type=float, default=base.ACC_TIME / 1000.0,
+                         help="events per frame; training used 1 ms")
     predict.add_argument("--no-labels", action="store_true",
                          help="ignore gt_* and use evenly spaced windows")
     args = parser.parse_args()
@@ -453,7 +582,7 @@ def main():
     elif args.command == "predict":
         predict_recording(
             args.recording, args.checkpoint, args.output, args.fps, args.batch_size,
-            args.step_ms, not args.no_labels,
+            args.step_ms, args.window_ms, not args.no_labels,
         )
     else:
         train(
