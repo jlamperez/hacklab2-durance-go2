@@ -28,6 +28,7 @@ export writes ``ball_model.json`` and ``ball_parameters.{json,txt}``, with
 parameters numbered in layer order (printed at export)::
 
     python train_ball_size.py
+    python train_ball_size.py export
     python train_ball_size.py visualize
     python train_ball_size.py predict data/recording.h5 --window-ms 5
 """
@@ -48,7 +49,7 @@ from riverops.nn import (
     FixedPointFormat, NearestUpsample, QuantConfig, SpikingConvBN2d, prepare_qat,
 )
 
-ARCHITECTURE = "unet-v2"
+ARCHITECTURE = "unet-v3"
 CHECKPOINT = Path("ball_size_best.pt")
 SENSOR = fast.SENSOR
 HEAT = 80
@@ -57,6 +58,9 @@ HEAT_SIGMA = 1.5
 OFFSET_BINS = 4
 OFFSET_SIGMA = 0.5
 OFFSET_WEIGHT = 1.0
+LOGIT_SCALE_RANGE = (1.0, 64.0)
+MIN_LEARNING_RATE = 1e-5
+SILENT_RATE = 0.001
 RADIUS_BINS = 8
 RADIUS_RANGE = (1.5, 64.0)
 RADIUS_CENTERS = np.geomspace(*RADIUS_RANGE, RADIUS_BINS)
@@ -253,15 +257,28 @@ class SizeUNet(nn.Module):
 
 
 class SizedBallDetector(nn.Module):
-    """``SizeUNet`` plus the spike count over time (the count is decoded off-chip)."""
+    """``SizeUNet`` plus the off-chip readout: spike count over time and logit scales.
+
+    ``log_logit_scales`` holds one learnable scale per head group (heatmap,
+    offsets, radius) that turns spike rates into logits. It is used only in the
+    loss and the off-chip decoding, so it is not part of the exported network.
+    """
 
     def __init__(self):
         super().__init__()
         self.body = SizeUNet()
+        self.log_logit_scales = nn.Parameter(
+            torch.full((3,), float(np.log(fast.LOGIT_SCALE)))
+        )
 
     def forward(self, x):
         """Spike counts, [B, HEAD_CHANNELS, HEAT, HEAT]."""
         return self.body(x).sum(dim=1)
+
+    def logit_scales(self):
+        """(heatmap, offset, radius) scales, kept within LOGIT_SCALE_RANGE."""
+        low, high = np.log(LOGIT_SCALE_RANGE)
+        return self.log_logit_scales.clamp(low, high).exp()
 
 
 def export_model(model, example_frames, device):
@@ -310,10 +327,10 @@ def _offset_centers(device):
     return (torch.arange(OFFSET_BINS, device=device, dtype=torch.float32) + 0.5) * width
 
 
-def cell_logits(counts, channels, rows, cols, time_steps):
+def cell_logits(counts, channels, rows, cols, time_steps, scale):
     """Logits of a channel group read at one cell per sample, [B, len(channels)]."""
     batch = torch.arange(counts.shape[0], device=counts.device)
-    return counts[batch, channels, rows, cols] * (fast.LOGIT_SCALE / time_steps)
+    return counts[batch, channels, rows, cols] * (scale / time_steps)
 
 
 def _bin_targets(position, count, sigma):
@@ -336,10 +353,14 @@ def heatmap_targets(positions):
     return (target / target.sum(dim=(1, 2), keepdim=True)).flatten(1)
 
 
-def compute_loss(counts, targets, time_steps):
-    """Heatmap cross-entropy, plus offset and radius cross-entropy at the true cell."""
+def compute_loss(counts, targets, time_steps, scales):
+    """Heatmap cross-entropy, plus offset and radius cross-entropy at the true cell.
+
+    ``scales`` are the (heatmap, offset, radius) logit scales.
+    """
     positions, radii = targets[:, :2], targets[:, 2]
-    heat_logits = counts[:, 0].flatten(1) * (fast.LOGIT_SCALE / time_steps)
+    heat_scale, offset_scale, radius_scale = scales
+    heat_logits = counts[:, 0].flatten(1) * (heat_scale / time_steps)
     loss = _soft_cross_entropy(heat_logits, heatmap_targets(positions)).mean()
 
     rows = (positions[:, 1] / STRIDE).long().clamp(0, HEAT - 1)
@@ -350,44 +371,105 @@ def compute_loss(counts, targets, time_steps):
         (Y_OFFSET_CHANNELS, positions[:, 1] - rows * STRIDE),
     ):
         target = _bin_targets(offset / bin_width - 0.5, OFFSET_BINS, OFFSET_SIGMA)
-        logits = cell_logits(counts, channels, rows, cols, time_steps)
+        logits = cell_logits(counts, channels, rows, cols, time_steps, offset_scale)
         loss = loss + OFFSET_WEIGHT * _soft_cross_entropy(logits, target).mean() / 2
 
     log_centers = _log_centers(counts.device)
     log_radius = radii.clamp(min=1e-3).log().clamp(log_centers[0], log_centers[-1])
     step = float(np.log(RADIUS_CENTERS[1] / RADIUS_CENTERS[0]))
     target = _bin_targets((log_radius - log_centers[0]) / step, RADIUS_BINS, RADIUS_SIGMA)
-    logits = cell_logits(counts, RADIUS_CHANNELS, rows, cols, time_steps)
+    logits = cell_logits(counts, RADIUS_CHANNELS, rows, cols, time_steps, radius_scale)
     radius_loss = _soft_cross_entropy(logits, target)
     known = (radii > 0).to(radius_loss.dtype)
     return loss + RADIUS_WEIGHT * (radius_loss * known).sum() / known.sum().clamp(min=1.0)
 
 
-def decode(counts, time_steps):
+def decode(counts, time_steps, scales):
     """(x, y, radius) in sensor pixels per sample.
 
     Peak cell of the heatmap, plus the expected in-cell offset along x and y,
     plus the expected log-radius, all read at that cell.
     """
+    _, offset_scale, radius_scale = scales
     index = counts[:, 0].flatten(1).argmax(dim=1)
     rows, cols = index // HEAT, index % HEAT
     offsets = _offset_centers(counts.device)
-    x_probs = cell_logits(counts, X_OFFSET_CHANNELS, rows, cols, time_steps).softmax(dim=1)
-    y_probs = cell_logits(counts, Y_OFFSET_CHANNELS, rows, cols, time_steps).softmax(dim=1)
+    x_probs = cell_logits(
+        counts, X_OFFSET_CHANNELS, rows, cols, time_steps, offset_scale,
+    ).softmax(dim=1)
+    y_probs = cell_logits(
+        counts, Y_OFFSET_CHANNELS, rows, cols, time_steps, offset_scale,
+    ).softmax(dim=1)
     x = cols * STRIDE + (x_probs * offsets).sum(dim=1)
     y = rows * STRIDE + (y_probs * offsets).sum(dim=1)
-    r_probs = cell_logits(counts, RADIUS_CHANNELS, rows, cols, time_steps).softmax(dim=1)
+    r_probs = cell_logits(
+        counts, RADIUS_CHANNELS, rows, cols, time_steps, radius_scale,
+    ).softmax(dim=1)
     radius = torch.exp((r_probs * _log_centers(counts.device)).sum(dim=1))
     return torch.stack((x, y, radius), dim=1)
+
+
+def summarize(loss_sum, total, errors, predicted_radii, true_radii):
+    """Epoch metrics from per-sample position errors and radii (sensor pixels)."""
+    errors = torch.cat(errors)
+    predicted_radii = torch.cat(predicted_radii)
+    true_radii = torch.cat(true_radii)
+    known = true_radii > 0
+    metrics = {
+        "loss": loss_sum.item() / total,
+        "mean": errors.mean().item(),
+        "median": errors.median().item(),
+        "within_8px": (errors <= 8.0).float().mean().item(),
+        "within_radius": float("nan"),
+        "radius": float("nan"),
+        "radius_median": float("nan"),
+        "radius_factor": float("nan"),
+    }
+    if known.any():
+        pred, true = predicted_radii[known], true_radii[known]
+        relative = (pred - true).abs() / true
+        metrics.update({
+            "within_radius": (errors[known] <= true).float().mean().item(),
+            "radius": relative.mean().item(),
+            "radius_median": relative.median().item(),
+            "radius_factor": (pred / true).log().abs().mean().exp().item(),
+        })
+    return metrics
+
+
+def describe(metrics):
+    return (
+        f"loss {metrics['loss']:.3f} | error mean {metrics['mean']:.1f} px, "
+        f"median {metrics['median']:.1f} px, {metrics['within_8px']:.0%} within 8 px, "
+        f"{metrics['within_radius']:.0%} within 1 radius | radius {metrics['radius']:.0%} "
+        f"(median {metrics['radius_median']:.0%}, typically x{metrics['radius_factor']:.2f} off)"
+    )
+
+
+def baselines(dataset):
+    """Metrics of trivial predictors on ``dataset``, to read the real ones against.
+
+    Position: always the frame centre. Radius: what a silent head decodes to
+    (uniform bins, the geometric mean of RADIUS_CENTERS).
+    """
+    targets = torch.stack([dataset[i][1] for i in range(len(dataset))])
+    center = torch.full_like(targets[:, :2], SENSOR / 2)
+    errors = torch.linalg.vector_norm(center - targets[:, :2], dim=1)
+    known = targets[:, 2] > 0
+    silent_radius = float(np.exp(np.log(RADIUS_CENTERS).mean()))
+    relative = (silent_radius - targets[known, 2]).abs() / targets[known, 2]
+    return (
+        f"always centre -> median {errors.median().item():.1f} px; "
+        f"silent radius head (r = {silent_radius:.1f} px) -> radius {relative.mean().item():.0%}; "
+        f"label radius median {targets[known, 2].median().item():.1f} px"
+    )
 
 
 def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
     training = optimizer is not None
     model.train(training)
-    total_loss = torch.zeros((), device=device)
-    total_error = torch.zeros((), device=device)
-    total_radius = torch.zeros((), device=device)
-    total_known = torch.zeros((), device=device)
+    loss_sum = torch.zeros((), device=device)
+    errors, predicted_radii, true_radii = [], [], []
     total = 0
     batch_count = len(loader)
     with torch.set_grad_enabled(training):
@@ -399,29 +481,50 @@ def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
             if training:
                 optimizer.zero_grad()
             counts = model(frames)
-            loss = compute_loss(counts, targets, time_steps)
+            scales = model.logit_scales()
+            loss = compute_loss(counts, targets, time_steps, scales)
             if training:
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 with torch.no_grad():
-                    for parameter in model.parameters():
+                    for parameter in model.body.parameters():
                         parameter.clamp_(-1.0, 1.0)
-            decoded = decode(counts.detach(), time_steps)
-            known = targets[:, 2] > 0
-            count = len(targets)
-            total_loss += loss.detach() * count
-            total_error += torch.linalg.vector_norm(decoded[:, :2] - targets[:, :2], dim=1).sum()
-            total_radius += (
-                (decoded[:, 2] - targets[:, 2]).abs() / targets[:, 2].clamp(min=1e-3) * known
-            ).sum()
-            total_known += known.sum()
-            total += count
-    return (
-        total_loss.item() / total,
-        total_error.item() / total,
-        total_radius.item() / max(total_known.item(), 1.0),
-    )
+            decoded = decode(counts.detach(), time_steps, scales.detach())
+            loss_sum += loss.detach() * len(targets)
+            errors.append(torch.linalg.vector_norm(decoded[:, :2] - targets[:, :2], dim=1))
+            predicted_radii.append(decoded[:, 2])
+            true_radii.append(targets[:, 2])
+            total += len(targets)
+    return summarize(loss_sum, total, errors, predicted_radii, true_radii)
+
+
+def firing_rates(model, loader, device, time_steps, batches=2):
+    """Mean spike probability per neuron and time step for every layer."""
+    rates, hooks = {}, []
+    for name, module in model.body.named_children():
+        if isinstance(module, SpikingConvBN2d):
+            hooks.append(module.register_forward_hook(
+                lambda _module, _inputs, output, name=name:
+                rates.setdefault(name, []).append(output.float().mean())
+            ))
+    model.eval()
+    try:
+        with torch.no_grad():
+            for step, (flat, targets) in enumerate(loader):
+                if step >= batches:
+                    break
+                model(fast.to_frames(flat, len(targets), device, time_steps))
+    finally:
+        for hook in hooks:
+            hook.remove()
+    return {name: torch.stack(values).mean().item() for name, values in rates.items()}
+
+
+def describe_rates(rates):
+    silent = [name for name, rate in rates.items() if rate < SILENT_RATE]
+    text = ", ".join(f"{name} {rate:.1%}" for name, rate in rates.items())
+    return f"Firing rates: {text}" + (f" | SILENT: {', '.join(silent)}" if silent else "")
 
 
 def infer(model, dataset, device, batch_size, time_steps):
@@ -429,15 +532,16 @@ def infer(model, dataset, device, batch_size, time_steps):
     predicted = []
     model.eval()
     with torch.no_grad():
+        scales = model.logit_scales()
         for flat, targets in fast.make_loader(dataset, batch_size):
             frames = fast.to_frames(flat, len(targets), device, time_steps)
-            predicted.append(decode(model(frames), time_steps).cpu().numpy())
+            predicted.append(decode(model(frames), time_steps, scales).cpu().numpy())
     if not predicted:
         return np.zeros((0, 3), dtype=np.float32)
     return np.concatenate(predicted, axis=0)
 
 
-def train(batch_size, epochs, time_steps):
+def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
     torch.manual_seed(base.SEED)
     torch.backends.cudnn.benchmark = True
     device = base.pick_device()
@@ -454,6 +558,7 @@ def train(batch_size, epochs, time_steps):
     )
     print("Batch size:", batch_size)
     print("Time steps:", time_steps)
+    print("Baselines on validation:", baselines(validation_dataset), flush=True)
 
     example_frames = base.save_sample_figure(
         [fast.dense_sample(validation_dataset, 0, time_steps)], Path("ball_size_sample.png"),
@@ -467,29 +572,37 @@ def train(batch_size, epochs, time_steps):
         raise RuntimeError(f"Unexpected output shape {tuple(counts.shape)}")
     print("Output shape:", tuple(counts.shape), flush=True)
 
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=base.LEARNING_RATE, weight_decay=base.WEIGHT_DECAY,
+    optimizer = torch.optim.Adam([
+        {"params": model.body.parameters(), "weight_decay": base.WEIGHT_DECAY},
+        {"params": [model.log_logit_scales], "weight_decay": 0.0},
+    ], lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs, eta_min=min_learning_rate,
     )
+    print(f"Learning rate: {learning_rate:g} -> {min_learning_rate:g} (cosine over {epochs} epochs)")
     best_validation_error = float("inf")
 
     for epoch in range(1, epochs + 1):
-        print(f"Epoch {epoch}/{epochs} training", flush=True)
-        train_loss, train_error, train_radius = run_epoch(
+        print(f"Epoch {epoch}/{epochs} training, lr {scheduler.get_last_lr()[0]:.2e}", flush=True)
+        train_metrics = run_epoch(
             model, train_loader, device, time_steps, optimizer,
             log_prefix=f"Epoch {epoch} train",
         )
+        scheduler.step()
         print(f"Epoch {epoch}/{epochs} validation", flush=True)
-        validation_loss, validation_error, validation_radius = run_epoch(
+        validation_metrics = run_epoch(
             model, validation_loader, device, time_steps,
             log_prefix=f"Epoch {epoch} validation",
         )
-        if validation_error < best_validation_error:
+        validation_error = validation_metrics["median"]
+        saved = validation_error < best_validation_error
+        if saved:
             best_validation_error = validation_error
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "epoch": epoch,
                 "validation_error": validation_error,
-                "validation_radius_error": validation_radius,
+                "validation_metrics": validation_metrics,
                 "sensor": SENSOR,
                 "crop_sides": fast.CROP_SIDES,
                 "time_steps": time_steps,
@@ -498,25 +611,29 @@ def train(batch_size, epochs, time_steps):
                 "radius_centers": RADIUS_CENTERS.tolist(),
                 "architecture": ARCHITECTURE,
             }, CHECKPOINT)
+        scales = model.logit_scales().tolist()
+        print(f"Epoch {epoch}/{epochs} | Training   {describe(train_metrics)}")
         print(
-            f"Epoch {epoch}/{epochs} | Training loss: {train_loss:.4f} | "
-            f"Training error: {train_error:.2f} px, radius {train_radius:.0%} | "
-            f"Validation loss: {validation_loss:.4f} | "
-            f"Validation error: {validation_error:.2f} px, radius {validation_radius:.0%}"
+            f"Epoch {epoch}/{epochs} | Validation {describe(validation_metrics)}"
+            + ("  [saved]" if saved else "")
+        )
+        print(
+            f"Epoch {epoch}/{epochs} | Logit scales: heatmap {scales[0]:.1f}, "
+            f"offset {scales[1]:.1f}, radius {scales[2]:.1f} | "
+            + describe_rates(firing_rates(model, validation_loader, device, time_steps)),
+            flush=True,
         )
 
     checkpoint = torch.load(CHECKPOINT, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
     print("Test", flush=True)
-    test_loss, test_error, test_radius = run_epoch(
+    test_metrics = run_epoch(
         model, fast.make_loader(test_dataset, batch_size), device, time_steps,
         log_prefix="Test",
     )
     print("Best epoch:", checkpoint["epoch"])
-    print(f"Best validation error: {checkpoint['validation_error']:.2f} px")
-    print(f"Test loss: {test_loss:.4f}")
-    print(f"Test error: {test_error:.2f} px (sensor pixels)")
-    print(f"Test radius error: {test_radius:.0%} (mean relative)")
+    print(f"Best validation median error: {checkpoint['validation_error']:.2f} px")
+    print(f"Test {describe(test_metrics)} (sensor pixels)")
 
     export_model(model, example_frames, device)
 
@@ -536,6 +653,18 @@ def load_model(checkpoint_path, device):
     time_steps = int(checkpoint["time_steps"])
     print("Time steps:", time_steps)
     return model, time_steps
+
+
+def export_checkpoint(checkpoint_path):
+    """Export a saved checkpoint (by default the best one) without retraining."""
+    device = base.pick_device()
+    model, time_steps = load_model(checkpoint_path, device)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    print(
+        f"Exporting {checkpoint_path}: epoch {checkpoint['epoch']}, "
+        f"validation median error {checkpoint['validation_error']:.2f} px"
+    )
+    export_model(model, torch.zeros(time_steps, 1, SENSOR, SENSOR), device)
 
 
 def write_video(model, device, dataset, name, output_path, fps, batch_size, time_steps):
@@ -611,6 +740,12 @@ def main():
     train_parser = subparsers.add_parser("train", help="train on the benchmark and export")
     train_parser.add_argument("--epochs", type=int, default=base.EPOCHS)
     train_parser.add_argument("--time-steps", type=int, default=fast.TIME_STEPS)
+    train_parser.add_argument("--lr", type=float, default=base.LEARNING_RATE,
+                              help="start of the cosine schedule")
+    train_parser.add_argument("--min-lr", type=float, default=MIN_LEARNING_RATE,
+                              help="end of the cosine schedule (reached at the last epoch)")
+    export = subparsers.add_parser("export", help="export a checkpoint (default: the best)")
+    export.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
     view = subparsers.add_parser("visualize", help="write a test-set video")
     view.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
     view.add_argument("--output", type=Path, default=Path("ball_size_test.mp4"))
@@ -630,7 +765,9 @@ def main():
     predict.add_argument("--no-labels", action="store_true",
                          help="ignore gt_* and use evenly spaced windows")
     args = parser.parse_args()
-    if args.command == "visualize":
+    if args.command == "export":
+        export_checkpoint(args.checkpoint)
+    elif args.command == "visualize":
         visualize_test(args.checkpoint, args.output, args.fps, args.batch_size)
     elif args.command == "predict":
         predict_recording(
@@ -642,6 +779,8 @@ def main():
             args.batch_size,
             getattr(args, "epochs", base.EPOCHS),
             getattr(args, "time_steps", fast.TIME_STEPS),
+            getattr(args, "lr", base.LEARNING_RATE),
+            getattr(args, "min_lr", MIN_LEARNING_RATE),
         )
 
 
