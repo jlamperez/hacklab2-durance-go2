@@ -1,19 +1,23 @@
-"""Faster variant of ``train_motion_buddy.py``: same data, splits, loss and export.
+"""Heatmap variant of ``train_motion_buddy.py``: same data, splits and export.
 
 Changes:
 
 1. The dataset yields sparse pixel indices. The dense frame is built on the
    device and repeated over time with ``expand`` instead of real copies.
-2. The input is the 720x1280 sensor, not a zero-padded 1280x1280 square. The
-   last spatial convolution uses a (2, 5) kernel to keep a 1x1 output.
+2. The input is the 720x1280 sensor, not a zero-padded 1280x1280 square.
 3. Larger batches, and loss and error are accumulated on the device, so there
    is no host sync per batch.
 4. 4 time steps instead of 8 (``--time-steps``). The same frame is still fed at
    every step; T only sets the spike-count resolution and the cost.
+5. Fully convolutional spiking network. The last layer is a 45x80 map of
+   spiking neurons, one per 16x16 px cell; its spike counts are the ball
+   heatmap. Training uses cross-entropy over the cells against a Gaussian
+   around the true position. Decoding (argmax cell, then a spike-weighted
+   centroid over its 3x3 neighbourhood) runs off-chip. All kernels and strides
+   are square, as the RIVER exporter requires.
 
-The architecture differs from the original, so checkpoints are not
-interchangeable. The export still writes ``ball_model.json`` and
-``ball_parameters.{json,txt}``::
+Checkpoints are not interchangeable with the original. The export still writes
+``ball_model.json`` and ``ball_parameters.{json,txt}``::
 
     python train_motion_buddy_fast.py
     python train_motion_buddy_fast.py visualize
@@ -32,9 +36,14 @@ from riverops.nn import SpikingConvBN2d
 
 BATCH_SIZE = 16
 TIME_STEPS = 4
-CHECKPOINT = Path("ball_fast_best.pt")
+CHECKPOINT = Path("ball_heatmap_best.pt")
 HEIGHT = base.CAMERA_HEIGHT
 WIDTH = base.CAMERA_WIDTH
+HEATMAP_STRIDE = 16
+HEAT_H = HEIGHT // HEATMAP_STRIDE
+HEAT_W = WIDTH // HEATMAP_STRIDE
+TARGET_SIGMA = 1.0
+LOGIT_SCALE = 16.0
 
 
 class SparseBallDataset(Dataset):
@@ -86,8 +95,8 @@ def dense_sample(dataset, index, time_steps):
     return frame.view(1, HEIGHT, WIDTH).repeat(time_steps, 1, 1, 1), position
 
 
-class FastBallDetectorModel(nn.Module):
-    """Spatial sizes (H x W): 720x1280 -> 180x320 -> 45x80 -> 11x20 -> 2x5 -> 1x1."""
+class HeatmapBallDetector(nn.Module):
+    """Spatial sizes (H x W): 720x1280 -> 180x320 -> 90x160 -> 45x80 (x3 layers)."""
 
     def __init__(self):
         super().__init__()
@@ -100,15 +109,55 @@ class FastBallDetectorModel(nn.Module):
         self.net = nn.Sequential(
             SpikingConvBN2d(1, 8, kernel_size=8, stride=4, padding=2,
                             bias=False, first_layer=True, **lif),
-            SpikingConvBN2d(8, 16, kernel_size=8, stride=4, padding=2, bias=False, **lif),
-            SpikingConvBN2d(16, 32, kernel_size=8, stride=4, padding=2, bias=False, **lif),
-            SpikingConvBN2d(32, 64, kernel_size=8, stride=4, padding=2, bias=False, **lif),
-            SpikingConvBN2d(64, 128, kernel_size=(2, 5), stride=1, padding=0, bias=False, **lif),
-            SpikingConvBN2d(128, base.X_BINS + base.Y_BINS, kernel_size=1, bias=False, **lif),
+            SpikingConvBN2d(8, 16, kernel_size=4, stride=2, padding=1, bias=False, **lif),
+            SpikingConvBN2d(16, 32, kernel_size=4, stride=2, padding=1, bias=False, **lif),
+            SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
+            SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
+            SpikingConvBN2d(32, 1, kernel_size=1, bias=False, **lif),
         )
 
     def forward(self, x):
-        return self.net(x).sum(dim=1).flatten(start_dim=1)
+        """Spike counts per heatmap cell, [B, HEAT_H, HEAT_W]."""
+        return self.net(x).sum(dim=1)[:, 0]
+
+
+def _cell_centers(device):
+    rows = (torch.arange(HEAT_H, device=device, dtype=torch.float32) + 0.5) * HEATMAP_STRIDE
+    cols = (torch.arange(HEAT_W, device=device, dtype=torch.float32) + 0.5) * HEATMAP_STRIDE
+    return rows, cols
+
+
+def heatmap_targets(positions):
+    """Normalized Gaussian over the cells around each (x, y), flattened."""
+    rows, cols = _cell_centers(positions.device)
+    dx = (cols[None, None, :] - positions[:, 0, None, None]) / HEATMAP_STRIDE
+    dy = (rows[None, :, None] - positions[:, 1, None, None]) / HEATMAP_STRIDE
+    target = torch.exp(-(dx.square() + dy.square()) / (2 * TARGET_SIGMA ** 2))
+    return (target / target.sum(dim=(1, 2), keepdim=True)).flatten(1)
+
+
+def compute_loss(counts, positions, time_steps):
+    logits = counts.flatten(1) * (LOGIT_SCALE / time_steps)
+    return -(heatmap_targets(positions) * logits.log_softmax(dim=1)).sum(dim=1).mean()
+
+
+def decode_positions(counts):
+    """Argmax cell, refined by the spike-weighted centroid of its 3x3 neighbours."""
+    batch = counts.shape[0]
+    index = counts.flatten(1).argmax(dim=1)
+    offsets = torch.arange(-1, 2, device=counts.device)
+    rows = ((index // HEAT_W)[:, None] + offsets).clamp(0, HEAT_H - 1)
+    cols = ((index % HEAT_W)[:, None] + offsets).clamp(0, HEAT_W - 1)
+    batch_index = torch.arange(batch, device=counts.device)[:, None, None]
+    weights = counts[batch_index, rows[:, :, None], cols[:, None, :]] + 1e-6
+    centers_y, centers_x = _cell_centers(counts.device)
+    y = (centers_y[rows][:, :, None] * weights).sum(dim=(1, 2)) / weights.sum(dim=(1, 2))
+    x = (centers_x[cols][:, None, :] * weights).sum(dim=(1, 2)) / weights.sum(dim=(1, 2))
+    return torch.stack((x, y), dim=1)
+
+
+def position_error(counts, positions):
+    return torch.linalg.vector_norm(decode_positions(counts) - positions, dim=1)
 
 
 def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
@@ -124,21 +173,20 @@ def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
                 print(f"{log_prefix} batch {step}/{batch_count}", flush=True)
             positions = positions.to(device, non_blocking=True)
             frames = to_frames(flat, len(positions), device, time_steps)
-            targets = base.make_position_targets(positions)
             if training:
                 optimizer.zero_grad()
-            scores = model(frames)
-            loss = base.compute_loss(scores, targets, time_steps)
+            counts = model(frames)
+            loss = compute_loss(counts, positions, time_steps)
             if training:
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
                 with torch.no_grad():
                     for parameter in model.parameters():
                         parameter.clamp_(-1.0, 1.0)
-                optimizer.step()
             count = len(positions)
             total_loss += loss.detach() * count
-            total_error += base.position_error(scores.detach(), positions).sum()
+            total_error += position_error(counts.detach(), positions).sum()
             total += count
     return total_loss.item() / total, total_error.item() / total
 
@@ -150,7 +198,7 @@ def infer_positions(model, dataset, device, batch_size, time_steps):
     with torch.no_grad():
         for flat, positions in make_loader(dataset, batch_size):
             frames = to_frames(flat, len(positions), device, time_steps)
-            predicted.append(base.predict_positions(model(frames)).cpu().numpy())
+            predicted.append(decode_positions(model(frames)).cpu().numpy())
     if not predicted:
         return np.zeros((0, 2), dtype=np.float32)
     return np.concatenate(predicted, axis=0)
@@ -177,15 +225,15 @@ def train(batch_size, epochs, time_steps):
         [dense_sample(train_dataset, 0, time_steps)], Path("ball_sample.png"),
     )
 
-    model = FastBallDetectorModel().to(device)
+    model = HeatmapBallDetector().to(device)
     model.eval()
     print("Running one forward pass", flush=True)
     with torch.no_grad():
-        scores = model(example_frames.unsqueeze(0).to(device))
-    if scores.shape[1] != base.X_BINS + base.Y_BINS:
-        raise RuntimeError(f"Unexpected output shape {tuple(scores.shape)}")
-    prediction = base.predict_positions(scores)[0].cpu().tolist()
-    print("Output shape:", tuple(scores.shape), flush=True)
+        counts = model(example_frames.unsqueeze(0).to(device))
+    if tuple(counts.shape[1:]) != (HEAT_H, HEAT_W):
+        raise RuntimeError(f"Unexpected output shape {tuple(counts.shape)}")
+    prediction = decode_positions(counts)[0].cpu().tolist()
+    print("Output shape:", tuple(counts.shape), flush=True)
     print(f"Sample prediction (x, y): ({prediction[0]:.0f}, {prediction[1]:.0f})", flush=True)
 
     optimizer = torch.optim.Adam(
@@ -213,6 +261,7 @@ def train(batch_size, epochs, time_steps):
                 "camera_width": WIDTH,
                 "camera_height": HEIGHT,
                 "time_steps": time_steps,
+                "heatmap_stride": HEATMAP_STRIDE,
             }, CHECKPOINT)
         print(
             f"Epoch {epoch}/{epochs} | Training loss: {train_loss:.4f} | "
@@ -246,7 +295,7 @@ def visualize_test(checkpoint_path, output_path, fps, batch_size):
     device = base.pick_device()
     print("Device:", device, flush=True)
     dataset_dir = base.ensure_dataset()
-    model = FastBallDetectorModel().to(device)
+    model = HeatmapBallDetector().to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
     time_steps = int(checkpoint["time_steps"])
@@ -290,7 +339,7 @@ def visualize_test(checkpoint_path, output_path, fps, batch_size):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Faster full-frame ball detector training.")
+    parser = argparse.ArgumentParser(description="Heatmap spiking ball detector training.")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     subparsers = parser.add_subparsers(dest="command")
     train_parser = subparsers.add_parser("train", help="train on the benchmark and export")
@@ -298,7 +347,7 @@ def main():
     train_parser.add_argument("--time-steps", type=int, default=TIME_STEPS)
     view = subparsers.add_parser("visualize", help="write a test-set video")
     view.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
-    view.add_argument("--output", type=Path, default=Path("ball_fast_test.mp4"))
+    view.add_argument("--output", type=Path, default=Path("ball_heatmap_test.mp4"))
     view.add_argument("--fps", type=int, default=15)
     args = parser.parse_args()
     if args.command == "visualize":
