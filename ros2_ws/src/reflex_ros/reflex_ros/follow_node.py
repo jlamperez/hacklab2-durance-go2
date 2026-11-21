@@ -6,9 +6,14 @@
 
     pixi run -e ros ros-follow                 # walk mode, keyboard in this terminal
     pixi run -e ros ros-follow mode:=gaze      # trunk only (Euler yaw), no walking
+    pixi run -e ros ros-look                   # = mode:=look: nine gestures, Euler yaw + pitch
 
 Starts DISABLED. Keys:  f start following   SPACE stop (StopMove, disabled)
                         ! Damp (motors limp, the robot drops: emergency only)   q quit
+look mode only, a gesture by hand (numpad layout), following or not:
+                        7 left_up    8 up      9 right_up
+                        4 left       5 center  6 right
+                        1 left_down  2 down    3 right_down
 Without a terminal (launch files), `autostart:=true` starts it, and
 `ros2 service call /reflex/follow/enable std_srvs/srv/SetBool "{data: false}"` stops it.
 
@@ -35,6 +40,11 @@ from unitree_api.msg import Request
 HARD_MAX_VX = 0.5     # m/s
 HARD_MAX_WZ = 1.0     # rad/s
 HARD_MAX_YAW = 0.5    # rad
+HARD_MAX_PITCH = 0.35 # rad
+
+# look mode: numpad layout -> gesture
+KEY_GESTURES = {"7": "left_up", "8": "up", "9": "right_up", "4": "left", "5": "center", "6": "right",
+                "1": "left_down", "2": "down", "3": "right_down"}
 
 
 class FollowNode(Node):
@@ -57,7 +67,18 @@ class FollowNode(Node):
             v_slow=float(p("v_slow", d.v_slow).value),
             max_travel_m=float(p("max_travel_m", d.max_travel_m).value),
             max_yaw=min(float(p("max_yaw", d.max_yaw).value), HARD_MAX_YAW),
-            lost_s=float(p("lost_s", d.lost_s).value))
+            lost_s=float(p("lost_s", d.lost_s).value),
+            look_yaw=min(float(p("look_yaw", d.look_yaw).value), HARD_MAX_YAW),
+            look_pitch=min(float(p("look_pitch", d.look_pitch).value), HARD_MAX_PITCH),
+            vfov_deg=float(p("vfov_deg", d.vfov_deg).value),
+            v_level=float(p("v_level", d.v_level).value),
+            look_h_deg=float(p("look_h_deg", d.look_h_deg).value),
+            look_v_deg=float(p("look_v_deg", d.look_v_deg).value),
+            look_hyst_deg=float(p("look_hyst_deg", d.look_hyst_deg).value),
+            camera_on_trunk=bool(p("camera_on_trunk", d.camera_on_trunk).value))
+        # The sign of Euler pitch (y) on the real Go2 is not verified: if "up" (key 8) tilts the
+        # nose down, set invert_pitch:=true.
+        self.pitch_sign = -1.0 if bool(p("invert_pitch", False).value) else 1.0
         self.dry_run = bool(p("dry_run", False).value)      # log the requests, publish nothing
         self.ctrl = FollowController(cfg)
         self.pub = self.create_publisher(Request, api.SPORT_REQUEST_TOPIC, 10)
@@ -72,13 +93,20 @@ class FollowNode(Node):
         self._posture = False
         self._last_target_t = None
         self._silent_warned = False
-        self.get_logger().info(f"mode {cfg.mode}: max {cfg.max_vx:.2f} m/s, {cfg.max_wz:.2f} rad/s, "
-                               f"bursts of {cfg.move_s:.1f} s, travel budget {cfg.max_travel_m:.1f} m"
-                               + ("  [DRY RUN: nothing is published]" if self.dry_run else ""))
+        if cfg.mode == "look":
+            self.get_logger().info(f"mode look: yaw {cfg.look_yaw:.2f} rad, pitch {cfg.look_pitch:.2f} rad"
+                                   f"{' (inverted)' if self.pitch_sign < 0 else ''}, camera "
+                                   f"{'on the trunk' if cfg.camera_on_trunk else 'fixed'}"
+                                   + ("  [DRY RUN: nothing is published]" if self.dry_run else ""))
+        else:
+            self.get_logger().info(f"mode {cfg.mode}: max {cfg.max_vx:.2f} m/s, {cfg.max_wz:.2f} rad/s, "
+                                   f"bursts of {cfg.move_s:.1f} s, travel budget {cfg.max_travel_m:.1f} m"
+                                   + ("  [DRY RUN: nothing is published]" if self.dry_run else ""))
         if bool(p("autostart", False).value):
             self.start()
         else:
-            self.say("DISABLED. f = start following, SPACE = stop, ! = Damp, q = quit")
+            self.say("DISABLED. f = start following, SPACE = stop, ! = Damp, q = quit"
+                     + (", 1-9 = gesture by hand" if cfg.mode == "look" else ""))
 
     def now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
@@ -94,6 +122,10 @@ class FollowNode(Node):
     def stop(self, reason: str = "stopped") -> None:
         self.send_all(self.ctrl.disable(self.now(), reason))
         self.say(f"STOPPED ({reason}). f to start again")
+
+    def gesture(self, name: str) -> None:
+        self.send_all(self.ctrl.look(name, self.now()))
+        self.say(f"LOOK {name}" + (" (following goes on from here)" if self.ctrl.enabled else ""))
 
     def damp(self) -> None:
         self.ctrl.disable(self.now(), "damp")
@@ -130,11 +162,13 @@ class FollowNode(Node):
             tg, b = self.ctrl.last_target, self.ctrl.burst
             self.debug_pub.publish(String(data=json.dumps({
                 "state": self.ctrl.state, "mode": self.ctrl.cfg.mode, "travel_m": round(self.ctrl.travel_m, 2),
-                "yaw": round(self.ctrl.yaw, 3),
+                "yaw": round(self.ctrl.yaw, 3), "pitch": round(self.ctrl.pitch, 3),
+                "gesture": self.ctrl.gesture if self.ctrl.cfg.mode == "look" else None,
                 "target": None if tg is None else {"u": round(tg.u, 3), "v": round(tg.v, 3),
                                                    "confidence": round(tg.confidence, 3)},
                 "burst": None if b is None else {"kind": b.kind, "vx": round(b.vx, 3), "wz": round(b.wz, 3),
-                                                 "yaw": round(b.yaw, 3), "reason": b.reason}})))
+                                                 "yaw": round(b.yaw, 3), "pitch": round(b.pitch, 3),
+                                                 "reason": b.reason}})))
 
     # --- output --------------------------------------------------------------------------
     def send_all(self, commands) -> None:
@@ -150,10 +184,12 @@ class FollowNode(Node):
                 self.publish(api.STOP_MOVE, "", c.reason)
             elif c.kind == "euler":
                 yaw = max(-HARD_MAX_YAW, min(HARD_MAX_YAW, c.yaw))
-                if yaw != 0.0:
+                pitch = self.pitch_sign * max(-HARD_MAX_PITCH, min(HARD_MAX_PITCH, c.pitch)) + 0.0   # no -0.0
+                straight = yaw == 0.0 and pitch == 0.0
+                if not straight:
                     self.set_posture(True, "Euler only acts in posture mode")
-                self.publish(api.EULER, api.euler_params(0.0, 0.0, yaw), c.reason)
-                if yaw == 0.0:
+                self.publish(api.EULER, api.euler_params(0.0, pitch, yaw), c.reason)
+                if straight:
                     self.set_posture(False, "trunk straight again")
             elif c.kind == "balance_stand":
                 self.publish(api.BALANCE_STAND, "", c.reason)
@@ -190,6 +226,8 @@ def keyboard(node: FollowNode) -> None:
                 node.stop("space bar")
             elif key == "!":
                 node.damp()
+            elif key in KEY_GESTURES and node.ctrl.cfg.mode == "look":
+                node.gesture(KEY_GESTURES[key])
             elif key == "q":
                 node.stop("quit")
                 rclpy.shutdown()

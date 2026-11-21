@@ -4,9 +4,14 @@
     ros2 launch reflex_ros events_sim.launch.py source:=data/river/sat_follow2/ball/take_007_center.h5
     ros2 launch reflex_ros events_sim.launch.py source:=live kria_host:=root@durance-kria.local
     ros2 launch reflex_ros events_sim.launch.py source:=... behavior:=reflex
+    ros2 launch reflex_ros events_sim.launch.py source:=data/river/sat_follow2 tracker:=snn
 
   event_camera (replay or live, 320x320) -> /reflex/events_window
   behavior:=follow   target node -> /reflex/target -> follow node -> Move / StopMove -> walking dog
+                     mode:=look  nine trunk gestures (Euler yaw + pitch) instead of walking
+                     tracker:=centroid  the target node, no learning (default)
+                     tracker:=snn       ball_target: Theodor's SNN ball detector on /reflex/events_fullres
+                                        (needs PyTorch, riverops and Training/, see reflex/runtime/ball_snn.py)
   behavior:=reflex   perception (simple detector) -> /reflex/decision -> behavior node -> posture
 
 Open loop for recordings: the dog's motion does not change what the camera saw, so this
@@ -29,6 +34,12 @@ ARGS = {
     "behavior": "follow",
     # follow
     "follow": "true", "mode": "walk", "hfov_deg": "90.0", "zone_top": "0.3", "min_events": "0.0",
+    # mode:=look. Open loop: the recorded camera did not turn with the simulated trunk, so the
+    # gesture is not added to the target's angle. live with the camera on the real dog: true.
+    "vfov_deg": "90.0", "camera_on_trunk": "false",
+    # follow: where the target comes from. snn: ball_model, ball_min_p, ball_min_pixels, fullres_ms
+    "tracker": "centroid", "ball_model": "out/models/ball_small_best.pt", "ball_min_p": "0.55",
+    "ball_min_pixels": "20", "fullres_ms": "20.0",
     # reflex
     "detector": "simple", "reaction": "euler", "min_confidence": "0.6", "consecutive": "2",
     "move_vy": "0.3", "hold_s": "0.6",
@@ -46,6 +57,8 @@ def setup(context):
     behavior = a["behavior"]
     if behavior not in ("follow", "reflex"):
         raise ValueError(f"behavior:={behavior}: use follow or reflex")
+    if a["tracker"] not in ("centroid", "snn"):
+        raise ValueError(f"tracker:={a['tracker']}: use centroid or snn")
     if behavior == "reflex" and a["detector"] != "simple":
         raise ValueError("behavior:=reflex works with detector:=simple only: the reflex SNN was trained "
                          "on 320x180 windows, this camera gives 320x320")
@@ -57,18 +70,24 @@ def setup(context):
         "gap_s": float(a["gap_s"]), "lead_s": float(a["lead_s"]), "still_first": _bool(a["still_first"]),
         "exclude": a["exclude"],
         "flip_x": _bool(a["flip_x"]), "flip_y": _bool(a["flip_y"]), "port": int(a["port"]),
-        "kria_host": a["kria_host"]}])
+        "kria_host": a["kria_host"], "fullres_ms": float(a["fullres_ms"])}])
     bridge = Node(package="reflex_ros", executable="sim_bridge", output="screen", parameters=[{
         "robot_only": True, "camera": False, "locomotion": "rl" if walking else "none",
         "viewer": _bool(a["viewer"]), "scene": a["scene"], "actuation_delay_ms": delay}],
         additional_env={"MUJOCO_GL": "glfw"})
     nodes = [camera, bridge, RegisterEventHandler(OnProcessExit(target_action=bridge, on_exit=[Shutdown()]))]
     if walking:
-        nodes.append(Node(package="reflex_ros", executable="target", output="screen", parameters=[{
-            "zone_top": float(a["zone_top"]), "min_events": float(a["min_events"])}]))
+        if a["tracker"] == "snn":
+            nodes.append(Node(package="reflex_ros", executable="ball_target", output="screen", parameters=[{
+                "checkpoint": a["ball_model"], "min_p": float(a["ball_min_p"]),
+                "min_pixels": int(a["ball_min_pixels"])}]))
+        else:
+            nodes.append(Node(package="reflex_ros", executable="target", output="screen", parameters=[{
+                "zone_top": float(a["zone_top"]), "min_events": float(a["min_events"])}]))
         if _bool(a["follow"]):
             nodes.append(Node(package="reflex_ros", executable="follow", output="screen", parameters=[{
-                "mode": a["mode"], "hfov_deg": float(a["hfov_deg"]), "autostart": True}]))
+                "mode": a["mode"], "hfov_deg": float(a["hfov_deg"]), "vfov_deg": float(a["vfov_deg"]),
+                "camera_on_trunk": _bool(a["camera_on_trunk"]), "autostart": True}]))
     else:
         nodes.append(Node(package="reflex_ros", executable="perception", output="screen", parameters=[{
             "detector": "simple"}]))

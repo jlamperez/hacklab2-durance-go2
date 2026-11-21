@@ -89,6 +89,11 @@ cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run teleop_twist_keybo
 # In a second terminal: pixi run -e ros ros-follow (press f). Or add follow:=true.
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros follow_sim.launch.py \"$@\"' --"
 
+[feature.ros.tasks.ros-look]
+# Follow node in look mode: nine trunk gestures (Euler yaw + pitch), never walks. Keys 1-9: a gesture
+# by hand (numpad layout), f start, SPACE stop.  pixi run -e ros ros-look dry_run:=true look_yaw:=0.15
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros follow --ros-args -p mode:=look $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+
 [feature.ros.tasks.ros-events-sim]
 # Real events drive the simulated dog: a recording (or the live KV260 camera) -> target/follow
 # (or perception/behavior) -> MuJoCo dog. Arguments go to the launch file, e.g.
@@ -173,7 +178,57 @@ cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros event_c
 [feature.kria.tasks.kria-shell]
 cmd = "bash --rcfile scripts/ros_bashrc -i"
 
+# --- Simulation on Apple Silicon (arm64 Linux, e.g. Docker on a Mac): ROS 2 + MuJoCo + viewer,
+#     no PyTorch. Same ros-* tasks as `ros`: ros-events-sim, ros-follow-sim, ros-web, ros-drive, ...
+#     Anything with the SNN (ros-sim's default detector:=snn, train, eval) needs `default` or `ros`.
+#     Docker on a Mac: see "Simulation on a Mac" in docs/commands.md.
+[feature.simarm]
+platforms = ["linux-aarch64"]
+
+[feature.simarm.dependencies]
+python = "3.11.*"
+numpy = "*"
+opencv = "*"
+h5py = "*"
+matplotlib-base = "*"
+# PyTorch, CPU only, from conda-forge. Not the PyPI wheel: for linux-aarch64 it pulls in
+# CUDA 13 (several GB), and Docker on a Mac has no GPU anyway.
+pytorch = { version = ">=2.7", build = "cpu*" }
+pydantic = ">=2.13"   # riverops needs it
+
+[feature.simarm.activation.env]
+MUJOCO_GL = "egl"
+# riverops from the unpacked wheel (its metadata pins torch 2.14, so it is not installed),
+# and the ball detector scripts from feat/training.
+PYTHONPATH = "$PIXI_PROJECT_ROOT/riverops-0:$PIXI_PROJECT_ROOT/Training"
+
+# The top-level tasks belong to the default feature, which sim-arm leaves out. Same commands here.
+# No `view` / `drive`: no GLFW windows in the container.
+[feature.simarm.tasks]
+test = "pytest -q tests"
+sim = "python -m reflex.sim.demo"
+gen-data = "python -m reflex.data.generate"
+train = "python -m reflex.train"
+eval = "python -m reflex.eval"
+build-real = "python -m reflex.data.recording"
+finetune-real = "bash scripts/finetune_real.sh"
+view-data = "python -m reflex.viz.view_npz"
+follow-sim = "python -m reflex.sim.follow_sim"
+
+
+[feature.simarm.pypi-dependencies]
+reflex = { path = ".", editable = true }
+mujoco = ">=3.3"
+imageio = "*"
+imageio-ffmpeg = "*"
+onnxruntime = "*"
+viser = ">=1.0"
+trimesh = "*"
+pytest = "*"
+
 [environments]
 default = ["pc"]
 ros = ["pc", "ros"]
 kria = { features = ["kria"], no-default-feature = true }
+sim-arm = { features = ["ros", "simarm"], no-default-feature = true }
+

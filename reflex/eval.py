@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from reflex.runtime.detectors import LABELS, SimpleDetector, SNNDetector
 from reflex.train import load_shards, split_by_episode
@@ -39,7 +40,7 @@ def main() -> None:
     ap.add_argument("--model", default="out/models/snn.pt")
     ap.add_argument("--val-frac", type=float, default=0.15)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
     data, meta = load_shards(args.data)

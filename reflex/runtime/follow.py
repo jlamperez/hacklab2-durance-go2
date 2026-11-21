@@ -11,10 +11,16 @@ what it saw while standing, moves for a short burst, stops, and waits for the ca
 to calm down before looking again. Slower than continuous tracking, but it works with
 a detector (or an SNN) trained on a still camera.
 
-Two modes:
+Three modes:
   walk   turn towards the target and, when it is roughly ahead and not close yet,
          walk towards it (sport-mode Move, then StopMove)
   gaze   stand on the spot and turn the trunk towards it (sport-mode Euler, yaw only)
+  look   stand on the spot and point the trunk at one of nine fixed gestures
+         (left/center/right x up/level/down, sport-mode Euler yaw and pitch), the one
+         nearest the target. With the camera on the trunk, the target's direction is
+         the current gesture plus its place in the image, so looking at the target does
+         not make the dog look back (camera_on_trunk). Hysteresis keeps it from flickering
+         between two gestures when the target sits on a boundary.
 
 Safety is built in, because the robot has none of its own in sport mode:
   - starts disabled; `enable()` is an explicit step
@@ -35,7 +41,14 @@ from dataclasses import dataclass
 
 from reflex.runtime.target import Target
 
-MODES = ("walk", "gaze")
+MODES = ("walk", "gaze", "look")
+
+# look mode: (column, row) -> gesture name. Column +1 = left (positive yaw), row +1 = up.
+GESTURES = {
+    (0, 0): "center", (1, 0): "left", (-1, 0): "right", (0, 1): "up", (0, -1): "down",
+    (1, 1): "left_up", (1, -1): "left_down", (-1, 1): "right_up", (-1, -1): "right_down",
+}
+CELLS = {name: cell for cell, name in GESTURES.items()}
 
 
 @dataclass
@@ -55,7 +68,16 @@ class FollowConfig:
     v_slow: float = 0.3           # forward speed ramps from max_vx at v_slow down to 0 at v_near
     max_travel_m: float = 3.0     # commanded forward travel before halting for good
     max_yaw: float = 0.35         # gaze: trunk yaw limit (rad). Real Go2 limit NOT verified
-    lost_s: float = 2.0           # gaze: nothing seen for this long -> trunk back to straight
+    lost_s: float = 2.0           # gaze, look: nothing seen for this long -> trunk back to straight
+    # look mode. Trunk angles of the gestures: real Go2 limits NOT verified, keep them small.
+    look_yaw: float = 0.3         # rad, left / right gestures
+    look_pitch: float = 0.2       # rad, up / down gestures
+    vfov_deg: float = 90.0        # camera's vertical field of view: turns v into an angle (GenX320: square)
+    v_level: float = 0.0          # image row (v) that counts as level, for a camera tilted on its mount
+    look_h_deg: float = 12.0      # target further left/right than this (in the room) -> side gesture
+    look_v_deg: float = 8.0       # target further up/down than this -> up / down gesture
+    look_hyst_deg: float = 4.0    # hysteresis around both boundaries
+    camera_on_trunk: bool = True  # the camera turns with the trunk: add the current gesture
 
 
 @dataclass(frozen=True)
@@ -64,6 +86,8 @@ class Command:
     vx: float = 0.0           # move: m/s, + forward
     wz: float = 0.0           # move: rad/s, + turns left
     yaw: float = 0.0          # euler: rad, + turns left
+    pitch: float = 0.0        # euler: rad, Unitree's Euler y. + is nose DOWN (right-hand rule
+                              # about +y, the dog's left). Sign NOT verified on the real Go2.
     reason: str = ""
 
 
@@ -74,7 +98,9 @@ class FollowController:
             raise ValueError(f"unknown mode {self.cfg.mode!r}, expected one of {MODES}")
         self.state = "disabled"
         self.travel_m = 0.0
-        self.yaw = 0.0                     # gaze: current trunk yaw set point
+        self.yaw = 0.0                     # gaze, look: current trunk yaw set point
+        self.pitch = 0.0                   # look: current trunk pitch set point (Euler y)
+        self.cell = (0, 0)                 # look: current gesture, see GESTURES
         self.burst: Command | None = None  # the motion being executed
         self._streak = 0
         self._t_state = 0.0
@@ -85,7 +111,7 @@ class FollowController:
     # --- switches --------------------------------------------------------------------------
     def enable(self, t_s: float) -> list[Command]:
         """Start following. Also clears a halt: the travel budget starts again."""
-        self.travel_m, self.yaw, self._streak = 0.0, 0.0, 0
+        self.travel_m, self.yaw, self.pitch, self.cell, self._streak = 0.0, 0.0, 0.0, (0, 0), 0
         self._set("looking", t_s)
         self._t_seen = t_s
         return [Command("balance_stand", reason="enabled")]
@@ -98,6 +124,24 @@ class FollowController:
     @property
     def enabled(self) -> bool:
         return self.state not in ("disabled", "halted")
+
+    @property
+    def gesture(self) -> str:
+        """look mode: name of the current gesture."""
+        return GESTURES[self.cell]
+
+    def look(self, name: str, t_s: float, reason: str = "manual") -> list[Command]:
+        """Take a gesture by name (keyboard, tests), in any mode and state.
+
+        While following, the dog then settles and goes on following from that gesture.
+        """
+        if name not in CELLS:
+            raise ValueError(f"unknown gesture {name!r}, expected one of {tuple(CELLS)}")
+        cmd = self._to_cell(CELLS[name], reason)
+        if self.enabled:
+            self._set("moving", t_s)
+            self._t_seen = t_s
+        return [cmd]
 
     # --- main entry ------------------------------------------------------------------------
     def update(self, target: Target | None, t_s: float) -> list[Command]:
@@ -139,9 +183,26 @@ class FollowController:
         """Horizontal angle to the target, rad, + is to the dog's left (u < 0)."""
         return -math.atan(u * math.tan(math.radians(self.cfg.hfov_deg) / 2))
 
+    def elevation_to(self, v: float) -> float:
+        """Vertical angle to the target, rad, + is up (v < v_level)."""
+        return -math.atan((v - self.cfg.v_level) * math.tan(math.radians(self.cfg.vfov_deg) / 2))
+
     def _act(self, target: Target, t_s: float) -> list[Command]:
         c = self.cfg
         angle = self.angle_to(target.u)
+        if c.mode == "look":
+            up = self.elevation_to(target.v)
+            if c.camera_on_trunk:          # where the trunk points now + where it is in the image
+                angle += self.cell[0] * c.look_yaw
+                up += self.cell[1] * c.look_pitch
+            cell = (_pick(math.degrees(angle), self.cell[0], c.look_h_deg, c.look_hyst_deg),
+                    _pick(math.degrees(up), self.cell[1], c.look_v_deg, c.look_hyst_deg))
+            if cell == self.cell:
+                return []                  # already looking at it: stay still, keep looking
+            self.burst = self._to_cell(cell, f"target at {math.degrees(angle):+.0f} deg, "
+                                             f"{math.degrees(up):+.0f} deg up")
+            self._set("moving", t_s)
+            return [self.burst]
         if c.mode == "gaze":
             self.yaw = _clip(self.yaw + c.turn_gain * angle, c.max_yaw)
             self.burst = Command("euler", yaw=self.yaw, reason=f"target at {math.degrees(angle):+.0f} deg")
@@ -164,18 +225,27 @@ class FollowController:
         self._t_sent = t_s
         return [self.burst]
 
+    def _to_cell(self, cell: tuple[int, int], why: str) -> Command:
+        """look mode: set the gesture and return its Euler command."""
+        c = self.cfg
+        self.cell = cell
+        self.yaw = cell[0] * c.look_yaw
+        self.pitch = -cell[1] * c.look_pitch      # looking up = nose up = negative Euler y
+        return Command("euler", yaw=self.yaw, pitch=self.pitch, reason=f"look {self.gesture}: {why}")
+
     def _maybe_recentre(self, t_s: float) -> list[Command]:
-        if self.cfg.mode == "gaze" and self.yaw != 0.0 and t_s - self._t_seen >= self.cfg.lost_s:
-            self.yaw = 0.0
+        if self.cfg.mode in ("gaze", "look") and (self.yaw != 0.0 or self.pitch != 0.0) \
+                and t_s - self._t_seen >= self.cfg.lost_s:
+            self.yaw, self.pitch, self.cell = 0.0, 0.0, (0, 0)
             self._set("settling", t_s)
-            return [Command("euler", yaw=0.0, reason="target lost: looking straight again")]
+            return [Command("euler", reason="target lost: looking straight again")]
         return []
 
     def _stop(self, reason: str) -> list[Command]:
         self.burst = None
-        if self.cfg.mode == "gaze":
-            self.yaw = 0.0
-            return [Command("euler", yaw=0.0, reason=reason)]
+        if self.cfg.mode in ("gaze", "look"):
+            self.yaw, self.pitch, self.cell = 0.0, 0.0, (0, 0)
+            return [Command("euler", reason=reason)]
         return [Command("stop", reason=reason)]
 
     def _set(self, state: str, t_s: float) -> None:
@@ -184,3 +254,10 @@ class FollowController:
 
 def _clip(x: float, m: float) -> float:
     return max(-m, min(m, x))
+
+
+def _pick(angle_deg: float, current: int, boundary_deg: float, hyst_deg: float) -> int:
+    """-1, 0 or +1 for an angle, with hysteresis: leaving the current cell takes hyst_deg more."""
+    hi = boundary_deg + (hyst_deg if current <= 0 else -hyst_deg)     # above: cell +1
+    lo = -boundary_deg - (hyst_deg if current >= 0 else -hyst_deg)    # below: cell -1
+    return 1 if angle_deg > hi else -1 if angle_deg < lo else 0

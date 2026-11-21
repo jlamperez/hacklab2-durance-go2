@@ -53,6 +53,47 @@ disabled --f--> looking --(2 confident sightings)--> moving (0.8 s) --> settling
 `max_yaw`). It goes back to straight when nothing is seen for `lost_s`. For a hovering
 drone: its propellers fire events all the time, a still ball does not.
 
+## Look mode: nine gestures, feet planted
+
+`mode:=look` (task `ros-look`) never walks. The dog stays in posture mode and points its
+trunk at one of nine fixed gestures, the one nearest the target:
+
+```
+left_up    up     right_up          yaw   +look_yaw  0  -look_yaw     (+ turns left)
+left       center right             pitch -look_pitch 0  +look_pitch  (Euler y, + nose down)
+left_down  down   right_down
+```
+
+Each gesture is one `Euler` request (`Pose(true)` first, `Pose(false)` when back at
+centre). Defaults: `look_yaw:=0.3` rad (17 deg), `look_pitch:=0.2` rad (11 deg); hard caps
+in the node 0.5 and 0.35 rad.
+
+How a target becomes a gesture (`FollowController._act`, mode look):
+
+1. `u, v` to angles with the lens: `hfov_deg`, `vfov_deg` (GenX320 is square: both 90 by
+   default; the simulated head camera is 60 deg vertically). `v_level` is the image row that
+   counts as level, for a camera tilted on its mount.
+2. **Camera on the trunk** (`camera_on_trunk:=true`, default): the camera turns with the
+   trunk, so the target's direction in the room is the current gesture plus its angle in the
+   image. Without this the dog would look left, see the ball in the middle of the image and
+   look back. Set it to false for a camera on a tripod, and for recordings played into the
+   simulator (`ros-events-sim` does: open loop).
+3. Left / centre / right at `look_h_deg:=12` deg, up / level / down at `look_v_deg:=8` deg,
+   each with `look_hyst_deg:=4` deg of hysteresis: leaving the current gesture takes 4 deg
+   more than entering it, so a ball on a boundary does not make the dog twitch.
+4. Same move, stop, look cycle as the other modes: two confident sightings, one Euler, then
+   `move_s + settle_s` of ignoring the camera while the trunk turns. Same gesture as now:
+   nothing is sent, the dog stays still and keeps looking. Nothing seen for `lost_s`: back
+   to centre.
+
+A ball on the floor in front of the dog is below the horizon, so expect `down` gestures for
+a near ball and level ones from about 2 m. Up gestures need a target above the camera (a
+drone, a ball held up) and `zone_top:=0.0` on the target node, which otherwise ignores the
+top 30 % of the image.
+
+Keys 1 to 9 take a gesture by hand, numpad layout (7 = left_up, 5 = centre, 3 =
+right_down), whether following or not. That is how to check the signs on the real robot.
+
 ## Safety
 
 All in `FollowController`, plus hard caps in the node that no parameter can exceed:
@@ -65,6 +106,7 @@ All in `FollowController`, plus hard caps in the node that no parameter can exce
 | one burst, always ended by StopMove | `move_s:=0.8` s | |
 | commanded forward travel, then halted until `f` again | `max_travel_m:=3.0` m | |
 | trunk yaw (gaze) | `max_yaw:=0.35` rad | 0.5 rad |
+| trunk yaw, pitch of the look gestures | `look_yaw:=0.3`, `look_pitch:=0.2` rad | 0.5, 0.35 rad |
 | stop walking when the target is close | `v_near:=0.6` | |
 | ignore the upper image (people's bodies) | `zone_top:=0.3` (target node) | |
 
@@ -89,6 +131,10 @@ pixi run -e ros ros-build                           # once: new message reflex_m
 pixi run -e ros ros-follow-sim                      # simulated dog + camera + scripted ball + target node
 pixi run -e ros ros-follow                          # second terminal: f to start, SPACE to stop
 pixi run -e ros ros-follow-sim follow:=true         # both in one, starts by itself
+
+pixi run follow-sim --mode look --video out/look.mp4         # look mode, headless
+pixi run -e ros ros-follow-sim follow:=true mode:=look       # look mode over ROS 2
+pixi run -e ros ros-look                                     # look mode alone, keys 1-9 and f
 ```
 
 On the real robot (not tried yet):
@@ -102,6 +148,18 @@ On the real robot (not tried yet):
 4. Set `hfov_deg` to the real lens, and `v_near` / `zone_top` to where the floor is in the
    real image (camera height and tilt decide them).
 5. `mode:=gaze` first if the walking makes anyone nervous: the feet stay down.
+
+Look mode on the real robot. Roll was checked on 21 Nov 2026, yaw and pitch were not:
+
+1. `pixi run -e ros ros-look dry_run:=true`, keys 4 and 6: the log must show `Euler`
+   with `z` > 0 for left. Then 8: `y` < 0 for up.
+2. Without `dry_run`, small angles first: `ros-look look_yaw:=0.15 look_pitch:=0.1`.
+   Press 4 (left), 6 (right), 8 (up), 2 (down), 5 (centre). If 8 tilts the nose **down**,
+   restart with `invert_pitch:=true`. If 4 turns right, stop: the yaw sign of the whole
+   gaze mode would be wrong too.
+3. Note how far the trunk really turns. If it falls short of `look_yaw` / `look_pitch`,
+   the camera-on-trunk correction adds too much; set the parameters to what it reaches.
+4. Then `f` with the camera live.
 
 ## In simulation
 
@@ -128,7 +186,23 @@ moves the dog at most 0.24 m, while the ball averages about 0.2 m/s with its pau
 the demo: roll the ball slowly and keep it within 2 m, or raise `max_vx` and `move_s`
 once the real robot has been checked at the low settings.
 
-Known gaps of the simulation: `Euler` yaw is not simulated (gaze mode only shows what it
-would send); the dog standing under the walking policy sways more than a real Go2 in
+Look mode, same loop with the dog standing (`pixi run follow-sim --mode look --duration 36
+--camera-hz 50`, seed 0). The ball rolls in front of it: near centre, near left, far left,
+across to the right, near right, near centre, away (`LOOK_PATH`):
+
+| | Median angle between trunk and ball, while it rolls |
+|---|---|
+| dog keeps looking ahead (baseline) | 18.1 deg |
+| look mode | 9.6 deg |
+
+11 gestures in 36 s: down, left_down, center, left, center, right, center, right,
+right_down, down, center. The feet stayed put (trunk origin moved 2 cm), upright
+throughout. The first `center` (9.8 s) is the `lost_s` timeout, not a misreading: the ball
+was 2.4 m away, small in the image, then paused for 1.5 s, and a paused ball fires no
+events. Raise `lost_s` if the dog should hold its gaze through pauses.
+
+Known gaps of the simulation: `Euler` yaw and pitch are simulated by our own inverse
+kinematics (`Go2Sim.set_trunk`: trunk turned about its origin, feet planted), not by
+Unitree's controller, and how far the real trunk turns is not measured; the dog standing under the walking policy sways more than a real Go2 in
 balance stand, so the simulated camera is noisier after each burst than the real one
 should be; the SNN is not in this loop.

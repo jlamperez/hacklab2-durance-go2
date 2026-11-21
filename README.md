@@ -51,8 +51,10 @@ Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 | riverops training for Durance's toolchain (their notebook adapted to none/left/center/right), synthetic ball data, auto-labels for recordings (calibrated tracker, per-take overrides, review sheet), export for the Kria: `reflex/river/`, `docs/river-training.md` | written; auto-labels measured on synthetic data only (92 % of frames agree with ground truth). Training tested on CPU with a stand-in for riverops only. Not yet run with the real wheel, real recordings or the board |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
-| Follow a ball: target contract (`u, v, confidence`), no-learning centroid tracker, move-stop-look controller with safety limits, follow and target nodes, scripted ball in the simulator (`docs/follow.md`) | controller and tracker unit-tested; closed loop run headless without ROS (results in `docs/follow.md`). ROS nodes written, not yet built or run. Gaze mode (`Euler` yaw) not simulated. Not tried on the real Go2 |
+| Follow a ball: target contract (`u, v, confidence`), no-learning centroid tracker, move-stop-look controller with safety limits, follow and target nodes, scripted ball in the simulator (`docs/follow.md`) | controller and tracker unit-tested; closed loop run headless without ROS (results in `docs/follow.md`). ROS nodes written, not yet built or run. Not tried on the real Go2 |
+| Look mode: nine trunk gestures (left/centre/right x up/level/down, `Euler` yaw + pitch), feet planted, camera-on-trunk correction, hysteresis, keys 1-9 (`docs/follow.md`) | controller unit-tested; trunk yaw and pitch simulated with our own IK (`Go2Sim.set_trunk`), closed loop run headless without ROS. ROS changes not built or run. Yaw and pitch signs and reach NOT checked on the real Go2 |
 | Event camera node: GenX320 recordings or the live KV260 stream into the simulation (`docs/events-sim.md`) | sources tested, recordings played through tracker and follow controller without ROS; node and launch file not yet run under ROS; live path not tried with the real camera |
+| Ball SNN from `feat/training` (spiking U-Net, position + P(ball)) as a target source: `ball_target` node, `ros-events-sim tracker:=snn` (`docs/events-sim.md`) | checkpoint loads and runs on CPU (arm64); run over sat_follow2 without ROS: reacts to moving blobs, not only the ball, see `docs/events-sim.md`. Node and launch not yet run under ROS |
 | SNN on the FPGA (SPLEAT), our nodes driving the real Go2 | not started |
 
 ## Commands
@@ -81,7 +83,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 | `pixi run view` | 3D window with balls rolling at the dog. Pose keys: X stand, C crouch, Q / E lean left / right, Z sit, H hello |
 | `pixi run drive` | Same window, dog walks: arrows = speed and turn, A / D sidestep, SPACE stop |
 | `pixi run sim` | Write `out/demo.mp4`: third person, dog-eye view, emulated events |
-| `pixi run follow-sim` | The dog follows a scripted ball, no ROS; prints a summary. `--video out/follow.mp4`, `--mode gaze` |
+| `pixi run follow-sim` | The dog follows a scripted ball, no ROS; prints a summary. `--video out/follow.mp4`, `--mode gaze`, `--mode look` |
 
 ### Data and training
 
@@ -107,6 +109,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 | `pixi run -e ros ros-follow-sim` | Simulated dog, its event camera and a ball rolled by script, plus the target node. Start `ros-follow` next to it |
 | `pixi run -e ros ros-events-sim` | Real events drive the simulated dog: a recording (`source:=data/river/sat_follow2`) or the live KV260 camera (`source:=live`) -> target + follow (or `behavior:=reflex`) -> walking dog (`docs/events-sim.md`) |
 | `pixi run -e ros ros-follow` | Follow node with a keyboard: `f` start, `SPACE` stop, `!` Damp. Starts disabled. Same node for the real Go2; `mode:=gaze` turns the trunk only |
+| `pixi run -e ros ros-look` | The follow node in look mode: nine trunk gestures towards the target, never walks. Keys `1`-`9` take a gesture by hand (numpad layout) |
 | `pixi run -e ros ros-tricks` | Keyboard for the Go2's built-in tricks (Hello, Sit, Stretch, dances; flips only with `allow_acrobatics:=true`). The simulator imitates Sit and Hello |
 | `pixi run -e ros ros-web` | Live dashboard in the browser at `http://localhost:8080`: 3D scene, events, decision, reflex state, latency, network activity. Run it next to any of the above |
 | `pixi run -e ros ros-shell` | Shell with ROS 2 ready, for `ros2 topic echo`, `rqt_graph`, ... |

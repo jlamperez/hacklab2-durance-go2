@@ -14,6 +14,7 @@ pixi run -e ros ros-web                                         # optional: even
 event_camera (replay or live, 320x320, windows of 50 ms at 50 Hz)
   -> /reflex/events_window
   behavior:=follow  -> target node -> /reflex/target -> follow node -> Move / StopMove -> walking dog
+                       (tracker:=snn: ball_target on /reflex/events_fullres instead of the target node)
   behavior:=reflex  -> perception (simple detector) -> /reflex/decision -> behavior node -> lean / sidestep
 ```
 
@@ -74,6 +75,33 @@ starts over.
 - **Same topic as the real Go2.** The follow node starts enabled here and publishes on
   `/api/sport/request`. Keep the real robot off this ROS network, or use another
   `ROS_DOMAIN_ID`.
+
+## With the SNN ball detector (`tracker:=snn`)
+
+```bash
+pixi run -e sim-arm ros-build
+pixi run -e sim-arm ros-events-sim source:=data/river/sat_follow2 tracker:=snn viewer:=false
+```
+
+`ball_target` replaces the target node: Theodor's spiking U-Net from `feat/training`
+(`Training/train_ball_small.py`, checkpoint `out/models/ball_small_best.pt`), loaded by
+`reflex/runtime/ball_snn.py`, publishes the same `/reflex/target`. It needs the full
+320x320 frame, which the 50 ms / 80x80 `/reflex/events_window` does not carry, so the
+event camera also publishes `/reflex/events_fullres` (one bin, the last `fullres_ms`,
+only while someone subscribes). Needs PyTorch, riverops (installed, or the unpacked wheel
+in `riverops-0/`) and `Training/` (`git checkout origin/feat/training -- Training`).
+Arguments: `ball_model:=PATH`, `ball_min_p:=0.55`, `ball_min_pixels:=20`, `fullres_ms:=20.0`.
+
+The network was trained on 2 ms windows of a 1280x720 benchmark camera. Our recordings
+have 1-3 k events/s, so 2 ms frames are nearly empty; 20 ms works better than 10 ms.
+Without ROS, on sat_follow2 (frames every 40 ms, P(ball) >= 0.55, >= 20 event pixels), it
+reported a ball in 28 % of the ball takes' frames, 16 % of the none takes' and 43 % of the
+drone take's. The still takes give nothing, but take_025_none fires in about half its frames
+at the image's left edge: it reacts to moving blobs, not only to the ball. Where both see
+something, its position agrees with the centre of the events to about 0.06-0.10 in u, v.
+About 25 ms a frame on 4 arm64 CPU cores (Docker on a Mac: not measured). Per take:
+`python -m reflex.runtime.ball_snn data/river/sat_follow2` (`--zone-top 0.3` blanks the
+top rows, as the centroid tracker does; it did not clearly help).
 
 ## Checked and not checked (21 Nov 2026)
 

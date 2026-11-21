@@ -52,6 +52,24 @@ def pose_for_request(api_id: int, parameter: str = "") -> str | None:
     return None   # stretch, dances, jumps, flips: no equivalent in the simulator
 
 
+def euler_for_request(api_id: int, parameter: str = "") -> tuple[float, float, float] | None:
+    """(roll, pitch, yaw) of an Euler request that also turns or tilts the trunk, else None.
+
+    An Euler with roll alone stays a lean (`pose_for_request`), whose pose was fitted to the
+    real Go2. With yaw or pitch the simulator turns the trunk with `Go2Sim.set_trunk`.
+    """
+    if int(api_id) != sport_api.EULER.api_id:
+        return None
+    try:
+        p = json.loads(parameter) if parameter else {}
+        roll, pitch, yaw = float(p.get("x", 0.0)), float(p.get("y", 0.0)), float(p.get("z", 0.0))
+    except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+        return None
+    if abs(pitch) <= DEADBAND and abs(yaw) <= DEADBAND:
+        return None
+    return roll, pitch, yaw
+
+
 class PostureMode:
     """Sport mode's posture mode, as seen on the real Go2 on 21 Nov 2026.
 
