@@ -6,8 +6,10 @@ to the events outside the network. The rest of the topology, strides, skips,
 head, loss, data and readout are those of train_ball_size.py, so the receptive
 field stays ~300 sensor px and only RIVER-lowerable ops are used. Channel
 widths shrink from (16, 32, 64, 64) to WIDTHS per resolution level (80x80,
-40x40, 20x20, 10x10). Everything is written under its own names (ball_small_*),
-so the full-size model's checkpoint and export files are left alone::
+40x40, 20x20, 10x10). It trains with int8 fake quantization (TRAIN_INT8), so
+the weights it learns are the int8 weights the export writes. Everything is
+written under its own names (ball_small_*), so the full-size model's
+checkpoint and export files are left alone::
 
     python train_ball_small.py
     python train_ball_small.py train --no-ball data/no_ball
@@ -68,6 +70,7 @@ size.EXPORT_PREFIX = "ball_small"
 size.SAMPLE_FIGURE = Path("ball_small_sample.png")
 size.TEST_VIDEO = Path("ball_small_test.mp4")
 size.PREDICT_SUFFIX = "_small_pred.mp4"
+size.TRAIN_INT8 = True
 
 if __name__ == "__main__":
     size.main()

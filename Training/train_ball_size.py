@@ -95,6 +95,13 @@ NO_BALL_TARGET = (-1.0, -1.0, 0.0)
 X_OFFSET_CHANNELS = slice(1, 1 + OFFSET_BINS)
 Y_OFFSET_CHANNELS = slice(X_OFFSET_CHANNELS.stop, X_OFFSET_CHANNELS.stop + OFFSET_BINS)
 HEAD_CHANNELS = Y_OFFSET_CHANNELS.stop
+QUANT_CONFIG = QuantConfig(
+    weight_format=FixedPointFormat(total_bits=8, frac_bits=7),
+    potential_format=FixedPointFormat(total_bits=16, frac_bits=12),
+    enable_weight_quant=True,
+    enable_potential_quant=True,
+)
+TRAIN_INT8 = False
 
 
 def window_radius(pixels, xy):
@@ -359,11 +366,17 @@ class BallDetector(nn.Module):
     used only in the loss and the off-chip decoding, so they are not part of
     the exported network. The no-ball logit starts at ln(cells), which gives
     P(ball) = 0.5 for a silent heatmap.
+
+    With TRAIN_INT8 the body runs with QUANT_CONFIG fake quantization: the
+    BatchNorm-folded weights the export writes are rounded to int8 and the
+    membrane potentials to 16 bits in every forward pass, with straight-through
+    gradients. The state dict is the same either way.
     """
 
     def __init__(self):
         super().__init__()
-        self.body = BallUNet()
+        body = BallUNet()
+        self.body = prepare_qat(body, QUANT_CONFIG, fused_bn=True) if TRAIN_INT8 else body
         self.log_logit_scales = nn.Parameter(
             torch.full((2,), float(np.log(fast.LOGIT_SCALE)))
         )
@@ -389,13 +402,7 @@ def export_model(model, example_frames, device):
     Path(f"{EXPORT_PREFIX}_model.json").write_text(model_json)
     print(f"Saved architecture to: {EXPORT_PREFIX}_model.json")
 
-    quant_config = QuantConfig(
-        weight_format=FixedPointFormat(total_bits=8, frac_bits=7),
-        potential_format=FixedPointFormat(total_bits=16, frac_bits=12),
-        enable_weight_quant=True,
-        enable_potential_quant=True,
-    )
-    prepared = prepare_qat(model, quant_config).eval()
+    prepared = prepare_qat(model, QUANT_CONFIG).eval()
     layers = [
         (name, module) for name, module in prepared.body.named_children()
         if isinstance(module, SpikingConvBN2d)
@@ -715,6 +722,10 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
     )
     print("Batch size:", batch_size)
     print("Time steps:", time_steps)
+    print(
+        "Quantization: int8 weights and 16-bit potentials during training"
+        if TRAIN_INT8 else "Quantization: float training, int8 only at export"
+    )
     print("Baselines on validation ball frames:", baselines(validation_ball), flush=True)
 
     example_frames = base.save_sample_figure(
@@ -771,6 +782,7 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
                 "heatmap_stride": STRIDE,
                 "offset_bins": OFFSET_BINS,
                 "architecture": ARCHITECTURE,
+                "train_int8": TRAIN_INT8,
             }, CHECKPOINT)
         scales = model.logit_scales().tolist()
         silent = torch.sigmoid(np.log(HEAT * HEAT) - model.no_ball_logit).item()
