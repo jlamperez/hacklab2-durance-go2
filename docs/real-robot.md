@@ -28,6 +28,7 @@ camera -> [camera adapter] -> /reflex/events_window
 | Network | Trained on simulated events only | Fine-tune on real recordings (`pixi run finetune-real`); export to SPLEAT's `weights_file` | Real data, supported layers, weights format |
 | Recording and labelling tool | `ros-record`, `build-real`, `finetune-real` written and tested on the simulator stream (`docs/recording.md`) | Try with real takes; it records the windows the adapter publishes, not raw events | Camera adapter |
 | Behavior node | Done; signs and the Pose requirement checked by hand on the real Go2 (21 Nov) | Run the node itself against the robot | Laptop on the Go2 network, or a build for the Kria |
+| Default reaction | `behavior` still defaults to `reaction: euler` (a lean) | For a dodge, run with `reaction:=move` or change the default: on the real Go2 a lean moved the trunk 0.6 cm, a 1 s sidestep about 22 cm | Team decision |
 | Simulated lean | Fitted to the real Go2: rolls 8° in place, 70 ms delay | Confirm the sideways shift with a ruler on video (the state estimator said 0.6 cm for a lean, 22 cm for a 1 s sidestep) | Robot |
 | Launch for the real setup | `camera.launch.py` (camera side) exists; behavior runs alone with `ros2 run reflex_ros behavior` | A `real.launch.py` once the camera adapter exists | - |
 | Network / DDS | Kria <-> PC works over CycloneDDS (19 Nov) | Kria, laptop and Go2 on the same network (Go2: `192.168.123.x` over Ethernet, CycloneDDS). RoboStack's CycloneDDS against the Go2 is unverified | Robot |
