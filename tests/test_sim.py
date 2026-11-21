@@ -73,8 +73,8 @@ def test_every_pose_is_stable(sim, pose):
 @pytest.mark.parametrize("pose,sign", [("lean_left", 1), ("lean_right", -1)])
 def test_lean_moves_the_trunk_to_the_named_side(sim, pose, sign):
     y, z, roll, _ = _hold(sim, pose)
-    assert sign * y > 0.02                 # +y is the dog's left
-    assert -12 < sign * roll < -5          # rolls ~8 deg towards that side, like the real Go2
+    assert abs(y) < 0.01                   # rolls in place: the real Go2's trunk moved < 1 cm
+    assert -12 < sign * roll < -5          # ~8 deg towards that side (+y is the dog's left)
     assert z > 0.25                        # while staying up
 
 

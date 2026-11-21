@@ -12,7 +12,7 @@ from launch.substitutions import LaunchConfiguration as LC
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue as PV
 
-ARGS = {"mode": "keeper", "reaction": "euler", "actuation_delay_ms": "50.0", "viewer": "true",
+ARGS = {"mode": "keeper", "reaction": "euler", "actuation_delay_ms": "70.0", "viewer": "true",
         "min_confidence": "0.6", "consecutive": "2", "locomotion": "none", "move_vy": "0.3", "hold_s": "0.6", "enabled": "true",
         "scene": "lab"}
 

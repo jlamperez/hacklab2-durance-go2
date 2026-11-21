@@ -28,7 +28,7 @@ camera -> [camera adapter] -> /reflex/events_window
 | Network | Trained on simulated events only | Fine-tune on real recordings (`pixi run finetune-real`); export to SPLEAT's `weights_file` | Real data, supported layers, weights format |
 | Recording and labelling tool | `ros-record`, `build-real`, `finetune-real` written and tested on the simulator stream (`docs/recording.md`) | Try with real takes; it records the windows the adapter publishes, not raw events | Camera adapter |
 | Behavior node | Done; signs and the Pose requirement checked by hand on the real Go2 (21 Nov) | Run the node itself against the robot | Laptop on the Go2 network, or a build for the Kria |
-| Simulated lean | Roll angle and timing fitted to the real Go2 (8°, 50 ms delay) | **Measure how far the real trunk moves sideways** in a lean (Pose + Euler) and in a sidestep, e.g. from `/sportmodestate` `position` or a ruler on video; the simulated lean shifts it about 4 cm | Robot |
+| Simulated lean | Fitted to the real Go2: rolls 8° in place, 70 ms delay | Confirm the sideways shift with a ruler on video (the state estimator said 0.6 cm for a lean, 22 cm for a 1 s sidestep) | Robot |
 | Launch for the real setup | `camera.launch.py` (camera side) exists; behavior runs alone with `ros2 run reflex_ros behavior` | A `real.launch.py` once the camera adapter exists | - |
 | Network / DDS | Kria <-> PC works over CycloneDDS (19 Nov) | Kria, laptop and Go2 on the same network (Go2: `192.168.123.x` over Ethernet, CycloneDDS). RoboStack's CycloneDDS against the Go2 is unverified | Robot |
 | Kria software | `docker/kria` image built and run on our own KV260 (Ubuntu, camera side, no PyTorch). Durance's image read: Yocto, ROS 2 Humble, Python 3.12, no Docker, no pixi, 788 MB free | Get our ROS packages onto Durance's image, or keep only the camera and SPLEAT on the board and run perception and behavior on the laptop | Booting the image; `unitree_api` and `colcon` are not on it |
@@ -46,7 +46,7 @@ camera -> [camera adapter] -> /reflex/events_window
 4. Record the idle dog (standing, nothing in front). Its balance control already produces
    events: this sets the simple detector's threshold and becomes training negatives.
 5. Measure command-to-motion delay and put it in `actuation_delay_ms` of the simulator.
-   **Done 21 Nov 2026**: see the table below; default now 50 ms.
+   **Done 21 Nov 2026**: see the table below; default now 70 ms.
 
 ## First session with the real Go2, 21 Nov 2026
 
@@ -92,11 +92,14 @@ the way back (`sport_api.requests_for_pose`).
 | Lean: Pose(true), Euler x=+0.3 | 70 ms | 180 ms | 270 ms | 0.14 rad (8°), not the 0.3 asked |
 | Sidestep: Move y=+0.3 for 1 s | ~50 ms | | | 3 cm at 0.3 s, 7 cm at 0.5 s, 20 cm at 1 s |
 
-The simulated lean (`POSES` in `reflex/sim/scene.py`) now bends the legs on that side so
-the trunk rolls 8° towards it, like the real one; it used to roll 12.5° away. With the
-default `actuation_delay_ms` of 50 ms it is 10/50/90 % done at 94/176/278 ms after the
-command (real: 107/180/273 ms). The simulated trunk also shifts about 4 cm sideways; how
-far the real one shifts was not measured.
+**A lean is not a dodge.** In the same recording the robot's own position estimate moved
+0.6 cm during the lean: the trunk rolls in place. The sidestep moved it about 22 cm. To get
+out of a ball's path the reaction has to be Move (`reaction:=move`).
+
+The simulated lean (`POSES` in `reflex/sim/scene.py`) now rolls 8.6° towards the named side
+with no sideways shift, like the real one; it used to shift 4 cm and roll 12.5° the other
+way. The default `actuation_delay_ms` is the measured 70 ms; the simulated lean is then
+10/50/90 % done at 82/134/310 ms after the command (real: 107/180/273 ms).
 
 `error_code` in `/sportmodestate` reads
 100 and `foot_force` reads zeros; meaning unknown.

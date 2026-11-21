@@ -95,7 +95,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 
 | Command | What it does |
 |---|---|
-| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple`, `max_shots:=12`, `actuation_delay_ms:=50.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
+| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple`, `max_shots:=12`, `actuation_delay_ms:=70.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
 | `pixi run -e ros ros-camera` | Camera side only: webcam as stand-in event camera + perception. `mirror:=true` |
 | `pixi run -e ros ros-robot-sim` | Robot side only: behavior + simulated dog in a 3D window |
 | `pixi run -e ros ros-drive` | Simulated dog driven by `/cmd_vel`, converted to the Go2's `Move` command |
@@ -245,8 +245,8 @@ windows, listens on `/api/sport/request`), perception and behavior. One run, 12 
 
 Twelve shots is a smoke test, not a benchmark. The two SNN false triggers are both balls
 crossing sideways. The actuation delay is the time the simulated dog waits before it
-starts moving. These runs used 300 ms, a guess; the default is now 50 ms, which with the
-simulated lean reproduces the lean measured on the real Go2 on 21 Nov (`docs/real-robot.md`).
+starts moving. These runs used 300 ms, a guess; the default is now 70 ms, measured on the real Go2
+on 21 Nov (`docs/real-robot.md`).
 From newest event to request on the wire: about 6-10 ms of simulated time, with the
 simulation running slower than real time, so this is not a latency claim.
 

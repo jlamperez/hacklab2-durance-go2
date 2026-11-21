@@ -19,7 +19,7 @@ from launch.substitutions import LaunchConfiguration as LC
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue as PV
 
-ARGS = {"actuation_delay_ms": "50.0", "viewer": "true", "timeout_s": "0.0", "camera": "false", "scene": "lab",
+ARGS = {"actuation_delay_ms": "70.0", "viewer": "true", "timeout_s": "0.0", "camera": "false", "scene": "lab",
         "detector": "snn", "model": "out/models/snn.pt", "device": "cpu"}
 
 
