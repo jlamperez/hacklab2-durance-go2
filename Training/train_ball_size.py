@@ -1,12 +1,13 @@
-"""Ball position and size at 320x320: ``train_motion_buddy_fast.py`` plus a radius head.
+"""Ball position at 320x320 with a spiking U-Net; the ball size is measured, not predicted.
 
-The benchmark has no size labels (only gt_x, gt_y, gt_t), so the radius label
-is estimated from the events. For each 1 ms window it is the radius around
-the label that holds RADIUS_FRACTION of the event pixels in excess of the
-local background, median-smoothed over neighbouring labels of the same
-recording. It measures the visible event blob (ball plus 1 ms of motion),
-not the physical ball. The crop scale is applied to it exactly as to the
-position, so zoomed-in crops get proportionally larger radius labels.
+The network predicts only the ball centre. The circle size drawn in the
+videos comes from the events: the radius around a point that holds
+RADIUS_FRACTION of the event pixels in excess of the local background,
+median-smoothed over neighbouring frames. It measures the visible event blob
+(ball plus 1 ms of motion), not the physical ball. On labeled data it is
+measured around the label (and scaled with the crop like the position) and
+used for both circles and for the "within 1 radius" metric; on unlabeled
+recordings it is measured around the prediction.
 
 Network: a small spiking U-Net. The encoder goes down to a 10x10 grid so a
 cell sees about 200 px (zoomed-in balls reach ~140 px across), the decoder
@@ -15,13 +16,12 @@ additive skips from the 20x20, 40x40 and 80x80 encoder layers keep the
 position precise. The head is read like this, all on the 80x80 grid:
 
 - channel 0: position heatmap; the peak cell is the coarse position;
-- RADIUS_BINS channels: votes for log-spaced radius bins;
 - 2 x OFFSET_BINS channels: votes for where the ball sits inside the cell,
-  along x and along y.
+  along x and along y, read at the peak cell.
 
-Radius and offsets are read at the peak cell. Only ops the RIVER exporter
-lowers are used: square ConvLIFs, upsample directly followed by a ConvLIF
-(UpConvLIF) and additions (extra incoming edges).
+Only ops the RIVER exporter lowers are used: square ConvLIFs, upsample
+directly followed by a ConvLIF (UpConvLIF) and additions (extra incoming
+edges).
 
 Crops, splits, data loading and video writing come from the fast script. The
 export writes ``ball_model.json`` and ``ball_parameters.{json,txt}``, with
@@ -49,7 +49,7 @@ from riverops.nn import (
     FixedPointFormat, NearestUpsample, QuantConfig, SpikingConvBN2d, prepare_qat,
 )
 
-ARCHITECTURE = "unet-v3"
+ARCHITECTURE = "unet-position-v1"
 CHECKPOINT = Path("ball_size_best.pt")
 SENSOR = fast.SENSOR
 HEAT = 80
@@ -61,24 +61,18 @@ OFFSET_WEIGHT = 1.0
 LOGIT_SCALE_RANGE = (1.0, 64.0)
 MIN_LEARNING_RATE = 1e-5
 SILENT_RATE = 0.001
-RADIUS_BINS = 8
-RADIUS_RANGE = (1.5, 64.0)
-RADIUS_CENTERS = np.geomspace(*RADIUS_RANGE, RADIUS_BINS)
-RADIUS_SIGMA = 0.75
-RADIUS_WEIGHT = 1.0
 RADIUS_SEARCH = 48
 RADIUS_FRACTION = 0.8
 RADIUS_MIN_EVENTS = 6.0
 RADIUS_SMOOTH = 4
 RADIUS_FALLBACK = 5.0
-RADIUS_CHANNELS = slice(1, 1 + RADIUS_BINS)
-X_OFFSET_CHANNELS = slice(RADIUS_CHANNELS.stop, RADIUS_CHANNELS.stop + OFFSET_BINS)
+X_OFFSET_CHANNELS = slice(1, 1 + OFFSET_BINS)
 Y_OFFSET_CHANNELS = slice(X_OFFSET_CHANNELS.stop, X_OFFSET_CHANNELS.stop + OFFSET_BINS)
 HEAD_CHANNELS = Y_OFFSET_CHANNELS.stop
 
 
 def window_radius(pixels, xy):
-    """Event-blob radius in source pixels around label ``xy``; NaN if too few events."""
+    """Event-blob radius around ``xy`` for (y, x) ``pixels``, in their units; NaN if too few."""
     if not len(pixels):
         return np.nan
     distance = np.hypot(pixels[:, 1] - xy[0], pixels[:, 0] - xy[1])
@@ -215,7 +209,7 @@ def _conv(in_channels, out_channels, kernel_size, stride=1, padding=None, first_
     )
 
 
-class SizeUNet(nn.Module):
+class BallUNet(nn.Module):
     """Spiking U-Net on [B, T, 1, 320, 320]; returns head spikes [B, T, HEAD_CHANNELS, 80, 80].
 
     Grid (cell size) and receptive field per stage:
@@ -256,19 +250,19 @@ class SizeUNet(nn.Module):
         return self.head(m3)
 
 
-class SizedBallDetector(nn.Module):
-    """``SizeUNet`` plus the off-chip readout: spike count over time and logit scales.
+class BallDetector(nn.Module):
+    """``BallUNet`` plus the off-chip readout: spike count over time and logit scales.
 
     ``log_logit_scales`` holds one learnable scale per head group (heatmap,
-    offsets, radius) that turns spike rates into logits. It is used only in the
-    loss and the off-chip decoding, so it is not part of the exported network.
+    offsets) that turns spike rates into logits. It is used only in the loss
+    and the off-chip decoding, so it is not part of the exported network.
     """
 
     def __init__(self):
         super().__init__()
-        self.body = SizeUNet()
+        self.body = BallUNet()
         self.log_logit_scales = nn.Parameter(
-            torch.full((3,), float(np.log(fast.LOGIT_SCALE)))
+            torch.full((2,), float(np.log(fast.LOGIT_SCALE)))
         )
 
     def forward(self, x):
@@ -276,7 +270,7 @@ class SizedBallDetector(nn.Module):
         return self.body(x).sum(dim=1)
 
     def logit_scales(self):
-        """(heatmap, offset, radius) scales, kept within LOGIT_SCALE_RANGE."""
+        """(heatmap, offset) scales, kept within LOGIT_SCALE_RANGE."""
         low, high = np.log(LOGIT_SCALE_RANGE)
         return self.log_logit_scales.clamp(low, high).exp()
 
@@ -317,10 +311,6 @@ def export_model(model, example_frames, device):
     print("Saved parameters to: ball_parameters.json and ball_parameters.txt")
 
 
-def _log_centers(device):
-    return torch.log(torch.as_tensor(RADIUS_CENTERS, dtype=torch.float32, device=device))
-
-
 def _offset_centers(device):
     """Centre of each offset bin, in pixels from the cell's top-left corner."""
     width = STRIDE / OFFSET_BINS
@@ -354,12 +344,13 @@ def heatmap_targets(positions):
 
 
 def compute_loss(counts, targets, time_steps, scales):
-    """Heatmap cross-entropy, plus offset and radius cross-entropy at the true cell.
+    """Heatmap cross-entropy plus in-cell offset cross-entropy at the true cell.
 
-    ``scales`` are the (heatmap, offset, radius) logit scales.
+    ``scales`` are the (heatmap, offset) logit scales; ``targets[:, 2]`` (the
+    measured radius) is not used here.
     """
-    positions, radii = targets[:, :2], targets[:, 2]
-    heat_scale, offset_scale, radius_scale = scales
+    positions = targets[:, :2]
+    heat_scale, offset_scale = scales
     heat_logits = counts[:, 0].flatten(1) * (heat_scale / time_steps)
     loss = _soft_cross_entropy(heat_logits, heatmap_targets(positions)).mean()
 
@@ -373,24 +364,16 @@ def compute_loss(counts, targets, time_steps, scales):
         target = _bin_targets(offset / bin_width - 0.5, OFFSET_BINS, OFFSET_SIGMA)
         logits = cell_logits(counts, channels, rows, cols, time_steps, offset_scale)
         loss = loss + OFFSET_WEIGHT * _soft_cross_entropy(logits, target).mean() / 2
-
-    log_centers = _log_centers(counts.device)
-    log_radius = radii.clamp(min=1e-3).log().clamp(log_centers[0], log_centers[-1])
-    step = float(np.log(RADIUS_CENTERS[1] / RADIUS_CENTERS[0]))
-    target = _bin_targets((log_radius - log_centers[0]) / step, RADIUS_BINS, RADIUS_SIGMA)
-    logits = cell_logits(counts, RADIUS_CHANNELS, rows, cols, time_steps, radius_scale)
-    radius_loss = _soft_cross_entropy(logits, target)
-    known = (radii > 0).to(radius_loss.dtype)
-    return loss + RADIUS_WEIGHT * (radius_loss * known).sum() / known.sum().clamp(min=1.0)
+    return loss
 
 
 def decode(counts, time_steps, scales):
-    """(x, y, radius) in sensor pixels per sample.
+    """(x, y) in sensor pixels per sample.
 
-    Peak cell of the heatmap, plus the expected in-cell offset along x and y,
-    plus the expected log-radius, all read at that cell.
+    Peak cell of the heatmap, plus the expected in-cell offset along x and y
+    read at that cell.
     """
-    _, offset_scale, radius_scale = scales
+    _, offset_scale = scales
     index = counts[:, 0].flatten(1).argmax(dim=1)
     rows, cols = index // HEAT, index % HEAT
     offsets = _offset_centers(counts.device)
@@ -402,66 +385,43 @@ def decode(counts, time_steps, scales):
     ).softmax(dim=1)
     x = cols * STRIDE + (x_probs * offsets).sum(dim=1)
     y = rows * STRIDE + (y_probs * offsets).sum(dim=1)
-    r_probs = cell_logits(
-        counts, RADIUS_CHANNELS, rows, cols, time_steps, radius_scale,
-    ).softmax(dim=1)
-    radius = torch.exp((r_probs * _log_centers(counts.device)).sum(dim=1))
-    return torch.stack((x, y, radius), dim=1)
+    return torch.stack((x, y), dim=1)
 
 
-def summarize(loss_sum, total, errors, predicted_radii, true_radii):
-    """Epoch metrics from per-sample position errors and radii (sensor pixels)."""
+def summarize(loss_sum, total, errors, radii):
+    """Epoch metrics from per-sample position errors and measured radii (sensor pixels)."""
     errors = torch.cat(errors)
-    predicted_radii = torch.cat(predicted_radii)
-    true_radii = torch.cat(true_radii)
-    known = true_radii > 0
-    metrics = {
+    radii = torch.cat(radii)
+    known = radii > 0
+    return {
         "loss": loss_sum.item() / total,
         "mean": errors.mean().item(),
         "median": errors.median().item(),
         "within_8px": (errors <= 8.0).float().mean().item(),
-        "within_radius": float("nan"),
-        "radius": float("nan"),
-        "radius_median": float("nan"),
-        "radius_factor": float("nan"),
+        "within_radius": (
+            (errors[known] <= radii[known]).float().mean().item() if known.any()
+            else float("nan")
+        ),
     }
-    if known.any():
-        pred, true = predicted_radii[known], true_radii[known]
-        relative = (pred - true).abs() / true
-        metrics.update({
-            "within_radius": (errors[known] <= true).float().mean().item(),
-            "radius": relative.mean().item(),
-            "radius_median": relative.median().item(),
-            "radius_factor": (pred / true).log().abs().mean().exp().item(),
-        })
-    return metrics
 
 
 def describe(metrics):
     return (
         f"loss {metrics['loss']:.3f} | error mean {metrics['mean']:.1f} px, "
         f"median {metrics['median']:.1f} px, {metrics['within_8px']:.0%} within 8 px, "
-        f"{metrics['within_radius']:.0%} within 1 radius | radius {metrics['radius']:.0%} "
-        f"(median {metrics['radius_median']:.0%}, typically x{metrics['radius_factor']:.2f} off)"
+        f"{metrics['within_radius']:.0%} within 1 radius"
     )
 
 
 def baselines(dataset):
-    """Metrics of trivial predictors on ``dataset``, to read the real ones against.
-
-    Position: always the frame centre. Radius: what a silent head decodes to
-    (uniform bins, the geometric mean of RADIUS_CENTERS).
-    """
+    """Always predicting the frame centre, to read the real metrics against."""
     targets = torch.stack([dataset[i][1] for i in range(len(dataset))])
     center = torch.full_like(targets[:, :2], SENSOR / 2)
     errors = torch.linalg.vector_norm(center - targets[:, :2], dim=1)
     known = targets[:, 2] > 0
-    silent_radius = float(np.exp(np.log(RADIUS_CENTERS).mean()))
-    relative = (silent_radius - targets[known, 2]).abs() / targets[known, 2]
     return (
         f"always centre -> median {errors.median().item():.1f} px; "
-        f"silent radius head (r = {silent_radius:.1f} px) -> radius {relative.mean().item():.0%}; "
-        f"label radius median {targets[known, 2].median().item():.1f} px"
+        f"measured radius median {targets[known, 2].median().item():.1f} px"
     )
 
 
@@ -469,7 +429,7 @@ def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
     training = optimizer is not None
     model.train(training)
     loss_sum = torch.zeros((), device=device)
-    errors, predicted_radii, true_radii = [], [], []
+    errors, radii = [], []
     total = 0
     batch_count = len(loader)
     with torch.set_grad_enabled(training):
@@ -492,11 +452,10 @@ def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
                         parameter.clamp_(-1.0, 1.0)
             decoded = decode(counts.detach(), time_steps, scales.detach())
             loss_sum += loss.detach() * len(targets)
-            errors.append(torch.linalg.vector_norm(decoded[:, :2] - targets[:, :2], dim=1))
-            predicted_radii.append(decoded[:, 2])
-            true_radii.append(targets[:, 2])
+            errors.append(torch.linalg.vector_norm(decoded - targets[:, :2], dim=1))
+            radii.append(targets[:, 2])
             total += len(targets)
-    return summarize(loss_sum, total, errors, predicted_radii, true_radii)
+    return summarize(loss_sum, total, errors, radii)
 
 
 def firing_rates(model, loader, device, time_steps, batches=2):
@@ -528,7 +487,7 @@ def describe_rates(rates):
 
 
 def infer(model, dataset, device, batch_size, time_steps):
-    """Predicted (x, y, radius) in sensor pixels, shape (N, 3), in dataset order."""
+    """Predicted (x, y) in sensor pixels, shape (N, 2), in dataset order."""
     predicted = []
     model.eval()
     with torch.no_grad():
@@ -537,7 +496,7 @@ def infer(model, dataset, device, batch_size, time_steps):
             frames = fast.to_frames(flat, len(targets), device, time_steps)
             predicted.append(decode(model(frames), time_steps, scales).cpu().numpy())
     if not predicted:
-        return np.zeros((0, 3), dtype=np.float32)
+        return np.zeros((0, 2), dtype=np.float32)
     return np.concatenate(predicted, axis=0)
 
 
@@ -564,7 +523,7 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
         [fast.dense_sample(validation_dataset, 0, time_steps)], Path("ball_size_sample.png"),
     )
 
-    model = SizedBallDetector().to(device)
+    model = BallDetector().to(device)
     model.eval()
     with torch.no_grad():
         counts = model(example_frames.unsqueeze(0).to(device))
@@ -608,7 +567,6 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
                 "time_steps": time_steps,
                 "heatmap_stride": STRIDE,
                 "offset_bins": OFFSET_BINS,
-                "radius_centers": RADIUS_CENTERS.tolist(),
                 "architecture": ARCHITECTURE,
             }, CHECKPOINT)
         scales = model.logit_scales().tolist()
@@ -619,7 +577,7 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
         )
         print(
             f"Epoch {epoch}/{epochs} | Logit scales: heatmap {scales[0]:.1f}, "
-            f"offset {scales[1]:.1f}, radius {scales[2]:.1f} | "
+            f"offset {scales[1]:.1f} | "
             + describe_rates(firing_rates(model, validation_loader, device, time_steps)),
             flush=True,
         )
@@ -648,7 +606,7 @@ def load_model(checkpoint_path, device):
         raise ValueError(
             f"{checkpoint_path} is not a {SENSOR}x{SENSOR} {ARCHITECTURE} checkpoint; retrain."
         )
-    model = SizedBallDetector().to(device)
+    model = BallDetector().to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     time_steps = int(checkpoint["time_steps"])
     print("Time steps:", time_steps)
@@ -667,37 +625,60 @@ def export_checkpoint(checkpoint_path):
     export_model(model, torch.zeros(time_steps, 1, SENSOR, SENSOR), device)
 
 
+def measured_radii(dataset, predicted):
+    """Circle radius per frame, in sensor pixels, measured from the events.
+
+    Labeled: the label radius (measured around the label, scaled with the
+    crop). Unlabeled: measured around the prediction in each frame, then
+    median-smoothed over neighbouring frames like the labels.
+    """
+    if dataset.labeled:
+        return np.array([float(dataset[i][1][2]) for i in range(len(dataset))])
+    raw = []
+    for index in range(len(dataset)):
+        flat = dataset[index][0].numpy()
+        pixels = np.stack((flat // SENSOR, flat % SENSOR), axis=1)
+        raw.append(window_radius(pixels, predicted[index]))
+    return smooth_radii(np.array(raw, dtype=np.float64), [len(raw)])
+
+
 def write_video(model, device, dataset, name, output_path, fps, batch_size, time_steps):
-    """Render every window with its predicted (and, if labeled, true) position and size."""
+    """Render every window with its predicted (and, if labeled, true) position.
+
+    Both circles are drawn with the radius measured from the events.
+    """
     predicted = infer(model, dataset, device, batch_size, time_steps)
+    radii = measured_radii(dataset, predicted)
     writer = fast.VideoWriter(output_path, fps, SENSOR * fast.DISPLAY_SCALE)
-    errors, radius_errors = [], []
+    errors, hits = [], []
     try:
         for index in range(len(dataset)):
             flat, target = dataset[index]
-            px, py, pr = (float(v) for v in predicted[index])
-            caption = f"{name}  {index + 1}/{len(dataset)}  pred ({px:.0f}, {py:.0f}) r {pr:.1f}"
-            truth, truth_radius = None, 6.0
+            px, py = (float(v) for v in predicted[index])
+            radius = float(radii[index])
+            caption = (
+                f"{name}  {index + 1}/{len(dataset)}  pred ({px:.0f}, {py:.0f})  r {radius:.1f}"
+            )
+            truth = None
             if dataset.labeled:
-                tx, ty, tr = target.tolist()
+                tx, ty = target[0].item(), target[1].item()
                 truth = (tx, ty)
                 error = float(np.hypot(px - tx, py - ty))
                 errors.append(error)
-                caption += f"  gt ({tx:.0f}, {ty:.0f}) r {tr:.1f}  err {error:.1f}"
-                if tr > 0:
-                    truth_radius = tr
-                    radius_errors.append(abs(pr - tr) / tr)
+                hits.append(error <= radius)
+                caption += f"  gt ({tx:.0f}, {ty:.0f})  err {error:.1f}"
             writer.write(fast.render_frame(
                 flat, (px, py), truth, caption,
-                prediction_radius=pr, truth_radius=truth_radius,
+                prediction_radius=radius, truth_radius=radius,
             ))
     finally:
         writer.close()
     print(f"Wrote {writer.frames} frames to {Path(output_path).resolve()}")
     if errors:
-        print(f"Mean error: {float(np.mean(errors)):.2f} px (sensor pixels)")
-    if radius_errors:
-        print(f"Mean radius error: {float(np.mean(radius_errors)):.0%}")
+        print(
+            f"Mean error: {float(np.mean(errors)):.2f} px, median {float(np.median(errors)):.2f} px, "
+            f"{float(np.mean(hits)):.0%} within 1 radius (sensor pixels)"
+        )
 
 
 def visualize_test(checkpoint_path, output_path, fps, batch_size):
@@ -734,7 +715,7 @@ def predict_recording(recording, checkpoint_path, output_path, fps, batch_size,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Spiking ball detector with size, 320x320.")
+    parser = argparse.ArgumentParser(description="Spiking U-Net ball detector, 320x320.")
     parser.add_argument("--batch-size", type=int, default=fast.BATCH_SIZE)
     subparsers = parser.add_subparsers(dest="command")
     train_parser = subparsers.add_parser("train", help="train on the benchmark and export")
