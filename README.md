@@ -102,6 +102,8 @@ shows what to do for each take, and saves labelled takes as HDF5 in `data/river_
 Runs as Python modules from the repo root, in an environment with `river-tools` and `h5py`
 (not pixi; setup in `docs/recording-real-data.md`).
 
+![The guided recorder during a take](docs/img/capture_record_recording.png)
+
 | Command | What it does |
 |---|---|
 | `python -m capture.record --session NAME --plan cross` | Guided recording. SPACE start / end, M mark, B redo, N skip, Q quit. Plans: `follow`, `cross`, `center`; the same session name resumes |

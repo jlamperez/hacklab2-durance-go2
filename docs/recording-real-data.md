@@ -80,6 +80,11 @@ commands run from the repo root. The tools live in `capture/` and run as modules
    | B | delete the last saved take and record it again |
    | Q | quit (closing the window also stops the camera on the board) |
 
+   ![The guided recorder: take label, instruction, live events, status](img/capture_record_recording.png)
+
+   *The recorder during a take (screenshot made by feeding a recorded take in as the live
+   stream). Before SPACE the status line reads "Ready - SPACE when the action starts" in green.*
+
    Each take keeps 1 s before the first SPACE and 0.5 s after the second, so the start and end
    of the action are not clipped. Every key press is logged to the console.
 4. **Check** the takes right after (see "Replay" below).
@@ -124,6 +129,8 @@ $PY -m capture.replay data\river_samples\sat_follow2            # a session, in 
 $PY -m capture.replay data\river_samples\sat_follow2\take_045_drone.h5 --loop
 $PY -m capture.replay data\durance_dataset\03 --loop            # Durance's gesture dataset
 ```
+
+![Replay: events, label, and the timeline with start (green) and end (red) mark](img/capture_replay.png)
 
 Shows the events, the label and instruction, and a timeline with the event rate, the
 labelled stretch (green start, red end) and the M marks; click the timeline to jump. Keys:
