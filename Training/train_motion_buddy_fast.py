@@ -21,13 +21,16 @@ Checkpoints are not interchangeable with the original. The export still writes
 
     python train_motion_buddy_fast.py
     python train_motion_buddy_fast.py visualize
+    python train_motion_buddy_fast.py predict path/to/recording.hdf5
 """
 
 import argparse
 from pathlib import Path
 
+import h5py
 import numpy as np
 import torch
+from PIL import Image, ImageDraw
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -285,57 +288,140 @@ def train(batch_size, epochs, time_steps):
     base.export_model(model, example_frames, device)
 
 
-def visualize_test(checkpoint_path, output_path, fps, batch_size):
-    """Run the checkpoint on hand-labeled takes 7 and 8 and write an mp4."""
+def load_model(checkpoint_path, device):
     if not Path(checkpoint_path).is_file():
         raise FileNotFoundError(
             f"No checkpoint at {checkpoint_path}. Train first with: "
             "python train_motion_buddy_fast.py"
         )
-    device = base.pick_device()
-    print("Device:", device, flush=True)
-    dataset_dir = base.ensure_dataset()
     model = HeatmapBallDetector().to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
     time_steps = int(checkpoint["time_steps"])
     print("Time steps:", time_steps)
+    return model, time_steps
 
+
+def recording_windows(path, step_us, use_labels=True):
+    """Return (events, offsets, xy) for one HDF5 file.
+
+    With ``gt_x/gt_y/gt_t`` (and ``use_labels``) there is one window per label,
+    as in training. Otherwise there is one ACC_TIME window every ``step_us``
+    and ``xy`` is None. Events need ``event_x/event_y/event_t`` with t in µs.
+    """
+    with h5py.File(path, "r") as handle:
+        keys = set(handle.keys())
+        missing = {"event_x", "event_y", "event_t"} - keys
+        if missing:
+            raise KeyError(f"{path} has no {', '.join(sorted(missing))}")
+        if use_labels and {"gt_x", "gt_y", "gt_t"} <= keys:
+            return base.recording_to_samples(path)
+        ev_x = base._column(handle, "event_x").astype(np.float64)
+        ev_y = base._column(handle, "event_y").astype(np.float64)
+        ev_t = base._column(handle, "event_t").astype(np.float64)
+    if ev_t.size == 0:
+        raise ValueError(f"{path} has no events")
+    order = np.argsort(ev_t, kind="mergesort")
+    ev_x, ev_y, ev_t = ev_x[order], ev_y[order], ev_t[order]
+    times = np.arange(ev_t[0] + base.ACC_TIME, ev_t[-1] + step_us, step_us)
+    starts = np.searchsorted(ev_t, times - base.ACC_TIME, side="left")
+    ends = np.searchsorted(ev_t, times, side="right")
+    pixels = [base._window_pixels(ev_x[s:e], ev_y[s:e]) for s, e in zip(starts, ends)]
+    offsets = np.zeros(len(pixels) + 1, dtype=np.int64)
+    offsets[1:] = np.cumsum([len(window) for window in pixels])
+    events = np.concatenate(pixels, axis=0) if offsets[-1] else np.zeros((0, 2), np.uint16)
+    return events, offsets, None
+
+
+def render_prediction(events, prediction, caption):
+    """Event frame with only the red prediction ring, for unlabeled files."""
+    image = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+    if len(events):
+        image[events[:, 0], events[:, 1]] = 210
+    picture = Image.fromarray(image)
+    draw = ImageDraw.Draw(picture)
+    x, y, radius = float(prediction[0]), float(prediction[1]), 12
+    draw.ellipse((x - radius, y - radius, x + radius, y + radius),
+                 outline=(240, 60, 60), width=3)
+    draw.rectangle((0, 0, WIDTH, 28), fill=(0, 0, 0))
+    draw.text((8, 6), caption, fill=(255, 255, 255))
+    draw.text((8, HEIGHT - 22), "red prediction", fill=(255, 255, 255))
+    return np.asarray(picture)
+
+
+def write_predictions(model, device, writer, path, batch_size, time_steps,
+                      step_us, use_labels=True):
+    """Append one video frame per window of ``path``; return per-frame errors."""
+    print("Predicting", path.name, flush=True)
+    events, offsets, xy = recording_windows(path, step_us, use_labels)
+    count = len(offsets) - 1
+    positions = xy if xy is not None else np.zeros((count, 2), dtype=np.float32)
+    predicted = infer_positions(
+        model, SparseBallDataset(events, offsets, positions), device, batch_size,
+        time_steps,
+    )
+    errors = []
+    for index in range(count):
+        window = events[offsets[index]:offsets[index + 1]]
+        caption = (
+            f"{path.name}  {index + 1}/{count}  "
+            f"pred ({predicted[index, 0]:.0f}, {predicted[index, 1]:.0f})"
+        )
+        if xy is None:
+            writer.write(render_prediction(window, predicted[index], caption))
+            continue
+        error = float(np.linalg.norm(predicted[index] - xy[index]))
+        errors.append(error)
+        caption += (
+            f"  gt ({xy[index, 0]:.0f}, {xy[index, 1]:.0f})  error {error:.1f} px"
+        )
+        writer.write(base.render_detection(window, predicted[index], xy[index], caption))
+    return errors
+
+
+def _write_video(model, device, paths, output_path, fps, batch_size, time_steps,
+                 step_us, use_labels=True):
+    writer = base.VideoWriter(output_path, fps)
+    errors = []
+    try:
+        for path in paths:
+            errors += write_predictions(
+                model, device, writer, path, batch_size, time_steps, step_us, use_labels,
+            )
+    finally:
+        writer.close()
+    print(f"Wrote {writer.frames} frames to {Path(output_path).resolve()}")
+    if errors:
+        print(f"Mean error: {float(np.mean(errors)):.2f} px")
+
+
+def visualize_test(checkpoint_path, output_path, fps, batch_size):
+    """Run the checkpoint on hand-labeled takes 7 and 8 and write an mp4."""
+    device = base.pick_device()
+    print("Device:", device, flush=True)
+    dataset_dir = base.ensure_dataset()
+    model, time_steps = load_model(checkpoint_path, device)
     test_paths = [
         path for path in base._recordings(dataset_dir / "hand_labeled")
         if base._hand_labeled_bucket(path) == "test"
     ]
     if not test_paths:
         raise FileNotFoundError("No hand-labeled test recordings (takes 7 and 8).")
+    _write_video(model, device, test_paths, output_path, fps, batch_size, time_steps,
+                 step_us=base.ACC_TIME)
 
-    writer = base.VideoWriter(output_path, fps)
-    errors = []
-    try:
-        for path in test_paths:
-            print("Visualizing", path.name, flush=True)
-            events, offsets, xy = base.recording_to_samples(path)
-            predicted = infer_positions(
-                model, SparseBallDataset(events, offsets, xy), device, batch_size,
-                time_steps,
-            )
-            for index in range(len(xy)):
-                start, end = int(offsets[index]), int(offsets[index + 1])
-                error = float(np.linalg.norm(predicted[index] - xy[index]))
-                errors.append(error)
-                caption = (
-                    f"{path.name}  {index + 1}/{len(xy)}  "
-                    f"pred ({predicted[index, 0]:.0f}, {predicted[index, 1]:.0f})  "
-                    f"gt ({xy[index, 0]:.0f}, {xy[index, 1]:.0f})  "
-                    f"error {error:.1f} px"
-                )
-                writer.write(base.render_detection(
-                    events[start:end], predicted[index], xy[index], caption,
-                ))
-    finally:
-        writer.close()
-    print(f"Wrote {writer.frames} frames to {output_path.resolve()}")
-    if errors:
-        print(f"Test error: {float(np.mean(errors)):.2f} px")
+
+def predict_recording(recording, checkpoint_path, output_path, fps, batch_size,
+                      step_ms, use_labels):
+    """Run the checkpoint on any HDF5 event file and write an mp4."""
+    if not recording.is_file():
+        raise FileNotFoundError(f"No recording at {recording}")
+    device = base.pick_device()
+    print("Device:", device, flush=True)
+    model, time_steps = load_model(checkpoint_path, device)
+    output_path = output_path or Path(f"{recording.stem}_pred.mp4")
+    _write_video(model, device, [recording], output_path, fps, batch_size, time_steps,
+                 step_us=step_ms * 1000.0, use_labels=use_labels)
 
 
 def main():
@@ -349,9 +435,26 @@ def main():
     view.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
     view.add_argument("--output", type=Path, default=Path("ball_heatmap_test.mp4"))
     view.add_argument("--fps", type=int, default=15)
+    predict = subparsers.add_parser(
+        "predict", help="write a prediction video for any HDF5 event file",
+    )
+    predict.add_argument("recording", type=Path)
+    predict.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
+    predict.add_argument("--output", type=Path, default=None,
+                         help="default: <recording name>_pred.mp4 in the current folder")
+    predict.add_argument("--fps", type=int, default=30)
+    predict.add_argument("--step-ms", type=float, default=5.0,
+                         help="window spacing for files without labels")
+    predict.add_argument("--no-labels", action="store_true",
+                         help="ignore gt_* and use evenly spaced windows")
     args = parser.parse_args()
     if args.command == "visualize":
         visualize_test(args.checkpoint, args.output, args.fps, args.batch_size)
+    elif args.command == "predict":
+        predict_recording(
+            args.recording, args.checkpoint, args.output, args.fps, args.batch_size,
+            args.step_ms, not args.no_labels,
+        )
     else:
         train(
             args.batch_size,
