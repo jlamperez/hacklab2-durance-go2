@@ -62,6 +62,7 @@ to Unitree's header. Commands used or likely to be used:
 | `RecoveryStand` | 1006 | Get up after a fall |
 | `Euler` | 1007 | Lean the trunk (roll, pitch, yaw) |
 | `Move` | 1008 | Walk (vx, vy, vyaw) |
+| `Pose` | 1028 | Posture mode on/off; Euler only acts with it on (real Go2, 21 Nov) |
 | `Hello` | 1016 | Wave |
 
 ### Tricks

@@ -5,8 +5,9 @@ from reflex.runtime.sim_sport import pose_for_request
 def test_move_and_euler_lean_to_the_commanded_side():
     assert pose_for_request(api.MOVE.api_id, api.move_params(0, 0.3, 0)) == "lean_left"
     assert pose_for_request(api.MOVE.api_id, api.move_params(0, -0.3, 0)) == "lean_right"
-    assert pose_for_request(api.EULER.api_id, api.euler_params(0.3, 0, 0)) == "lean_left"
-    assert pose_for_request(api.EULER.api_id, api.euler_params(-0.3, 0, 0)) == "lean_right"
+    # Right-hand rule about +x: positive roll lowers the right side (checked on the real Go2).
+    assert pose_for_request(api.EULER.api_id, api.euler_params(0.3, 0, 0)) == "lean_right"
+    assert pose_for_request(api.EULER.api_id, api.euler_params(-0.3, 0, 0)) == "lean_left"
 
 
 def test_zero_commands_and_stop_return_to_stand():

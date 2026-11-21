@@ -91,20 +91,8 @@ class BehaviorNode(Node):
         self.get_logger().info(f"{action.label} -> {action.name}")
 
     def requests_for(self, pose: str) -> list:
-        """Sport-mode requests that realize a pose. Signs follow the dog frame: +y is left."""
-        side = {"lean_left": 1.0, "lean_right": -1.0}.get(pose)
-        if side is not None:
-            if self.reaction == "move":
-                return [(sport_api.MOVE, sport_api.move_params(0.0, side * self.vy, 0.0))]
-            return [(sport_api.EULER, sport_api.euler_params(side * self.roll, 0.0, 0.0))]
-        if pose == "crouch":
-            return [(sport_api.STAND_DOWN, "")]
-        # Back to standing: undo whatever the last reaction was.
-        if self._last_pose == "crouch":
-            return [(sport_api.STAND_UP, ""), (sport_api.BALANCE_STAND, "")]
-        if self.reaction == "move":
-            return [(sport_api.STOP_MOVE, "")]
-        return [(sport_api.EULER, sport_api.euler_params(0.0, 0.0, 0.0))]
+        """Sport-mode requests that realize a pose (logic in sport_api.requests_for_pose)."""
+        return sport_api.requests_for_pose(pose, self._last_pose, self.reaction, self.roll, self.vy)
 
     def send(self, cmd, param: str = "") -> None:
         self._last_request = f"{cmd.name} {param}".strip()
