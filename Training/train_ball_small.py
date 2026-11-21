@@ -1,11 +1,13 @@
 """Smaller ball detector: the spiking U-Net of train_ball_size.py with fewer channels.
 
-Same topology, strides, skips, head, loss, data and readout as train_ball_size.py,
-so the receptive field (~300 px) and the RIVER-lowerable ops are unchanged. Only the
-channel widths shrink, from (16, 32, 64, 64) to WIDTHS per resolution level
-(80x80, 40x40, 20x20, 10x10): about 5x fewer weights and 4x fewer synaptic
-operations. Everything is written under its own names (ball_small_*), so the
-full-size model's checkpoint and export files are left alone::
+The network takes the 320x320 sensor frame and downsamples it itself: enc1 is
+a learned 8x8 stride-4 ConvLIF (320x320 -> 80x80), so nothing has to be done
+to the events outside the network. The rest of the topology, strides, skips,
+head, loss, data and readout are those of train_ball_size.py, so the receptive
+field stays ~300 sensor px and only RIVER-lowerable ops are used. Channel
+widths shrink from (16, 32, 64, 64) to WIDTHS per resolution level (80x80,
+40x40, 20x20, 10x10). Everything is written under its own names (ball_small_*),
+so the full-size model's checkpoint and export files are left alone::
 
     python train_ball_small.py
     python train_ball_small.py train --no-ball data/no_ball
@@ -27,8 +29,9 @@ WIDTHS = (8, 16, 24, 32)
 class SmallBallUNet(nn.Module):
     """``train_ball_size.BallUNet`` with channels WIDTHS at 80x80, 40x40, 20x20 and 10x10.
 
-    Decoder outputs match the encoder widths at the same grid so the additive
-    skips line up. Modules are registered in forward order, which is the export order.
+    enc1 does the 4x downsampling from the 320x320 input. Decoder outputs match
+    the encoder widths at the same grid so the additive skips line up. Modules
+    are registered in forward order, which is the export order.
     """
 
     def __init__(self, widths=WIDTHS):
