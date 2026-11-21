@@ -62,6 +62,10 @@ from riverops.nn import (
 
 ARCHITECTURE = "unet-position-v2"
 CHECKPOINT = Path("ball_size_best.pt")
+EXPORT_PREFIX = "ball"
+SAMPLE_FIGURE = Path("ball_size_sample.png")
+TEST_VIDEO = Path("ball_size_test.mp4")
+PREDICT_SUFFIX = "_size_pred.mp4"
 SENSOR = fast.SENSOR
 HEAT = 80
 STRIDE = SENSOR // HEAT
@@ -373,11 +377,11 @@ class BallDetector(nn.Module):
 
 
 def export_model(model, example_frames, device):
-    """Write ball_model.json and ball_parameters.{json,txt} for the U-Net."""
+    """Write <EXPORT_PREFIX>_model.json and _parameters.{json,txt} for the U-Net."""
     model.eval()
     model_json = export_for_river(model.body, example_frames.unsqueeze(0).to(device))
-    Path("ball_model.json").write_text(model_json)
-    print("Saved architecture to: ball_model.json")
+    Path(f"{EXPORT_PREFIX}_model.json").write_text(model_json)
+    print(f"Saved architecture to: {EXPORT_PREFIX}_model.json")
 
     quant_config = QuantConfig(
         weight_format=FixedPointFormat(total_bits=8, frac_bits=7),
@@ -400,12 +404,12 @@ def export_model(model, example_frames, device):
     print("Parameter order:", ", ".join(f"{i}={name}" for i, (name, _) in enumerate(layers)))
 
     parameters = {**weights, **biases, **neurons}
-    Path("ball_parameters.json").write_text(json.dumps(parameters, indent=2) + "\n")
+    Path(f"{EXPORT_PREFIX}_parameters.json").write_text(json.dumps(parameters, indent=2) + "\n")
     values = []
     for value in parameters.values():
         values.extend(value if isinstance(value, list) else [value])
-    Path("ball_parameters.txt").write_text("\n".join(map(str, values)))
-    print("Saved parameters to: ball_parameters.json and ball_parameters.txt")
+    Path(f"{EXPORT_PREFIX}_parameters.txt").write_text("\n".join(map(str, values)))
+    print(f"Saved parameters to: {EXPORT_PREFIX}_parameters.json and {EXPORT_PREFIX}_parameters.txt")
 
     heat_scale, offset_scale = model.logit_scales().tolist()
     readout = {
@@ -425,8 +429,8 @@ def export_model(model, example_frames, device):
         "logits": "spike count / time_steps * scale",
         "p_ball": "sigmoid(logsumexp(heatmap logits) - no_ball_logit)",
     }
-    Path("ball_readout.json").write_text(json.dumps(readout, indent=2) + "\n")
-    print("Saved off-chip readout constants to: ball_readout.json")
+    Path(f"{EXPORT_PREFIX}_readout.json").write_text(json.dumps(readout, indent=2) + "\n")
+    print(f"Saved off-chip readout constants to: {EXPORT_PREFIX}_readout.json")
 
 
 def _offset_centers(device):
@@ -705,7 +709,7 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
     print("Baselines on validation ball frames:", baselines(validation_ball), flush=True)
 
     example_frames = base.save_sample_figure(
-        [fast.dense_sample(validation_ball, 0, time_steps)], Path("ball_size_sample.png"),
+        [fast.dense_sample(validation_ball, 0, time_steps)], SAMPLE_FIGURE,
     )
 
     model = BallDetector().to(device)
@@ -906,7 +910,7 @@ def predict_recording(recording, checkpoint_path, output_path, fps, batch_size,
         windows.events, windows.offsets, windows.positions if windows.labeled else None,
         radii, windows.crop, noise_seed=0,
     )
-    output_path = output_path or Path(f"{recording.stem}_size_pred.mp4")
+    output_path = output_path or Path(f"{recording.stem}{PREDICT_SUFFIX}")
     write_video(model, device, dataset, recording.name, output_path, fps,
                 batch_size, time_steps)
 
@@ -937,7 +941,7 @@ def main():
     export.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
     view = subparsers.add_parser("visualize", help="write a test-set video")
     view.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
-    view.add_argument("--output", type=Path, default=Path("ball_size_test.mp4"))
+    view.add_argument("--output", type=Path, default=TEST_VIDEO)
     view.add_argument("--fps", type=int, default=15)
     predict = subparsers.add_parser(
         "predict", help="write a prediction video for an HDF5 event file",
@@ -945,7 +949,7 @@ def main():
     predict.add_argument("recording", type=Path)
     predict.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
     predict.add_argument("--output", type=Path, default=None,
-                         help="default: <recording name>_size_pred.mp4 in the current folder")
+                         help=f"default: <recording name>{PREDICT_SUFFIX} in the current folder")
     predict.add_argument("--fps", type=int, default=30)
     predict.add_argument("--step-ms", type=float, default=5.0,
                          help="window spacing for files without labels")
