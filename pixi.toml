@@ -35,6 +35,7 @@ rl-play = "bash scripts/play_rl.sh"   # optional: watch the RL walking policy (t
 build-real = "python -m reflex.data.recording"   # recorded sessions -> training set: build-real data/real/*
 finetune-real = "bash scripts/finetune_real.sh"   # build + fine-tune on recorded data + evaluate
 view-data = "python -m reflex.viz.view_npz"
+spleat-bundle = "python -m reflex.deploy.spleat_bundle"   # riverops model + parameters JSON -> files for the KV260: spleat-bundle MODEL.json PARAMS.json
 view = { cmd = "python -m reflex.sim.view", env = { MUJOCO_GL = "glfw" } }
 drive = { cmd = "python -m reflex.sim.view --drive --no-balls", env = { MUJOCO_GL = "glfw" } }   # walk the dog with the arrow keys
 

@@ -1,0 +1,23 @@
+{
+  "time_steps": 4,
+  "grid": 80,
+  "cell_px": 4,
+  "channels": {
+    "heatmap": 0,
+    "x_offset": [
+      1,
+      5
+    ],
+    "y_offset": [
+      5,
+      9
+    ]
+  },
+  "offset_bins": 4,
+  "heatmap_logit_scale": 10.437311172485352,
+  "offset_logit_scale": 2.139535903930664,
+  "no_ball_logit": 10.483495712280273,
+  "ball_probability_threshold": 0.5,
+  "logits": "spike count / time_steps * scale",
+  "p_ball": "sigmoid(logsumexp(heatmap logits) - no_ball_logit)"
+}

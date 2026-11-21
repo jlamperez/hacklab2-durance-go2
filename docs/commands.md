@@ -23,7 +23,7 @@ removes most of the confusion.
 | `pixi install -a` | after cloning; downloads the environments |
 | `pixi run setup` | after cloning; fetches the Go2 model into `third_party/` |
 | `pixi run -e ros ros-build` | after cloning, and after changing a message, a launch file or `setup.py` |
-| `pixi run test` | any time; 73 tests, about 25 s |
+| `pixi run test` | any time; 86 tests, about 25 s |
 
 Not in git, copy by hand to a new machine: `data/` (datasets and recordings).
 
@@ -43,6 +43,8 @@ on a new machine either `mkdir -p out/models && cp models/snn.* out/models/`, or
 | `pixi run train` | trains the network into `out/models/snn.pt` | nothing |
 | `pixi run eval` | network versus simple detector on held-out windows | nothing |
 | `pixi run view-data PATH` | browse a dataset folder or a recording | window; `--sheet`, `--video` save files |
+| `pixi run spleat-bundle MODEL.json PARAMS.json` | riverops export (model + parameters JSON) into the files for the KV260: `weights.txt`, `config.yaml`, `metavision_camera.json`, plus a README saying where each value comes from | nothing; writes `out/spleat/<model>/` |
+| `pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt` | ball-detector checkpoint into `ball_model.json`, `ball_parameters.json/.txt`, `ball_readout.json` with the training code's own exporter, plus `PROVENANCE.md`. Separate pixi environment; needs `third_party/riverops-0.2.0-py3-none-any.whl` (Durance, not in git) | nothing; writes `models/ball/` |
 | `pixi run build-real data/real/*` | recorded sessions into a training set, `data/real_ds` | nothing |
 | `pixi run finetune-real` | the previous step, then fine-tune into `out/models/snn_real.pt` | nothing |
 | `pixi run rl-play` | watch the walking policy inside mjlab (optional extra) | 3D window; `--viewer viser` for the browser |

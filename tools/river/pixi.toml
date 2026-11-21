@@ -1,0 +1,32 @@
+# Export environment for Durance's riverops (training and export library).
+#
+# Separate from the main pixi.toml on purpose: riverops is a proprietary wheel that is not
+# in git. If the main workspace depended on it, `pixi install` would fail for everyone
+# without the wheel. Here, only this environment needs it.
+#
+# Setup, once: copy riverops-0.2.0-py3-none-any.whl into third_party/ (gitignored).
+# Use from the repository root:
+#   pixi run --manifest-path tools/river/pixi.toml export-ball models/ball/ball_size_best.pt
+[workspace]
+name = "river-export"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.12.*"
+git = "*"
+
+[pypi-dependencies]
+# Pins below are the ones riverops 0.2.0 declares (torch~=2.14.0, numpy~=2.2.6, pydantic~=2.13.5).
+riverops = { path = "../../third_party/riverops-0.2.0-py3-none-any.whl" }
+torch = { version = "~=2.14.0", index = "https://download.pytorch.org/whl/cpu" }
+numpy = "~=2.2.6"
+pydantic = "~=2.13.5"
+# Imported at the top of the training scripts (not used by the export itself).
+h5py = "*"
+matplotlib = "*"
+pillow = "*"
+
+[tasks]
+# CHECKPOINT [OUT_DIR]; run from the repository root.
+export-ball = { cmd = "bash scripts/export_ball_checkpoint.sh", cwd = "../.." }

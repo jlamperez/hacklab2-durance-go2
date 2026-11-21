@@ -1,0 +1,10 @@
+CUDA available: False
+/tmp/tmp.PBCXHzIVm7/src/Training/train_ball_size.py:423: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:820.)
+  "no_ball_logit": float(model.no_ball_logit),
+Time steps: 4
+Exporting ball_size_best.pt: epoch 175, validation median error 7.06 px
+Saved architecture to: ball_model.json
+Parameter order: 0=enc1, 1=enc2, 2=enc3, 3=enc4, 4=enc5, 5=enc6, 6=enc7, 7=dec1, 8=mix1, 9=dec2, 10=mix2, 11=dec3, 12=mix3, 13=head
+Saved parameters to: ball_parameters.json and ball_parameters.txt
+Saved off-chip readout constants to: ball_readout.json
