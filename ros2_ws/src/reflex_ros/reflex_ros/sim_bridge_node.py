@@ -84,7 +84,7 @@ class SimBridge(Node):
         self.rng = np.random.default_rng(seed)
         self.sim = Go2Sim(seed=seed, scene=scene)
         # The window the perception node's detector needs (detector:=ball: 1 ms, full resolution).
-        self.wcfg = window_config(p("detector", "snn").value)
+        self.wcfg = window_config(p("detector", "snn").value, p("ball_dir", "models/ball").value)
         if self.locomotion == "rl":
             self.sim.enable_walking()
         elif self.locomotion != "none":

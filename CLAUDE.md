@@ -30,7 +30,7 @@ pixi run eval           # SNN vs simple detector on held-out windows
 pixi run build-real data/real/*   # recorded sessions -> data/real_ds
 pixi run finetune-real  # build + fine-tune the SNN on recorded data -> out/models/snn_real.pt
 pixi run view-data PATH # look inside a dataset folder or an event recording; --sheet/--video save files
-pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt  # checkpoint -> models/ball/ + PROVENANCE.md
+pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt [OUT_DIR] [--script S --commit C]  # checkpoint -> models/ball*/ + PROVENANCE.md
 pixi run spleat-bundle MODEL.json PARAMS.json  # riverops export -> out/spleat/<model>/ for the KV260
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
