@@ -43,6 +43,12 @@ MOTIONS = {
 }
 
 KP, KD = 60.0, 3.0
+
+# Eachine UZ65-like tiny whoop (approximate): motor offset per axis for a 65 mm diagonal,
+# duct radius just outside the 31 mm props.
+WHOOP_ARM = 0.065 / 2 / np.sqrt(2)
+WHOOP_DUCT_R = 0.0175
+WHOOP_MOTORS = ((1, 1), (1, -1), (-1, 1), (-1, -1))
 LABELS = ("none", "left", "center", "right")
 
 
@@ -150,6 +156,33 @@ def build_model(rng: np.random.Generator | None = None, scene: str = "lab") -> m
         walker.add_geom(name=f"walker_{name}", type=gtype, pos=pos, size=size,
                         rgba=[0.2, 0.25, 0.5, 1.0], contype=0, conaffinity=0)
 
+    # Tiny-whoop drone sized like an Eachine UZ65 (approximate public specs, not measured):
+    # 65 mm motor-to-motor diagonal, 31 mm two-blade props inside ducts, about 85 mm across
+    # and 30 mm high. Moved kinematically. The frame (pod + ducts) and the four props are
+    # separate mocap bodies so the props can spin.
+    drone = w.add_body(name="drone", mocap=True, pos=[40, 0, 1])
+    frame_rgb, duct_rgb = [0.10, 0.10, 0.11, 1.0], [0.85, 0.20, 0.15, 1.0]
+    drone.add_geom(name="drone_body", type=G.mjGEOM_BOX, size=[0.018, 0.013, 0.010], pos=[0, 0, 0.004],
+                   rgba=frame_rgb, contype=0, conaffinity=0)
+    drone.add_geom(name="drone_cam", type=G.mjGEOM_BOX, size=[0.005, 0.006, 0.005], pos=[0.020, 0, 0.010],
+                   rgba=[0.05, 0.05, 0.05, 1.0], contype=0, conaffinity=0)
+    for i, (dx, dy) in enumerate(WHOOP_MOTORS):
+        cx, cy = WHOOP_ARM * dx, WHOOP_ARM * dy
+        yaw = np.arctan2(cy, cx)
+        drone.add_geom(name=f"drone_arm{i}", type=G.mjGEOM_BOX, size=[0.012, 0.003, 0.002],
+                       pos=[cx / 2, cy / 2, 0], quat=[np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)],
+                       rgba=frame_rgb, contype=0, conaffinity=0)
+        for k in range(8):                       # duct wall: a ring of 8 thin panels
+            a = 2 * np.pi * k / 8
+            drone.add_geom(name=f"drone_duct{i}_{k}", type=G.mjGEOM_BOX, size=[0.0072, 0.0008, 0.006],
+                           pos=[cx + WHOOP_DUCT_R * np.cos(a), cy + WHOOP_DUCT_R * np.sin(a), 0.002],
+                           quat=[np.cos((a + np.pi / 2) / 2), 0, 0, np.sin((a + np.pi / 2) / 2)],
+                           rgba=duct_rgb, contype=0, conaffinity=0)
+    for i in range(4):
+        rotor = w.add_body(name=f"drone_rotor{i}", mocap=True, pos=[40, 0, 1])
+        rotor.add_geom(name=f"drone_rotor{i}", type=G.mjGEOM_BOX, size=[0.0155, 0.0028, 0.0005],
+                       rgba=[0.9, 0.9, 0.92, 1.0], contype=0, conaffinity=0)
+
     # Event camera on the head: looks along +x.
     spec.body("base").add_camera(name="eye", pos=[0.33, 0.0, 0.05],
                                  xyaxes=[0, -1, 0, 0, 0, 1], fovy=60)
@@ -162,7 +195,11 @@ class Go2Sim:
     """Standing Go2 with a PD pose controller and a ball launcher."""
 
     def __init__(self, seed: int = 0, eye_hw: tuple[int, int] = (180, 320),
-                 third_hw: tuple[int, int] = (360, 640), scene: str = "lab"):
+                 third_hw: tuple[int, int] = (360, 640), scene: str = "lab", fast_eye: bool = False):
+        """`fast_eye`: render the head camera without the robot's own meshes and without
+        shadows. About 20x faster on integrated graphics (Intel Iris: 7 ms instead of 140 ms
+        per image); the forward-looking camera hardly sees the robot anyway. Off by default so
+        existing datasets stay reproducible."""
         self.rng = np.random.default_rng(seed)
         self.scene = scene
         self.model = build_model(self.rng, scene)
@@ -192,6 +229,13 @@ class Go2Sim:
         self._shake: tuple | None = None             # (amplitudes, frequencies, phases)
         self._walker_mocap = m.body("walker").mocapid[0]
         self._walker_geoms = [m.geom(f"walker_{n}").id for n in ("torso", "leg_a", "leg_b")]
+        self._drone_mocap = m.body("drone").mocapid[0]
+        self._rotor_mocap = [m.body(f"drone_rotor{i}").mocapid[0] for i in range(4)]
+        self.fast_eye = fast_eye
+        self._eye_opt = mujoco.MjvOption()
+        if fast_eye:
+            for g in {int(m.geom_group[i]) for i in range(m.ngeom) if m.geom_type[i] == mujoco.mjtGeom.mjGEOM_MESH}:
+                self._eye_opt.geomgroup[g] = 0
         # Optional walking (reflex/sim/locomotion.py). Off unless enable_walking() is called.
         self.gait = None
         self.mode = "pose"                  # "pose": fixed postures; "walk": the policy drives the legs
@@ -219,6 +263,7 @@ class Go2Sim:
         self._motion = None
         self.park_ball()
         self.park_walker()
+        self.park_drone()
         for _ in range(int(settle_s / self.dt)):
             self.step()
         d.time = 0.0
@@ -353,6 +398,91 @@ class Go2Sim:
         if rgb is not None:
             self.model.geom_rgba[self._walker_geoms, :3] = rgb
 
+    def park_drone(self) -> None:
+        self.set_drone([40.0, 0.0, 1.0])
+
+    def set_drone(self, pos, yaw: float = 0.0, rotor_rev_s: float = 250.0) -> None:
+        """Place the drone (kinematic) and spin its props. Call every step to move it.
+
+        Tiny-whoop props turn at roughly 20,000 rpm and more; rendered at a few hundred Hz
+        that aliases, which still gives the flickering prop discs an event camera sees."""
+        d = self.data
+        pos = np.asarray(pos, float)
+        c, s = np.cos(yaw), np.sin(yaw)
+        d.mocap_pos[self._drone_mocap] = pos
+        d.mocap_quat[self._drone_mocap] = [np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]
+        for i, (dx, dy) in enumerate(WHOOP_MOTORS):
+            off = WHOOP_ARM * np.array([dx, dy])
+            d.mocap_pos[self._rotor_mocap[i]] = pos + [c * off[0] - s * off[1], s * off[0] + c * off[1], 0.006]
+            spin = yaw + (1 if i in (0, 3) else -1) * 2 * np.pi * rotor_rev_s * d.time
+            d.mocap_quat[self._rotor_mocap[i]] = [np.cos(spin / 2), 0, 0, np.sin(spin / 2)]
+
+    def set_ball_kinematic(self, xy, quat, radius: float | None = None, rgb=None) -> None:
+        """Put the ball at `xy` with orientation `quat`, at rest on the floor.
+
+        For scripted trajectories (e.g. a ball that rolls and comes to rest at a chosen
+        point): set it before every step(); the physics does not move it in between.
+        """
+        m, d = self.model, self.data
+        if radius is not None:
+            m.geom_size[self._ball_geom, 0] = radius
+            m.geom_rbound[self._ball_geom] = radius
+        if rgb is not None:
+            m.geom_rgba[self._ball_geom, :3] = rgb
+        r = float(m.geom_size[self._ball_geom, 0])
+        a, v = self._ball_qadr, self._ball_vadr
+        d.qpos[a:a + 7] = [xy[0], xy[1], r, *quat]
+        d.qvel[v:v + 6] = 0
+
+    def set_camera_mount(self, offset, pitch_deg: float = 0.0, fovy: float | None = None) -> None:
+        """Mount the head camera at `offset` (m, robot base frame) with a pitch (negative
+        looks down) and a vertical field of view."""
+        m, c = self.model, self._eye_cam
+        pitch = np.radians(pitch_deg)
+        self._mount_pos = np.asarray(offset, float)
+        dq = np.array([np.cos(pitch / 2), np.sin(pitch / 2), 0, 0])
+        self._mount_quat = np.zeros(4)
+        mujoco.mju_mulQuat(self._mount_quat, self._eye_quat0, dq)
+        m.cam_pos[c], m.cam_quat[c] = self._mount_pos, self._mount_quat
+        if fovy is not None:
+            m.cam_fovy[c] = fovy
+
+    def set_head(self, yaw: float, pitch_down: float = 0.0) -> None:
+        """Turn the camera like a body posture change while the legs stay planted.
+
+        The Go2 has no head: in sport mode, looking somewhere means rotating the trunk with
+        the Euler command (yaw, pitch). The camera on its mast then swings about the trunk
+        center. Here only the camera mount is rotated about the base origin, by `yaw` (rad,
+        + = left) and `pitch_down` (rad, + = nose down); the legs do not move. Relative to the
+        mount set with set_camera_mount(). The real Euler limits are not known."""
+        m, c = self.model, self._eye_cam
+        cy, sy, cp, sp = np.cos(yaw), np.sin(yaw), np.cos(pitch_down), np.sin(pitch_down)
+        rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+        ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+        rot = rz @ ry
+        q_rot = np.zeros(4)
+        mujoco.mju_mat2Quat(q_rot, rot.flatten())
+        q = np.zeros(4)
+        mujoco.mju_mulQuat(q, q_rot, self._mount_quat)
+        m.cam_pos[c] = rot @ self._mount_pos
+        m.cam_quat[c] = q
+
+    def project_to_eye(self, point) -> tuple[float, float, bool, float]:
+        """Pixel (x, y) of a world point in the head camera image, whether it is inside the
+        image and in front of the camera, and its distance (m). Uses the camera pose of the
+        last step()."""
+        m, d, c = self.model, self.data, self._eye_cam
+        h, w = self.eye_hw
+        rel = np.asarray(point, float) - d.cam_xpos[c]
+        pc = d.cam_xmat[c].reshape(3, 3).T @ rel          # camera frame: x right, y up, looks along -z
+        dist = float(np.linalg.norm(rel))
+        if pc[2] >= -1e-6:
+            return -1.0, -1.0, False, dist
+        f = (h / 2) / np.tan(np.radians(m.cam_fovy[c]) / 2)
+        px = w / 2 + f * pc[0] / -pc[2]
+        py = h / 2 - f * pc[1] / -pc[2]
+        return float(px), float(py), bool(0 <= px < w and 0 <= py < h), dist
+
     def randomize_camera(self, rng: np.random.Generator) -> dict:
         """Per-episode camera mount: we do not know where the real camera will sit."""
         m, c = self.model, self._eye_cam
@@ -425,7 +555,10 @@ class Go2Sim:
         if self._eye is None:
             self._eye = mujoco.Renderer(self.model, *self.eye_hw)
         self._apply_shake()
-        self._eye.update_scene(self.data, camera="eye")
+        self._eye.update_scene(self.data, camera="eye", scene_option=self._eye_opt)
+        if self.fast_eye:
+            self._eye.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+            self._eye.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
         return self._eye.render()
 
     def render_third(self) -> np.ndarray:

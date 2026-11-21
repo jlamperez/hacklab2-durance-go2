@@ -204,6 +204,7 @@ pixi run -e ros ros-robot-sim                  # and the camera side with detect
 |---|---|
 | `docs/real-robot.md` | What is left before the real robot, first hour with it, the Kria rehearsal and its results |
 | `docs/recording.md` | Recording takes, the labelling rule, fine-tuning |
+| `docs/simulation-drone.md` | Simulated drone flights (UZ65-sized) in front of the standing Go2: behaviors, head modes, labels |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
 | `docs/questions-for-durance.md` | What to ask at the opening |

@@ -12,3 +12,5 @@ third_party/
 ros2_ws/src/unitree_api
 ros2_ws/src/unitree_go
 !models/*.onnx
+# Durance's track presentation: their material, not ours to publish
+/Durance_Vision_Lab_Track.pdf
