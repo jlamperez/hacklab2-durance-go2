@@ -23,11 +23,21 @@ Only ops the RIVER exporter lowers are used: square ConvLIFs, upsample
 directly followed by a ConvLIF (UpConvLIF) and additions (extra incoming
 edges).
 
+"No ball": the heatmap softmax has one extra class with a learnable logit
+(off-chip, like the logit scales). Recordings without a ball, passed with
+``--no-ball FOLDER``, are cut into the same 1 ms windows, randomly cropped
+and zoomed like the ball frames, and trained towards that class, so the
+heatmap learns to stay quiet. P(ball) compares the heatmap's total activity
+with the no-ball logit; a frame counts as "ball found" at BALL_PROBABILITY.
+The last NO_BALL_VALIDATION of each no-ball file is used for validation.
+
 Crops, splits, data loading and video writing come from the fast script. The
 export writes ``ball_model.json`` and ``ball_parameters.{json,txt}``, with
-parameters numbered in layer order (printed at export)::
+parameters numbered in layer order (printed at export), and the off-chip
+readout constants to ``ball_readout.json``::
 
     python train_ball_size.py
+    python train_ball_size.py train --no-ball data/no_ball
     python train_ball_size.py export
     python train_ball_size.py visualize
     python train_ball_size.py predict data/recording.h5 --window-ms 5
@@ -41,6 +51,7 @@ import h5py
 import numpy as np
 import torch
 from torch import nn
+from torch.utils.data import ConcatDataset, Dataset
 
 import train_motion_buddy as base
 import train_motion_buddy_fast as fast
@@ -49,7 +60,7 @@ from riverops.nn import (
     FixedPointFormat, NearestUpsample, QuantConfig, SpikingConvBN2d, prepare_qat,
 )
 
-ARCHITECTURE = "unet-position-v1"
+ARCHITECTURE = "unet-position-v2"
 CHECKPOINT = Path("ball_size_best.pt")
 SENSOR = fast.SENSOR
 HEAT = 80
@@ -66,6 +77,11 @@ RADIUS_FRACTION = 0.8
 RADIUS_MIN_EVENTS = 6.0
 RADIUS_SMOOTH = 4
 RADIUS_FALLBACK = 5.0
+BALL_PROBABILITY = 0.5
+NO_BALL_SHARE = 0.25
+NO_BALL_STEP_MS = 5.0
+NO_BALL_VALIDATION = 0.2
+NO_BALL_TARGET = (-1.0, -1.0, 0.0)
 X_OFFSET_CHANNELS = slice(1, 1 + OFFSET_BINS)
 Y_OFFSET_CHANNELS = slice(X_OFFSET_CHANNELS.stop, X_OFFSET_CHANNELS.stop + OFFSET_BINS)
 HEAD_CHANNELS = Y_OFFSET_CHANNELS.stop
@@ -193,6 +209,80 @@ def benchmark_splits():
     )
 
 
+class NoBallDataset(Dataset):
+    """Windows from recordings without a ball; the target NO_BALL_TARGET means "no ball".
+
+    ``recordings`` holds (events, offsets, width, height) per file, ``items``
+    (recording, window) pairs. Every item is a square crop with a side drawn
+    log-uniformly from CROP_SIDES (at most the recording's larger side) at a
+    random position, resampled to the sensor like the ball frames. Without
+    ``noise_seed`` the crop changes on every call (training); with it, it is
+    fixed per index (validation).
+    """
+
+    def __init__(self, recordings, items, noise_seed=None):
+        self.recordings = recordings
+        self.items = np.asarray(items, dtype=np.int64).reshape(-1, 2)
+        self.noise_seed = noise_seed
+        self.rng = np.random.default_rng(base.SEED + 7)
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, index):
+        recording, window = self.items[index]
+        events, offsets, width, height = self.recordings[recording]
+        rng = self.rng if self.noise_seed is None else np.random.default_rng((self.noise_seed, index))
+        high = min(fast.CROP_SIDES[1], max(width, height))
+        low = min(fast.CROP_SIDES[0], high)
+        side = float(np.exp(rng.uniform(np.log(low), np.log(high))))
+        x0 = rng.uniform(0.0, width - side) if side < width else (width - side) / 2
+        y0 = rng.uniform(0.0, height - side) if side < height else (height - side) / 2
+        pixels = events[offsets[window]:offsets[window + 1]]
+        flat = fast.resample(pixels, x0, y0, SENSOR / side, rng)
+        return torch.from_numpy(flat), torch.tensor(NO_BALL_TARGET, dtype=torch.float32)
+
+
+def load_no_ball(folders, step_ms, window_ms):
+    """Non-empty windows of every .h5/.hdf5 file under ``folders``, split per file in time.
+
+    Returns (recordings, training items, validation items) for NoBallDataset;
+    the last NO_BALL_VALIDATION of each file's windows go to validation.
+    """
+    paths = sorted(
+        path for folder in folders for path in Path(folder).rglob("*")
+        if path.suffix.lower() in (".h5", ".hdf5") and not path.name.startswith(".")
+    )
+    if not paths:
+        raise FileNotFoundError(f"No .h5/.hdf5 files under {', '.join(map(str, folders))}")
+    recordings, train_items, validation_items = [], [], []
+    for path in paths:
+        fast.check_hdf5(path)
+        windows = fast.recording_dataset(path, step_ms * 1000.0, window_ms * 1000.0, False)
+        width, height = fast.read_recording(path)[3:5]
+        nonempty = np.flatnonzero(np.diff(windows.offsets) > 0)
+        split = int(round(len(nonempty) * (1.0 - NO_BALL_VALIDATION)))
+        index = len(recordings)
+        recordings.append((windows.events, windows.offsets, width, height))
+        train_items += [(index, window) for window in nonempty[:split]]
+        validation_items += [(index, window) for window in nonempty[split:]]
+    print(
+        f"No-ball recordings: {len(paths)} files, {len(train_items)} training and "
+        f"{len(validation_items)} validation windows (non-empty, {window_ms:g} ms every "
+        f"{step_ms:g} ms)",
+        flush=True,
+    )
+    return recordings, np.array(train_items), np.array(validation_items)
+
+
+def balance(items, ball_frames, share, rng):
+    """Resample ``items`` so no-ball frames make up ``share`` of training (<= 0: keep all)."""
+    if share <= 0 or not len(items):
+        return items
+    target = int(round(share / (1.0 - share) * ball_frames))
+    return items[rng.choice(len(items), target, replace=len(items) < target)]
+
+
 LIF = {
     "initial_tau": 1.0 / (1.0 - 0.93),
     "learnable_leak": False,
@@ -251,11 +341,14 @@ class BallUNet(nn.Module):
 
 
 class BallDetector(nn.Module):
-    """``BallUNet`` plus the off-chip readout: spike count over time and logit scales.
+    """``BallUNet`` plus the off-chip readout: spike count over time and readout constants.
 
     ``log_logit_scales`` holds one learnable scale per head group (heatmap,
-    offsets) that turns spike rates into logits. It is used only in the loss
-    and the off-chip decoding, so it is not part of the exported network.
+    offsets) that turns spike rates into logits; ``no_ball_logit`` is the
+    logit of the extra "no ball" class next to the heatmap cells. Both are
+    used only in the loss and the off-chip decoding, so they are not part of
+    the exported network. The no-ball logit starts at ln(cells), which gives
+    P(ball) = 0.5 for a silent heatmap.
     """
 
     def __init__(self):
@@ -264,6 +357,10 @@ class BallDetector(nn.Module):
         self.log_logit_scales = nn.Parameter(
             torch.full((2,), float(np.log(fast.LOGIT_SCALE)))
         )
+        self.no_ball_logit = nn.Parameter(torch.tensor(float(np.log(HEAT * HEAT))))
+
+    def readout_parameters(self):
+        return [self.log_logit_scales, self.no_ball_logit]
 
     def forward(self, x):
         """Spike counts, [B, HEAD_CHANNELS, HEAT, HEAT]."""
@@ -310,6 +407,27 @@ def export_model(model, example_frames, device):
     Path("ball_parameters.txt").write_text("\n".join(map(str, values)))
     print("Saved parameters to: ball_parameters.json and ball_parameters.txt")
 
+    heat_scale, offset_scale = model.logit_scales().tolist()
+    readout = {
+        "time_steps": int(example_frames.shape[0]),
+        "grid": HEAT,
+        "cell_px": STRIDE,
+        "channels": {
+            "heatmap": 0,
+            "x_offset": [X_OFFSET_CHANNELS.start, X_OFFSET_CHANNELS.stop],
+            "y_offset": [Y_OFFSET_CHANNELS.start, Y_OFFSET_CHANNELS.stop],
+        },
+        "offset_bins": OFFSET_BINS,
+        "heatmap_logit_scale": heat_scale,
+        "offset_logit_scale": offset_scale,
+        "no_ball_logit": float(model.no_ball_logit),
+        "ball_probability_threshold": BALL_PROBABILITY,
+        "logits": "spike count / time_steps * scale",
+        "p_ball": "sigmoid(logsumexp(heatmap logits) - no_ball_logit)",
+    }
+    Path("ball_readout.json").write_text(json.dumps(readout, indent=2) + "\n")
+    print("Saved off-chip readout constants to: ball_readout.json")
+
 
 def _offset_centers(device):
     """Centre of each offset bin, in pixels from the cell's top-left corner."""
@@ -343,17 +461,25 @@ def heatmap_targets(positions):
     return (target / target.sum(dim=(1, 2), keepdim=True)).flatten(1)
 
 
-def compute_loss(counts, targets, time_steps, scales):
-    """Heatmap cross-entropy plus in-cell offset cross-entropy at the true cell.
+def compute_loss(counts, targets, time_steps, scales, no_ball_logit):
+    """Cross-entropy over heatmap cells + "no ball", plus offsets at the true cell.
 
-    ``scales`` are the (heatmap, offset) logit scales; ``targets[:, 2]`` (the
-    measured radius) is not used here.
+    ``targets`` rows are (x, y, radius); x < 0 means no ball is visible. Ball
+    frames target a Gaussian over the cells, no-ball frames the extra class.
+    The offset term only uses ball frames; the radius is not used here.
     """
-    positions = targets[:, :2]
+    present = targets[:, 0] >= 0
+    positions = targets[:, :2].clamp(0.0, SENSOR - 1e-3)
     heat_scale, offset_scale = scales
     heat_logits = counts[:, 0].flatten(1) * (heat_scale / time_steps)
-    loss = _soft_cross_entropy(heat_logits, heatmap_targets(positions)).mean()
+    logits = torch.cat((heat_logits, no_ball_logit.expand(len(targets), 1)), dim=1)
+    target = torch.cat((
+        heatmap_targets(positions) * present[:, None],
+        (~present).to(heat_logits.dtype)[:, None],
+    ), dim=1)
+    loss = _soft_cross_entropy(logits, target).mean()
 
+    weight = present.to(heat_logits.dtype)
     rows = (positions[:, 1] / STRIDE).long().clamp(0, HEAT - 1)
     cols = (positions[:, 0] / STRIDE).long().clamp(0, HEAT - 1)
     bin_width = STRIDE / OFFSET_BINS
@@ -363,17 +489,21 @@ def compute_loss(counts, targets, time_steps, scales):
     ):
         target = _bin_targets(offset / bin_width - 0.5, OFFSET_BINS, OFFSET_SIGMA)
         logits = cell_logits(counts, channels, rows, cols, time_steps, offset_scale)
-        loss = loss + OFFSET_WEIGHT * _soft_cross_entropy(logits, target).mean() / 2
+        offset_loss = (_soft_cross_entropy(logits, target) * weight).sum()
+        loss = loss + OFFSET_WEIGHT * offset_loss / weight.sum().clamp(min=1.0) / 2
     return loss
 
 
-def decode(counts, time_steps, scales):
-    """(x, y) in sensor pixels per sample.
+def decode(counts, time_steps, scales, no_ball_logit):
+    """(x, y, P(ball)) per sample; x, y in sensor pixels.
 
     Peak cell of the heatmap, plus the expected in-cell offset along x and y
-    read at that cell.
+    read at that cell. P(ball) is one minus the softmax weight of the no-ball
+    class: sigmoid(logsumexp(heatmap logits) - no_ball_logit).
     """
-    _, offset_scale = scales
+    heat_scale, offset_scale = scales
+    heat_logits = counts[:, 0].flatten(1) * (heat_scale / time_steps)
+    p_ball = torch.sigmoid(heat_logits.logsumexp(dim=1) - no_ball_logit)
     index = counts[:, 0].flatten(1).argmax(dim=1)
     rows, cols = index // HEAT, index % HEAT
     offsets = _offset_centers(counts.device)
@@ -385,32 +515,60 @@ def decode(counts, time_steps, scales):
     ).softmax(dim=1)
     x = cols * STRIDE + (x_probs * offsets).sum(dim=1)
     y = rows * STRIDE + (y_probs * offsets).sum(dim=1)
-    return torch.stack((x, y), dim=1)
+    return torch.stack((x, y, p_ball), dim=1)
 
 
-def summarize(loss_sum, total, errors, radii):
-    """Epoch metrics from per-sample position errors and measured radii (sensor pixels)."""
-    errors = torch.cat(errors)
-    radii = torch.cat(radii)
-    known = radii > 0
-    return {
-        "loss": loss_sum.item() / total,
-        "mean": errors.mean().item(),
-        "median": errors.median().item(),
-        "within_8px": (errors <= 8.0).float().mean().item(),
-        "within_radius": (
-            (errors[known] <= radii[known]).float().mean().item() if known.any()
-            else float("nan")
-        ),
-    }
+def summarize(loss_sum, total, decoded, targets):
+    """Epoch metrics; ``decoded`` rows (x, y, P(ball)), ``targets`` rows (x, y, radius).
+
+    Ball frames: position error, "within 1 radius", how often the ball is
+    found (P(ball) >= BALL_PROBABILITY) and found on the ball. No-ball frames:
+    false alarms. ``score`` (higher is better) is the share of ball frames
+    found on the ball, averaged with the share of no-ball frames left empty
+    when there are any.
+    """
+    decoded, targets = torch.cat(decoded), torch.cat(targets)
+    present = targets[:, 0] >= 0
+    found = decoded[:, 2] >= BALL_PROBABILITY
+    nan = float("nan")
+    metrics = {"loss": loss_sum.item() / total, "ball_frames": int(present.sum()),
+               "no_ball_frames": int((~present).sum())}
+    if present.any():
+        errors = torch.linalg.vector_norm(decoded[present, :2] - targets[present, :2], dim=1)
+        radii = targets[present, 2]
+        within = errors <= radii
+        on_ball = (found[present] & within).float().mean().item()
+        metrics.update({
+            "mean": errors.mean().item(),
+            "median": errors.median().item(),
+            "within_8px": (errors <= 8.0).float().mean().item(),
+            "within_radius": within.float().mean().item(),
+            "found": found[present].float().mean().item(),
+            "on_ball": on_ball,
+        })
+    else:
+        metrics.update(dict.fromkeys(
+            ("mean", "median", "within_8px", "within_radius", "found", "on_ball"), nan,
+        ))
+    metrics["false_alarms"] = found[~present].float().mean().item() if (~present).any() else nan
+    parts = [metrics["on_ball"]] + ([1.0 - metrics["false_alarms"]] if (~present).any() else [])
+    metrics["score"] = float(np.nanmean(parts))
+    return metrics
 
 
 def describe(metrics):
-    return (
-        f"loss {metrics['loss']:.3f} | error mean {metrics['mean']:.1f} px, "
+    text = (
+        f"loss {metrics['loss']:.3f} | ball frames: error mean {metrics['mean']:.1f} px, "
         f"median {metrics['median']:.1f} px, {metrics['within_8px']:.0%} within 8 px, "
-        f"{metrics['within_radius']:.0%} within 1 radius"
+        f"{metrics['within_radius']:.0%} within 1 radius, found {metrics['found']:.0%}, "
+        f"found on the ball {metrics['on_ball']:.0%}"
     )
+    if metrics["no_ball_frames"]:
+        text += (
+            f" | no-ball frames ({metrics['no_ball_frames']}): "
+            f"false alarms {metrics['false_alarms']:.0%}"
+        )
+    return text + f" | score {metrics['score']:.0%}"
 
 
 def baselines(dataset):
@@ -429,7 +587,7 @@ def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
     training = optimizer is not None
     model.train(training)
     loss_sum = torch.zeros((), device=device)
-    errors, radii = [], []
+    decoded_batches, target_batches = [], []
     total = 0
     batch_count = len(loader)
     with torch.set_grad_enabled(training):
@@ -442,7 +600,7 @@ def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
                 optimizer.zero_grad()
             counts = model(frames)
             scales = model.logit_scales()
-            loss = compute_loss(counts, targets, time_steps, scales)
+            loss = compute_loss(counts, targets, time_steps, scales, model.no_ball_logit)
             if training:
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -450,12 +608,13 @@ def run_epoch(model, loader, device, time_steps, optimizer=None, log_prefix=""):
                 with torch.no_grad():
                     for parameter in model.body.parameters():
                         parameter.clamp_(-1.0, 1.0)
-            decoded = decode(counts.detach(), time_steps, scales.detach())
+            decoded_batches.append(decode(
+                counts.detach(), time_steps, scales.detach(), model.no_ball_logit.detach(),
+            ))
+            target_batches.append(targets)
             loss_sum += loss.detach() * len(targets)
-            errors.append(torch.linalg.vector_norm(decoded - targets[:, :2], dim=1))
-            radii.append(targets[:, 2])
             total += len(targets)
-    return summarize(loss_sum, total, errors, radii)
+    return summarize(loss_sum, total, decoded_batches, target_batches)
 
 
 def firing_rates(model, loader, device, time_steps, batches=2):
@@ -487,40 +646,66 @@ def describe_rates(rates):
 
 
 def infer(model, dataset, device, batch_size, time_steps):
-    """Predicted (x, y) in sensor pixels, shape (N, 2), in dataset order."""
+    """Predicted (x, y, P(ball)), shape (N, 3), in dataset order; x, y in sensor pixels."""
     predicted = []
     model.eval()
     with torch.no_grad():
         scales = model.logit_scales()
         for flat, targets in fast.make_loader(dataset, batch_size):
             frames = fast.to_frames(flat, len(targets), device, time_steps)
-            predicted.append(decode(model(frames), time_steps, scales).cpu().numpy())
+            predicted.append(
+                decode(model(frames), time_steps, scales, model.no_ball_logit).cpu().numpy()
+            )
     if not predicted:
-        return np.zeros((0, 2), dtype=np.float32)
+        return np.zeros((0, 3), dtype=np.float32)
     return np.concatenate(predicted, axis=0)
 
 
-def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
+def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
+          no_ball_folders=(), no_ball_step_ms=NO_BALL_STEP_MS,
+          no_ball_window_ms=base.ACC_TIME / 1000.0, no_ball_share=NO_BALL_SHARE):
     torch.manual_seed(base.SEED)
     torch.backends.cudnn.benchmark = True
     device = base.pick_device()
     print("Device:", device, flush=True)
 
-    train_dataset, validation_dataset, test_dataset = benchmark_splits()
+    train_ball, validation_ball, test_dataset = benchmark_splits()
+    train_parts, validation_parts = [train_ball], [validation_ball]
+    if no_ball_folders:
+        recordings, train_items, validation_items = load_no_ball(
+            no_ball_folders, no_ball_step_ms, no_ball_window_ms,
+        )
+        train_items = balance(
+            train_items, len(train_ball), no_ball_share, np.random.default_rng(base.SEED),
+        )
+        if len(train_items):
+            train_parts.append(NoBallDataset(recordings, train_items))
+        if len(validation_items):
+            validation_parts.append(
+                NoBallDataset(recordings, validation_items, noise_seed=base.SEED + 3)
+            )
+    train_dataset = ConcatDataset(train_parts)
+    validation_dataset = ConcatDataset(validation_parts)
     train_loader = fast.make_loader(train_dataset, batch_size, shuffle=True)
     validation_loader = fast.make_loader(validation_dataset, batch_size)
-    print("Training frames:", len(train_dataset))
-    print("Validation frames:", len(validation_dataset))
+    print(
+        f"Training frames: {len(train_dataset)} ({len(train_ball)} ball, "
+        f"{len(train_dataset) - len(train_ball)} no-ball)"
+    )
+    print(
+        f"Validation frames: {len(validation_dataset)} ({len(validation_ball)} ball, "
+        f"{len(validation_dataset) - len(validation_ball)} no-ball)"
+    )
     print(
         f"Sensor: {SENSOR}x{SENSOR}, crop sides "
         f"{fast.CROP_SIDES[0]:.0f}-{fast.CROP_SIDES[1]:.0f} px"
     )
     print("Batch size:", batch_size)
     print("Time steps:", time_steps)
-    print("Baselines on validation:", baselines(validation_dataset), flush=True)
+    print("Baselines on validation ball frames:", baselines(validation_ball), flush=True)
 
     example_frames = base.save_sample_figure(
-        [fast.dense_sample(validation_dataset, 0, time_steps)], Path("ball_size_sample.png"),
+        [fast.dense_sample(validation_ball, 0, time_steps)], Path("ball_size_sample.png"),
     )
 
     model = BallDetector().to(device)
@@ -533,13 +718,15 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
 
     optimizer = torch.optim.Adam([
         {"params": model.body.parameters(), "weight_decay": base.WEIGHT_DECAY},
-        {"params": [model.log_logit_scales], "weight_decay": 0.0},
+        {"params": model.readout_parameters(), "weight_decay": 0.0},
     ], lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=epochs, eta_min=min_learning_rate,
     )
     print(f"Learning rate: {learning_rate:g} -> {min_learning_rate:g} (cosine over {epochs} epochs)")
-    best_validation_error = float("inf")
+    print("Checkpoint kept by validation score (found on the ball / no false alarm), "
+          "ties by median error", flush=True)
+    best = (-1.0, float("inf"))
 
     for epoch in range(1, epochs + 1):
         print(f"Epoch {epoch}/{epochs} training, lr {scheduler.get_last_lr()[0]:.2e}", flush=True)
@@ -554,13 +741,15 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
             log_prefix=f"Epoch {epoch} validation",
         )
         validation_error = validation_metrics["median"]
-        saved = validation_error < best_validation_error
+        score = validation_metrics["score"]
+        saved = score > best[0] or (score == best[0] and validation_error < best[1])
         if saved:
-            best_validation_error = validation_error
+            best = (score, validation_error)
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "epoch": epoch,
                 "validation_error": validation_error,
+                "validation_score": score,
                 "validation_metrics": validation_metrics,
                 "sensor": SENSOR,
                 "crop_sides": fast.CROP_SIDES,
@@ -570,6 +759,7 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
                 "architecture": ARCHITECTURE,
             }, CHECKPOINT)
         scales = model.logit_scales().tolist()
+        silent = torch.sigmoid(np.log(HEAT * HEAT) - model.no_ball_logit).item()
         print(f"Epoch {epoch}/{epochs} | Training   {describe(train_metrics)}")
         print(
             f"Epoch {epoch}/{epochs} | Validation {describe(validation_metrics)}"
@@ -577,7 +767,8 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
         )
         print(
             f"Epoch {epoch}/{epochs} | Logit scales: heatmap {scales[0]:.1f}, "
-            f"offset {scales[1]:.1f} | "
+            f"offset {scales[1]:.1f} | no-ball logit {model.no_ball_logit.item():.2f} "
+            f"(silent heatmap -> P(ball) {silent:.2f}) | "
             + describe_rates(firing_rates(model, validation_loader, device, time_steps)),
             flush=True,
         )
@@ -590,8 +781,11 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate):
         log_prefix="Test",
     )
     print("Best epoch:", checkpoint["epoch"])
-    print(f"Best validation median error: {checkpoint['validation_error']:.2f} px")
-    print(f"Test {describe(test_metrics)} (sensor pixels)")
+    print(
+        f"Best validation score {checkpoint['validation_score']:.0%}, "
+        f"median error {checkpoint['validation_error']:.2f} px"
+    )
+    print(f"Test (ball frames only) {describe(test_metrics)} (sensor pixels)")
 
     export_model(model, example_frames, device)
 
@@ -638,46 +832,49 @@ def measured_radii(dataset, predicted):
     for index in range(len(dataset)):
         flat = dataset[index][0].numpy()
         pixels = np.stack((flat // SENSOR, flat % SENSOR), axis=1)
-        raw.append(window_radius(pixels, predicted[index]))
+        raw.append(window_radius(pixels, predicted[index, :2]))
     return smooth_radii(np.array(raw, dtype=np.float64), [len(raw)])
 
 
 def write_video(model, device, dataset, name, output_path, fps, batch_size, time_steps):
     """Render every window with its predicted (and, if labeled, true) position.
 
-    Both circles are drawn with the radius measured from the events.
+    The red circle is drawn only when P(ball) >= BALL_PROBABILITY. Both
+    circles use the radius measured from the events.
     """
     predicted = infer(model, dataset, device, batch_size, time_steps)
     radii = measured_radii(dataset, predicted)
     writer = fast.VideoWriter(output_path, fps, SENSOR * fast.DISPLAY_SCALE)
-    errors, hits = [], []
+    errors, hits, found_frames = [], [], []
     try:
         for index in range(len(dataset)):
             flat, target = dataset[index]
-            px, py = (float(v) for v in predicted[index])
+            px, py, p_ball = (float(v) for v in predicted[index])
+            found = p_ball >= BALL_PROBABILITY
+            found_frames.append(found)
             radius = float(radii[index])
-            caption = (
-                f"{name}  {index + 1}/{len(dataset)}  pred ({px:.0f}, {py:.0f})  r {radius:.1f}"
-            )
+            caption = f"{name}  {index + 1}/{len(dataset)}  P(ball) {p_ball:.2f}  "
+            caption += f"pred ({px:.0f}, {py:.0f}) r {radius:.1f}" if found else "no ball"
             truth = None
             if dataset.labeled:
                 tx, ty = target[0].item(), target[1].item()
                 truth = (tx, ty)
                 error = float(np.hypot(px - tx, py - ty))
                 errors.append(error)
-                hits.append(error <= radius)
+                hits.append(found and error <= radius)
                 caption += f"  gt ({tx:.0f}, {ty:.0f})  err {error:.1f}"
             writer.write(fast.render_frame(
-                flat, (px, py), truth, caption,
+                flat, (px, py) if found else None, truth, caption,
                 prediction_radius=radius, truth_radius=radius,
             ))
     finally:
         writer.close()
     print(f"Wrote {writer.frames} frames to {Path(output_path).resolve()}")
+    print(f"Ball found in {float(np.mean(found_frames)):.0%} of frames")
     if errors:
         print(
             f"Mean error: {float(np.mean(errors)):.2f} px, median {float(np.median(errors)):.2f} px, "
-            f"{float(np.mean(hits)):.0%} within 1 radius (sensor pixels)"
+            f"{float(np.mean(hits)):.0%} found within 1 radius (sensor pixels)"
         )
 
 
@@ -725,6 +922,17 @@ def main():
                               help="start of the cosine schedule")
     train_parser.add_argument("--min-lr", type=float, default=MIN_LEARNING_RATE,
                               help="end of the cosine schedule (reached at the last epoch)")
+    train_parser.add_argument("--no-ball", type=Path, nargs="+", default=[],
+                              help="folders with recordings where no ball is visible "
+                                   "(.h5/.hdf5, searched recursively)")
+    train_parser.add_argument("--no-ball-step-ms", type=float, default=NO_BALL_STEP_MS,
+                              help="spacing of the windows cut from no-ball recordings")
+    train_parser.add_argument("--no-ball-window-ms", type=float,
+                              default=base.ACC_TIME / 1000.0,
+                              help="events per no-ball frame; keep equal to the ball frames (1 ms)")
+    train_parser.add_argument("--no-ball-share", type=float, default=NO_BALL_SHARE,
+                              help="share of training frames without a ball (resampled); "
+                                   "0 = use every no-ball window once")
     export = subparsers.add_parser("export", help="export a checkpoint (default: the best)")
     export.add_argument("--checkpoint", type=Path, default=CHECKPOINT)
     view = subparsers.add_parser("visualize", help="write a test-set video")
@@ -762,6 +970,10 @@ def main():
             getattr(args, "time_steps", fast.TIME_STEPS),
             getattr(args, "lr", base.LEARNING_RATE),
             getattr(args, "min_lr", MIN_LEARNING_RATE),
+            getattr(args, "no_ball", []),
+            getattr(args, "no_ball_step_ms", NO_BALL_STEP_MS),
+            getattr(args, "no_ball_window_ms", base.ACC_TIME / 1000.0),
+            getattr(args, "no_ball_share", NO_BALL_SHARE),
         )
 
 
