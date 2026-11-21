@@ -8,13 +8,19 @@ recording. It measures the visible event blob (ball plus 1 ms of motion),
 not the physical ball. The crop scale is applied to it exactly as to the
 position, so zoomed-in crops get proportionally larger radius labels.
 
-Network: the fast script's layers plus one 3x3 layer (receptive field 84 px),
-and a head with 1 + RADIUS_BINS spiking channels on the 40x40 grid. Channel 0
-is the position heatmap; the others vote for log-spaced radius bins and are
-read at the predicted cell. All kernels and strides stay square.
+Network: a small spiking U-Net. The encoder goes down to a 10x10 grid so a
+cell sees about 200 px (zoomed-in balls reach ~140 px across), the decoder
+comes back to the 40x40 grid through nearest upsampling, and additive skips
+from the 20x20 and 40x40 encoder layers keep the position precise. The head
+has 1 + RADIUS_BINS spiking channels: channel 0 is the position heatmap; the
+others vote for log-spaced radius bins and are read at the predicted cell.
+Only ops the RIVER exporter lowers are used: square ConvLIFs, upsample
+directly followed by a ConvLIF (UpConvLIF) and additions (extra incoming
+edges).
 
 Crops, splits, data loading and video writing come from the fast script. The
-export still writes ``ball_model.json`` and ``ball_parameters.{json,txt}``::
+export writes ``ball_model.json`` and ``ball_parameters.{json,txt}``, with
+parameters numbered in layer order (printed at export)::
 
     python train_ball_size.py
     python train_ball_size.py visualize
@@ -22,6 +28,7 @@ export still writes ``ball_model.json`` and ``ball_parameters.{json,txt}``::
 """
 
 import argparse
+import json
 from pathlib import Path
 
 import h5py
@@ -31,8 +38,12 @@ from torch import nn
 
 import train_motion_buddy as base
 import train_motion_buddy_fast as fast
-from riverops.nn import SpikingConvBN2d
+from riverops.export import export_for_river
+from riverops.nn import (
+    FixedPointFormat, NearestUpsample, QuantConfig, SpikingConvBN2d, prepare_qat,
+)
 
+ARCHITECTURE = "unet-v1"
 CHECKPOINT = Path("ball_size_best.pt")
 SENSOR = fast.SENSOR
 HEAT = fast.HEAT
@@ -171,31 +182,103 @@ def benchmark_splits():
     )
 
 
-class SizedBallDetector(nn.Module):
-    """320x320 -> 80x80 -> 40x40 (x5 layers) -> 1 heatmap + RADIUS_BINS radius channels."""
+LIF = {
+    "initial_tau": 1.0 / (1.0 - 0.93),
+    "learnable_leak": False,
+    "v_threshold": 1.0,
+    "reset_mode": "HARD",
+}
+
+
+def _conv(in_channels, out_channels, kernel_size, stride=1, padding=None, first_layer=False):
+    return SpikingConvBN2d(
+        in_channels, out_channels, kernel_size=kernel_size, stride=stride,
+        padding=(kernel_size - 1) // 2 if padding is None else padding,
+        bias=False, first_layer=first_layer, **LIF,
+    )
+
+
+class SizeUNet(nn.Module):
+    """Spiking U-Net on [B, T, 1, 320, 320]; returns head spikes [B, T, 1 + RADIUS_BINS, 40, 40].
+
+    Grid (cell size) and receptive field per stage:
+      enc1 80x80 (4 px, 8)  enc2-3 40x40 (8 px, 36)  enc4-5 20x20 (16 px, 92)
+      enc6-7 10x10 (32 px, 204)  dec1/mix1 20x20  dec2/mix2/head 40x40 (~300).
+    Modules are registered in forward order, which is the export order.
+    """
 
     def __init__(self):
         super().__init__()
-        lif = {
-            "initial_tau": 1.0 / (1.0 - 0.93),
-            "learnable_leak": False,
-            "v_threshold": 1.0,
-            "reset_mode": "HARD",
-        }
-        self.net = nn.Sequential(
-            SpikingConvBN2d(1, 16, kernel_size=8, stride=4, padding=2,
-                            bias=False, first_layer=True, **lif),
-            SpikingConvBN2d(16, 32, kernel_size=4, stride=2, padding=1, bias=False, **lif),
-            SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
-            SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
-            SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
-            SpikingConvBN2d(32, 32, kernel_size=3, padding=1, bias=False, **lif),
-            SpikingConvBN2d(32, 1 + RADIUS_BINS, kernel_size=1, bias=False, **lif),
-        )
+        self.enc1 = _conv(1, 16, 8, stride=4, padding=2, first_layer=True)
+        self.enc2 = _conv(16, 32, 4, stride=2, padding=1)
+        self.enc3 = _conv(32, 32, 3)
+        self.enc4 = _conv(32, 64, 4, stride=2, padding=1)
+        self.enc5 = _conv(64, 64, 3)
+        self.enc6 = _conv(64, 64, 4, stride=2, padding=1)
+        self.enc7 = _conv(64, 64, 3)
+        self.up1 = NearestUpsample((2, 2))
+        self.dec1 = _conv(64, 64, 3)
+        self.mix1 = _conv(64, 64, 3)
+        self.up2 = NearestUpsample((2, 2))
+        self.dec2 = _conv(64, 32, 3)
+        self.mix2 = _conv(32, 32, 3)
+        self.head = _conv(32, 1 + RADIUS_BINS, 1, padding=0)
+
+    def forward(self, x):
+        e3 = self.enc3(self.enc2(self.enc1(x)))
+        e5 = self.enc5(self.enc4(e3))
+        e7 = self.enc7(self.enc6(e5))
+        m1 = self.mix1(self.dec1(self.up1(e7)) + e5)
+        m2 = self.mix2(self.dec2(self.up2(m1)) + e3)
+        return self.head(m2)
+
+
+class SizedBallDetector(nn.Module):
+    """``SizeUNet`` plus the spike count over time (the count is decoded off-chip)."""
+
+    def __init__(self):
+        super().__init__()
+        self.body = SizeUNet()
 
     def forward(self, x):
         """Spike counts, [B, 1 + RADIUS_BINS, HEAT, HEAT]."""
-        return self.net(x).sum(dim=1)
+        return self.body(x).sum(dim=1)
+
+
+def export_model(model, example_frames, device):
+    """Write ball_model.json and ball_parameters.{json,txt} for the U-Net."""
+    model.eval()
+    model_json = export_for_river(model.body, example_frames.unsqueeze(0).to(device))
+    Path("ball_model.json").write_text(model_json)
+    print("Saved architecture to: ball_model.json")
+
+    quant_config = QuantConfig(
+        weight_format=FixedPointFormat(total_bits=8, frac_bits=7),
+        potential_format=FixedPointFormat(total_bits=16, frac_bits=12),
+        enable_weight_quant=True,
+        enable_potential_quant=True,
+    )
+    prepared = prepare_qat(model, quant_config).eval()
+    layers = [
+        (name, module) for name, module in prepared.body.named_children()
+        if isinstance(module, SpikingConvBN2d)
+    ]
+    weights, biases, neurons = {}, {}, {}
+    for index, (name, layer) in enumerate(layers):
+        params = layer.export_params()
+        weights[f"weights_{index}"] = params["weights"]
+        biases[f"bias_{index}"] = params["bias"]
+        neurons[f"threshold_{index}"] = params["threshold"]
+        neurons[f"leak_{index}"] = params["leak"]
+    print("Parameter order:", ", ".join(f"{i}={name}" for i, (name, _) in enumerate(layers)))
+
+    parameters = {**weights, **biases, **neurons}
+    Path("ball_parameters.json").write_text(json.dumps(parameters, indent=2) + "\n")
+    values = []
+    for value in parameters.values():
+        values.extend(value if isinstance(value, list) else [value])
+    Path("ball_parameters.txt").write_text("\n".join(map(str, values)))
+    print("Saved parameters to: ball_parameters.json and ball_parameters.txt")
 
 
 def _log_centers(device):
@@ -352,6 +435,7 @@ def train(batch_size, epochs, time_steps):
                 "time_steps": time_steps,
                 "heatmap_stride": STRIDE,
                 "radius_centers": RADIUS_CENTERS.tolist(),
+                "architecture": ARCHITECTURE,
             }, CHECKPOINT)
         print(
             f"Epoch {epoch}/{epochs} | Training loss: {train_loss:.4f} | "
@@ -373,7 +457,7 @@ def train(batch_size, epochs, time_steps):
     print(f"Test error: {test_error:.2f} px (sensor pixels)")
     print(f"Test radius error: {test_radius:.0%} (mean relative)")
 
-    base.export_model(model, example_frames, device)
+    export_model(model, example_frames, device)
 
 
 def load_model(checkpoint_path, device):
@@ -382,8 +466,10 @@ def load_model(checkpoint_path, device):
             f"No checkpoint at {checkpoint_path}. Train first with: python train_ball_size.py"
         )
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    if checkpoint.get("sensor") != SENSOR or "radius_centers" not in checkpoint:
-        raise ValueError(f"{checkpoint_path} is not a {SENSOR}x{SENSOR} size checkpoint")
+    if checkpoint.get("sensor") != SENSOR or checkpoint.get("architecture") != ARCHITECTURE:
+        raise ValueError(
+            f"{checkpoint_path} is not a {SENSOR}x{SENSOR} {ARCHITECTURE} checkpoint; retrain."
+        )
     model = SizedBallDetector().to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     time_steps = int(checkpoint["time_steps"])
