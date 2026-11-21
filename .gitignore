@@ -13,3 +13,7 @@ ros2_ws/src/unitree_api
 ros2_ws/src/unitree_go
 !models/*.onnx
 !models/*.pt
+# Durance wheels unpacked for reading (proprietary, "Do Not Upload")
+/riverops-*/
+/river_tools-*/
+*.whl

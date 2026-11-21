@@ -48,6 +48,7 @@ Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 | Closed loop over ROS 2 in simulation | working; results below |
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
 | Recording, labelling and fine-tuning on recorded data | working with webcam takes; not yet with a real event camera |
+| riverops training for Durance's toolchain (their notebook adapted to none/left/center/right), synthetic ball data, auto-labels for recordings (calibrated tracker, per-take overrides, review sheet), export for the Kria: `reflex/river/`, `docs/river-training.md` | written; auto-labels measured on synthetic data only (92 % of frames agree with ground truth). Training tested on CPU with a stand-in for riverops only. Not yet run with the real wheel, real recordings or the board |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
 | Follow a ball: target contract (`u, v, confidence`), no-learning centroid tracker, move-stop-look controller with safety limits, follow and target nodes, scripted ball in the simulator (`docs/follow.md`) | controller and tracker unit-tested; closed loop run headless without ROS (results in `docs/follow.md`). ROS nodes written, not yet built or run. Gaze mode (`Euler` yaw) not simulated. Not tried on the real Go2 |
@@ -209,6 +210,7 @@ pixi run -e ros ros-robot-sim                  # and the camera side with detect
 |---|---|
 | `docs/real-robot.md` | What is left before the real robot, first hour with it, the Kria rehearsal and its results |
 | `docs/recording.md` | Recording takes, the labelling rule, fine-tuning |
+| `docs/river-training.md` | Training the SNN with riverops on a GPU box: synthetic data, recording layout, auto-labels, export to the Kria |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
 | `docs/durance-kria-image.md` | What is on Durance's KV260 microSD image, and what it changes for us |
