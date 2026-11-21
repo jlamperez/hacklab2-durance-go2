@@ -50,9 +50,10 @@ our own SNN has not been.
 | Sport-mode `api_id` table, checked against Unitree's client | done, tested; not tried on a robot |
 | Closed loop over ROS 2 in simulation | working; results below |
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
-| Recording, labelling and fine-tuning on recorded data | working with webcam takes; not yet with a real event camera |
+| Recording over ROS with the webcam stand-in (`ros-record`), labelling and fine-tuning | working with webcam takes |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
-| Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov |
+| Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov; about 100 takes |
+| Real-camera takes as training data (`capture/` HDF5 -> network windows) | not started: `build-real` still expects the ROS recorder's format |
 | Camera adapter for the live ROS pipeline, our SNN on the FPGA (RIVER), real Go2 | not started |
 
 ## Commands
@@ -90,9 +91,25 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 | `pixi run train` | Train the SNN on `data/synth` -> `out/models/snn.pt` |
 | `pixi run eval` | SNN versus the no-learning detector on the same held-out windows |
 | `pixi run view-data PATH` | Browse a dataset folder, or play an event recording. `--label left`, `--kind crossing`, `--sheet out/x.png` |
-| `pixi run -e ros ros-record session:=NAME` | Record labelled takes from the live stream -> `data/real/NAME` |
+| `pixi run -e ros ros-record session:=NAME` | Record labelled takes from the live ROS stream (webcam stand-in) -> `data/real/NAME`. For the real event camera use `capture/`, below |
 | `pixi run build-real data/real/*` | Recorded takes -> training set `data/real_ds` (labels derived from the arrival mark) |
 | `pixi run finetune-real --val-session NAME` | Build + fine-tune the SNN on recorded data -> `out/models/snn_real.pt` |
+
+### Record real event-camera data (Kria + GenX320, no ROS)
+
+Guided recording with Durance's `river-tools`: the laptop starts the camera on the Kria over SSH,
+shows what to do for each take, and saves labelled takes as HDF5 in `data/river_samples/<session>/`.
+Runs as Python modules from the repo root, in an environment with `river-tools` and `h5py`
+(not pixi; setup in `docs/recording-real-data.md`).
+
+| Command | What it does |
+|---|---|
+| `python -m capture.record --session NAME --plan cross` | Guided recording. SPACE start / end, M mark, B redo, N skip, Q quit. Plans: `follow`, `cross`, `center`; the same session name resumes |
+| `python -m capture.record --session NAME --list` | Print the session's plan |
+| `python -m capture.replay data/river_samples/NAME` | Play the takes with label, marks and event-rate timeline (also `.bin` files and Durance's dataset) |
+| `python -m capture.relabel data/river_samples/NAME 19 40 --note "..."` | A take showed something else: move it to the right take of the plan |
+| `python -m capture.summarize --plan-session NAME` | Tables of what is recorded, and which takes are missing |
+| `python -m capture.bin_to_h5 FOLDER` | Convert river-tools `.bin` recordings to HDF5 |
 
 ### Run the loop over ROS 2
 
@@ -193,13 +210,22 @@ ssh -t ubuntu@kria.local docker run --rm -it --net=host --device /dev/video0 ref
 pixi run -e ros ros-robot-sim                                                             # terminal 2
 ```
 
-Record real takes and fine-tune (camera side running as above):
+Record webcam takes over ROS and fine-tune (camera side running as above):
 
 ```bash
 pixi run -e ros ros-record session:=sat_am     # l / c / r / n start a take, SPACE = ball arrived
 pixi run view-data data/real_ds                # after: pixi run build-real data/real/*
 pixi run finetune-real --val-session sat_pm
 pixi run -e ros ros-robot-sim                  # and the camera side with detector:=snn model:=out/models/snn_real.pt
+```
+
+Record with the real event camera (Kria plugged into the laptop, `river-tools` environment):
+
+```bash
+ssh root@durance-kria.local despot_test_camera                 # once after every boot
+python -m capture.record --session sun_cross3 --plan cross     # guided takes
+python -m capture.replay data/river_samples/sun_cross3         # check them
+python -m capture.summarize --plan-session sun_cross3
 ```
 
 ## Documentation

@@ -1,6 +1,12 @@
-"""Guided recording session with the Durance event camera (follow-the-ball data plan).
+"""Guided recording session with the Durance event camera.
 
-The script walks through the takes of docs/data-plan-follow.md one by one. For each take
+The script walks through the takes of a plan one by one:
+    follow   docs/data-plan-follow.md: ball zones, ball stopping, distractors, drone (59 takes)
+    cross    ball rolled in from the left / right / from the center, 10 each, + 10 no-ball
+    center   ball starts in the center and rolls to the left / right, or straight at the camera,
+             10 each, + 10 no-ball (+ 3 spare straight-throw slots)
+Choose with --plan when creating a session; the session folder remembers it in plan.txt.
+A new plan is a function returning a list of Take, registered in PLANS. For each take
 it shows what to do, you press SPACE when the action starts and SPACE again when it ends,
 and the take is saved with its label. A short stretch before the start and after the end
 is kept as well (--pre / --post), with the two marks stored next to it.
@@ -9,7 +15,7 @@ Runs on the laptop, in the environment where Durance's river-tools is installed 
 river-tools to start the camera on the Kria and to receive the event stream), from the
 repo root:
 
-    & "$env:USERPROFILE\\.venvs\\river-tools\\Scripts\\python.exe" -m capture.record --session sat_follow1
+    & "$env:USERPROFILE\\.venvs\\river-tools\\Scripts\\python.exe" -m capture.record --session sat_cross1 --plan cross
 
 Keys (in the window):
     SPACE       start the take / end the take

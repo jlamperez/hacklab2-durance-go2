@@ -8,6 +8,7 @@ removes most of the confusion.
 | Plain | `pixi run NAME` | PC or laptop | no | no |
 | ROS | `pixi run -e ros ros-NAME` | PC or laptop | yes | yes |
 | Kria | `pixi run -e kria kria-NAME` | the Kria board | yes | yes, from the PC |
+| Capture | `python -m capture.NAME` | laptop with the Kria plugged in | no | no |
 
 - `-e ros` selects the environment that contains ROS 2. Without it, `ros2` does not exist.
 - All commands are run from the repository folder (`hacklab2-durance-go2`).
@@ -142,6 +143,22 @@ ssh -t ubuntu@kria.local 'cd hacklab2-durance-go2 && ~/.pixi/bin/pixi run --froz
 From the PC: `bash scripts/sync_kria.sh` copies the code to the board and rebuilds the
 Docker image; `NO_DOCKER=1 bash scripts/sync_kria.sh` copies only (then `kria-build`).
 The Docker route is in `docs/real-robot.md`.
+
+## Real event camera: capture (no pixi, no ROS)
+
+Recording from the real GenX320 on the Kria with Durance's `river-tools`. Runs from the repo
+folder in a Python environment that has `river-tools` and `h5py` (on the Windows laptop:
+`& "$env:USERPROFILE\.venvs\river-tools\Scripts\python.exe"`). Setup, tips and the file format: `docs/recording-real-data.md`.
+
+| Command | What it does | Opens |
+|---|---|---|
+| `ssh root@durance-kria.local despot_test_camera` | camera check, once after every boot of the board | nothing |
+| `python -m capture.record --session NAME --plan PLAN` | guided, labelled takes into `data/river_samples/NAME`; plans `follow`, `cross`, `center`; resumes | window with live events |
+| `python -m capture.record --session NAME --list` | prints the session's plan | nothing |
+| `python -m capture.replay PATH` | plays a session, a folder of `.h5`/`.bin` files, or files | window; `--snapshot out.png` saves a frame |
+| `python -m capture.relabel SESSION SRC DST --note TEXT` | moves a mislabelled take to the right take of the plan | nothing |
+| `python -m capture.summarize --plan-session NAME` | Markdown tables: takes per session and label, missing takes | nothing |
+| `python -m capture.bin_to_h5 PATH` | river-tools `.bin` -> `.h5`; `--remove` deletes the `.bin` after a verified read-back | nothing |
 
 ## Recipes
 

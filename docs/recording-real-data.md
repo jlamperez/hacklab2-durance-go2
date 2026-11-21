@@ -41,6 +41,11 @@ GenX320 --MIPI--> Kria KV260 (despot_debug_camera) --TCP, raw events--> laptop
    Python may accept connections, allow it. If the live view stays black, this is the first
    suspect.
 
+**On Linux** (e.g. a teammate's machine) the same works: a Python 3.10+ venv with the
+river-tools wheel and `h5py` (`pip install <wheel> h5py`, the wheel's own Python 3.10 pin is
+fine there), the Kria on an Ethernet port, and port 3333 open in the firewall (`ufw allow 3333/tcp`
+if ufw is active). Not tried yet on Linux. pixi is not needed for recording.
+
 Below, `$PY` stands for `& "$env:USERPROFILE\.venvs\river-tools\Scripts\python.exe"` and all
 commands run from the repo root. The tools live in `capture/` and run as modules
 (`-m capture.record`), so they find `reflex/` without installing it; the file format is in
@@ -55,12 +60,14 @@ commands run from the repo root. The tools live in `capture/` and run as modules
    ```
 2. **Start the guided recorder:**
    ```powershell
-   $PY -m capture.record --session sat_follow2                       # all takes not yet recorded
+   $PY -m capture.record --session sun_cross3 --plan cross          # new session with plan "cross"
+   $PY -m capture.record --session sat_follow2                       # resume: all takes not yet recorded
    $PY -m capture.record --session sat_follow2 --takes 46-51,17-20   # only these, in this order
-   $PY -m capture.record --session x --list                         # print the plan
+   $PY -m capture.record --session x --plan center --list           # print a plan
    ```
    The same session name resumes where it stopped. A new name starts a new session (use one
-   per place / day, so a whole session can be held out for validation).
+   per place / day, so a whole session can be held out for validation). `--plan` only matters
+   for a new session; afterwards the session uses the plan in its `plan.txt`.
 3. **Record.** Click into the window once (it must have keyboard focus). For each take the
    window shows the label in large letters and what to do.
 
@@ -93,6 +100,22 @@ commands run from the repo root. The tools live in `capture/` and run as modules
 - **Turning the camera** produces 50–100 times more events than a rolling ball (ego-motion).
   Walking forward slowly does not.
 - **If a take shows something else than asked**, relabel it instead of deleting it (below).
+
+## Plans
+
+A plan is the list of takes the recorder walks through (`capture/record.py`, `PLANS`). Each
+session folder stores its plan name in `plan.txt`, so resuming, relabelling and summarizing pick
+the right list. Take numbers are positions in the plan and never change: new takes are only
+ever appended at the end.
+
+| Plan | Takes | What | Used in |
+|---|---|---|---|
+| `follow` | 59 | following the ball: ball in a zone at ~2 m, close, still; ball rolls and comes to rest (`stop-<zone>`, M at the stop); sweeps / approaches (time-labelled with M); moving camera; distractors (feet, other objects, bag, drone, waving with / without the ball). Reasoning in `docs/data-plan-follow.md` | `sat_follow1` (older version), `sat_follow2` |
+| `cross` | 40 | ball rolled in from outside the picture: `from-left`, `from-right`, `from-center` (straight at the camera), 10 each; 10 `no-ball` (4 person walking, 2 arms / hands, 2 lamp / shadow, 2 nothing) | `sat_cross1` |
+| `center` | 43 | ball starts far back in the center and rolls `to-left` / `to-right`, or `from-center` straight at the camera, 10 each; the same 10 `no-ball`; 3 spare `from-center` slots (40-42) for straight throws recorded under another number | `sat_cross2` |
+
+To add a case to a plan, append a `Take` at the end of its function. To add a plan, write a
+function returning a list of `Take` and register it in `PLANS`.
 
 ## Replay
 
@@ -147,7 +170,10 @@ with h5py.File("data/river_samples/sat_follow2/take_004_left.h5") as f:
 / `right` = third of the image the ball is in; `close` = bottom edge; `none` = nothing to follow;
 `stop-<zone>` = ball comes to rest (M at the moment it stops); `sweep`, `approach`, `diagonal`,
 `leave`, `turn-to-ball` = time-labelled with M marks; `drone`, `wave-ball`, `wave-hand` = own
-labels, to be mapped to follow / ignore later.
+labels, to be mapped to follow / ignore later. Plans `cross` / `center`: `from-left`, `from-right`
+= ball enters from that side; `to-left`, `to-right` = ball starts in the center and leaves to that
+side; `from-center` = straight at the camera; `no-ball` = no ball (people, arms, lights, nothing).
+These label the whole take; the ball's position at each moment is not labelled.
 
 ## Troubleshooting
 
@@ -159,43 +185,52 @@ labels, to be mapped to follow / ignore later.
 | Camera program hangs on start | run `despot_test_camera` once after boot |
 | Fan at full speed after shutdown | normal for the KV260; unplug |
 
-## What we have (snapshot 21 Nov 2026, evening)
+## What we have (snapshot 21 Nov 2026, night)
 
-Regenerate with `python -m capture.summarize`. One room, one camera position (stand at
-dog height, not on the robot), one day.
+Regenerate with `python -m capture.summarize`. One room (about 2 m deep), one camera position
+(stand at dog height, not on the robot), one day.
 
-| Session | Takes | Action time | Events | Size |
-|---|---|---|---|---|
-| sat_follow1 | 5 | 31 s | 13.7 M | 32 MB |
-| sat_follow2 | 26 | 107 s | 16.9 M | 43 MB |
-| samples (no labels) | 8 | | | 5 MB |
+| Session | Plan | Takes | Action time | Events | Size |
+|---|---|---|---|---|---|
+| sat_follow1 | follow (older version) | 5 | 31 s | 13.7 M | 32 MB |
+| sat_follow2 | follow | 26 | 107 s | 16.9 M | 43 MB |
+| sat_cross1 | cross | 40 | 122 s | 2.8 M | 9 MB |
+| sat_cross2 | center | 30 | 66 s | 2.6 M | 8 MB |
+| samples | (no labels) | 8 | | | 5 MB |
 
-| Label | Takes | Action time | Median events/s |
+| Label | Takes | Median events/s | Sessions |
 |---|---|---|---|
-| none | 11 | 61 s | 3,440 |
-| left | 7 | 29 s | 1,916 |
-| right | 4 | 9 s | 2,239 |
-| center | 3 | 4 s | 1,472 |
-| close | 3 | 7 s | 2,637 |
-| drone (camera moving) | 1 | 19 s | 36,498 |
-| wave-ball | 1 | 4 s | 104,503 |
-| wave-hand | 1 | 4 s | 69,474 |
+| from-center | 21 | 25,636 | sat_cross1, sat_cross2 |
+| none | 11 | 3,440 | sat_follow1, sat_follow2 |
+| from-left | 10 | 11,129 | sat_cross1 |
+| from-right | 10 | 12,606 | sat_cross1 |
+| no-ball | 10 | 13,002 | sat_cross1 |
+| to-left | 10 | 11,328 | sat_cross2 |
+| to-right | 9 | 8,749 | sat_cross2 |
+| left / right / center / close | 7 / 4 / 3 / 3 | 1,500-2,600 | sat_follow1, sat_follow2 |
+| drone, wave-ball, wave-hand | 1 each | 36,000-105,000 | sat_follow2 |
 
 What the numbers say:
 
-- Still scene: about 20–25 events/s of sensor noise (takes 15, 16). A ball at 2 m: a few
-  thousand events/s. Camera turning: 160,000–220,000 events/s. Flicker: about 2.4 million.
-- `sat_follow1` is the first trial with an older plan; its take 3 (`left`, 1 m) is unusable
-  (ball below the picture). Its take 4 and the rest of `sat_follow2` are usable.
+- Still scene: about 20-40 events/s of sensor noise (sat_follow2 takes 15, 16). A ball at 2 m:
+  a few thousand events/s; thrown balls in the cross sessions: about 10,000-25,000. Camera
+  turning: 160,000-220,000. Flicker: about 2.4 million.
+- `sat_follow1` take 3 (`left`, 1 m) is unusable: the ball was below the picture.
+- `sat_cross1` takes 38-39 ("nothing moves") still have about 8,000 events/s: something moved
+  or flickered. Fine as `no-ball`, not as a noise reference.
+- `sat_cross2` take 40 was recorded as take 19 (`to-right`) and relabelled after replay; slot 19
+  is empty. Its 10 `no-ball` takes (30-39) are not recorded yet.
 - Phase 1 ball takes in `sat_follow2` may show a hand or foot nudging the ball.
 
-Not recorded yet (33 of 59 plan takes), most important first:
+Still missing:
 
-1. **Ball rolls and comes to rest** (46–51), the trigger of the follow behavior: none yet.
-2. Sweeps, approaches, diagonals, leave (17–23): no time-labelled takes yet.
-3. Ball far back (54–56), ball plus a person (52–53).
-4. Feet, kick, other objects, bag (36–41); drone with the camera still (42–44).
-5. Remaining moving-camera takes (24, 29, 30, 32, 34, 35).
+1. `sat_follow2`: ball rolls and comes to rest (46-51), sweeps / approaches (17-23), ball far
+   back (54-56), ball + person (52-53), feet / objects / bag (36-41), drone with a still camera
+   (42-44), remaining moving-camera takes. `python -m capture.summarize --plan-session sat_follow2`
+   lists them.
+2. `sat_cross2`: the 10 `no-ball` takes.
+3. Anything with the camera mounted on the robot.
 
-Enough to test a model trained elsewhere (simulator) on left / center / right / close and on a
-few distractors; not enough to train on, and nothing yet from the camera mounted on the robot.
+Enough to test models trained elsewhere (simulator) and to compare sessions; not enough to
+train on alone. The takes are not yet converted into the network's input windows (`build-real`
+expects the ROS recorder's format).

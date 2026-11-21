@@ -9,8 +9,9 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
 ## Rules for this repo
 
 - **Everything in English**: code, comments, docs, commit messages.
-- **Say what is simulated.** Nothing here has touched the real robot, the real event camera
-  or Durance's toolchain yet. Keep the status table in `README.md` honest.
+- **Say what is simulated.** Nothing here has touched the real robot yet. The real event camera
+  has been used for recording only (`capture/`, about 100 takes, camera on a stand), and the
+  team deployed Durance's example model on the board. Keep the status table in `README.md` honest.
 - **Never write a Unitree `api_id` from memory.** Each one is checked against
   `ros2_sport_client` in `unitree_ros2` and recorded with its source file and commit.
 - Keep the model small and in plain PyTorch. It has to be ported to Durance's RIVERLib,
@@ -45,6 +46,17 @@ pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rq
 pixi run -e ros <cmd>   # anything that needs ROS 2 Humble
 ```
 
+Real event camera (laptop with the Kria plugged in; Python env with Durance's `river-tools` and
+`h5py`, not pixi; see `docs/recording-real-data.md`):
+
+```bash
+python -m capture.record --session NAME --plan follow|cross|center   # guided, labelled takes -> data/river_samples/NAME
+python -m capture.replay data/river_samples/NAME                    # play takes with labels and marks
+python -m capture.relabel data/river_samples/NAME SRC DST --note .. # fix a take's label
+python -m capture.summarize --plan-session NAME                     # what is recorded / missing
+python -m capture.bin_to_h5 FOLDER                                  # river-tools .bin -> .h5
+```
+
 Rendering is headless (`MUJOCO_GL=egl`). To check a visual result, open `out/demo.png`.
 
 ## Architecture
@@ -68,6 +80,9 @@ Three seams let simulation be swapped for the real thing:
   reflexes are posture changes. Optional walking (`locomotion.py`, `models/go2_walk.onnx`,
   a policy trained with unitree_rl_mjlab) is off unless `enable_walking()` / `locomotion:=rl`
   is used; keep it optional. Details in `docs/go2-control.md`.
+- `capture/`: recording real event-camera data with Durance's `river-tools` (no ROS); file
+  format in `reflex/events/h5.py` (one HDF5 per take: t, x, y, p + attributes). Never commit
+  river-tools, Durance's dataset or recordings (`data/` is ignored).
 - `ros2_ws/src/reflex_msgs`: `EventWindow`, `ReflexDecision`.
 - `ros2_ws/src/reflex_ros`: three nodes. `sim_bridge` (MuJoCo behind the robot's and the
   camera's topics, with a configurable actuation delay, scores every shot), `perception`
