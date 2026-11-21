@@ -80,10 +80,12 @@ commands run from the repo root. The tools live in `capture/` and run as modules
    | B | delete the last saved take and record it again |
    | Q | quit (closing the window also stops the camera on the board) |
 
-   ![The guided recorder: take label, instruction, live events, status](img/capture_record_recording.png)
+   | Waiting for the take (green: SPACE starts it) | Recording (red: SPACE ends it) |
+   |---|---|
+   | ![Recorder ready](img/capture_record_ready.png) | ![Recorder recording](img/capture_record_recording.png) |
 
-   *The recorder during a take (screenshot made by feeding a recorded take in as the live
-   stream). Before SPACE the status line reads "Ready - SPACE when the action starts" in green.*
+   *Screenshots made by feeding a recorded take (sat_cross1, ball from the left) into the
+   recorder as the live stream; with the camera the window looks the same.*
 
    Each take keeps 1 s before the first SPACE and 0.5 s after the second, so the start and end
    of the action are not clipped. Every key press is logged to the console.

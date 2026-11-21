@@ -241,6 +241,7 @@ python -m capture.summarize --plan-session sun_cross3
 |---|---|
 | `docs/real-robot.md` | What is left before the real robot, first hour with it, the Kria rehearsal and its results |
 | `docs/recording.md` | Recording takes, the labelling rule, fine-tuning |
+| `capture/README.md` | The capture tools at a glance: screenshots, quick start, what each module does |
 | `docs/recording-real-data.md` | How to record, replay, relabel and share real event-camera data; what we have so far |
 | `docs/data-plan-follow.md` | What to record with the real event camera for following the ball |
 | `docs/durance-riversdk.md` | Notes from Durance's docs: Kria, Go2 networking, ROS 2 build, FPGA deployment, capture |
