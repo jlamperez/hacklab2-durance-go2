@@ -5,8 +5,10 @@
               /reflex/debug/perception   std_msgs/String, JSON: what is behind the decision
                                          (class probabilities, firing rate per layer, input activity)
 
-The detector is chosen by a parameter, so the SNN and the no-learning detector are
-swapped without touching anything else.
+The detector is chosen by a parameter, so the SNN, the no-learning detector and the ball
+detector (Durance's riverops network from models/ball, `detector:=ball`) are swapped
+without touching anything else. The camera side must send the window the detector needs
+(`reflex.runtime.detectors.window_config`): sim_bridge does when given the same `detector`.
 """
 import json
 import time
@@ -18,7 +20,8 @@ from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
-from reflex.runtime.detectors import SimpleConfig, SimpleDetector, SNNDetector
+from reflex.runtime.detectors import (BallConfig, BallDetector, SimpleConfig, SimpleDetector,
+                                      SNNDetector, window_config)
 from reflex_msgs.msg import EventWindow, ReflexDecision
 
 
@@ -29,11 +32,18 @@ class PerceptionNode(Node):
         model = self.declare_parameter("model", "out/models/snn.pt").value
         device = self.declare_parameter("device", "cpu").value
         threshold = self.declare_parameter("simple_threshold", 0.0).value
+        ball_dir = self.declare_parameter("ball_dir", "models/ball").value
+        # P(ball) threshold; 0 = the one in ball_readout.json (0.5).
+        p_ball = float(self.declare_parameter("ball_threshold", 0.0).value)
         # Simple detector only: seconds of "nothing happening" used to set its threshold.
         self.calibrate_s = self.declare_parameter("calibrate_s", 1.5).value
         if self.kind == "snn":
             self.detector = SNNDetector(model, device=device)
             self.get_logger().info(f"SNN detector from {model} on {device}")
+        elif self.kind == "ball":
+            self.detector = BallDetector(BallConfig(model_dir=ball_dir, p_ball=p_ball or None, device=device))
+            self.get_logger().info(f"ball detector from {ball_dir} on {device}, "
+                                   f"P(ball) threshold {self.detector.threshold}")
         elif self.kind == "simple":
             self.detector = SimpleDetector(SimpleConfig())
             if threshold > 0:
@@ -43,6 +53,8 @@ class PerceptionNode(Node):
         else:
             raise ValueError(f"unknown detector {self.kind!r}")
         self._calib, self._t0 = [], None
+        self._expected = window_config(self.kind)
+        self._warned_window = False
         self._calibrate_for = float(self.calibrate_s)
         if self.kind == "simple":
             # ros2 service call /reflex/recalibrate std_srvs/srv/Trigger
@@ -65,6 +77,14 @@ class PerceptionNode(Node):
         window = np.frombuffer(bytes(msg.data), dtype=np.uint8).reshape(
             msg.n_bins, msg.channels, msg.height, msg.width)
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        exp = self._expected
+        if not self._warned_window and (abs(msg.window_ms - exp.window_ms) > 1e-6
+                                        or (msg.n_bins, msg.channels, msg.height, msg.width) != exp.shape):
+            self._warned_window = True
+            self.get_logger().error(
+                f"detector {self.kind!r} expects {exp.window_ms:g} ms windows of shape {exp.shape}, got "
+                f"{msg.window_ms:g} ms {(msg.n_bins, msg.channels, msg.height, msg.width)}: start the "
+                f"camera side with the same detector:= so it sends the right window")
         if self.kind == "simple" and self.calibrate_s > 0:
             self._t0 = t if self._t0 is None else self._t0
             if t - self._t0 < SETTLE_S + self.calibrate_s:

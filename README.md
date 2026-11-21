@@ -38,7 +38,7 @@ Two loops around that pipeline:
 
 Our nodes have not driven the real Go2, and nothing has run on the real event camera or on
 Durance's FPGA. Durance's toolchain has been used off the board: riverops to export the
-ball detector, riversdk.dev to build its firmware (first build failed in place-and-route).
+ball detector, riversdk.dev to build its firmware (both builds so far failed in place-and-route).
 
 | Part | State |
 |---|---|
@@ -51,8 +51,8 @@ ball detector, riversdk.dev to build its firmware (first build failed in place-a
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
 | Recording, labelling and fine-tuning on recorded data | working with webcam takes; not yet with a real event camera |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
-| Ball detector (riverops U-Net, `models/ball/`, trained by the team on the Tübingen event-camera ball dataset, branch `feat/training`) | exported from its checkpoint with `PROVENANCE.md`; runs on the PC in the board's integer arithmetic (matches riverops' fixed-point emulation); sees simulated balls when they are close, 2/400 false frames idle; not in the ROS loop yet |
-| Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | job #30 failed in place-and-route; being retried |
+| Ball detector (riverops U-Net, `models/ball/`, trained by the team on the Tübingen event-camera ball dataset, branch `feat/training`) | exported from its checkpoint with `PROVENANCE.md`; runs on the PC in the board's integer arithmetic (matches riverops' fixed-point emulation); sees simulated balls when they are close, 2/400 false frames idle; in the ROS loop in simulation (`detector:=ball`, results below) |
+| Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | failed in place-and-route twice (job #30 and a retry); probably too large for the KV260, not confirmed |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
 | Camera adapter for the real sensor, SNN on the FPGA (SPLEAT), our nodes driving the real Go2 | not started |
 
@@ -99,7 +99,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 
 | Command | What it does |
 |---|---|
-| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple`, `max_shots:=12`, `actuation_delay_ms:=70.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
+| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple\|ball`, `max_shots:=12`, `actuation_delay_ms:=70.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
 | `pixi run -e ros ros-camera` | Camera side only: webcam as stand-in event camera + perception. `mirror:=true` |
 | `pixi run -e ros ros-robot-sim` | Robot side only: behavior + simulated dog in a 3D window |
 | `pixi run -e ros ros-drive` | Simulated dog driven by `/cmd_vel`, converted to the Go2's `Move` command |
@@ -246,6 +246,19 @@ windows, listens on `/api/sport/request`), perception and behavior. One run, 12 
 | SNN | 300 ms | 9 / 9 | 0 | 0 | 2 / 3 | 188 ms |
 | SNN | 400 ms | 6 / 9 | 3 | 0 | 2 / 3 | 142 ms |
 | No-learning | 300 ms | 2 / 9 | 6 | 1 | 3 / 3 | 112 ms |
+
+Same 12 shots at the measured 70 ms delay, with the ball detector (Durance-style riverops
+U-Net from `models/ball`, run on the PC in the FPGA's integer arithmetic, `detector:=ball`):
+
+| Detector | Actuation delay | Correct | Missed | Wrong side | False triggers | Median margin before arrival |
+|---|---|---|---|---|---|---|
+| SNN | 70 ms | 8 / 9 | 0 | 1 | 2 / 3 | 410 ms |
+| Ball detector | 70 ms | 7 / 9 | 1 | 1 | 3 / 3 | 106 ms |
+
+The ball detector finds balls only once they are close, so it reacts late, and it reacts to
+every ball, including the ones crossing or rolling past: its decision is "a ball is in this
+third of the image", with no notion of approach yet. It was trained on real event data and
+here sees emulated events.
 
 Twelve shots is a smoke test, not a benchmark. The two SNN false triggers are both balls
 crossing sideways. The actuation delay is the time the simulated dog waits before it

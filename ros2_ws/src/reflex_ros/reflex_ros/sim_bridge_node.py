@@ -15,6 +15,7 @@ apart from the robot, which is the point: it is that node's test bench.
 """
 from array import array
 import json
+import math
 import os
 from collections import deque
 
@@ -28,7 +29,8 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Float32, Float32MultiArray, String
 
 from reflex.data.episodes import DOG_FRONT_X, THREAT_NEAR
-from reflex.data.windows import WindowConfig, make_window
+from reflex.data.windows import make_window
+from reflex.runtime.detectors import window_config
 from reflex.events import repr as ev_repr
 from reflex.events.emu import EmuConfig, EventEmulator
 from reflex.runtime import sport_api
@@ -81,7 +83,8 @@ class SimBridge(Node):
 
         self.rng = np.random.default_rng(seed)
         self.sim = Go2Sim(seed=seed, scene=scene)
-        self.wcfg = WindowConfig()
+        # The window the perception node's detector needs (detector:=ball: 1 ms, full resolution).
+        self.wcfg = window_config(p("detector", "snn").value)
         if self.locomotion == "rl":
             self.sim.enable_walking()
         elif self.locomotion != "none":
@@ -93,7 +96,9 @@ class SimBridge(Node):
         self.emu = EventEmulator(h, w, EmuConfig.randomized(self.rng) if randomize else EmuConfig(), self.rng)
         if self.camera:
             self.emu.reset(to_gray(self.sim.render_eye()), 0)
-        self.recent = deque(maxlen=round(self.wcfg.window_ms * 1e-3 / self.sim.dt))
+        # Steps of events kept: one window, at least one step more than it spans (a 1 ms window
+        # needs the step that contains it), and the 20 ms the debug image shows.
+        self.recent = deque(maxlen=max(10, math.ceil(self.wcfg.window_ms * 1e-3 / self.sim.dt) + 1))
 
         # As the robot only, it publishes no camera data and no clock: creating those
         # publishers anyway would draw it as a second camera in rqt_graph.

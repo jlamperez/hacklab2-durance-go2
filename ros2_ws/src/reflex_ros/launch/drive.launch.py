@@ -26,7 +26,7 @@ ARGS = {"actuation_delay_ms": "70.0", "viewer": "true", "timeout_s": "0.0", "cam
 def generate_launch_description():
     bridge = Node(package="reflex_ros", executable="sim_bridge", output="screen", parameters=[{
         "robot_only": True, "locomotion": "rl", "viewer": PV(LC("viewer"), value_type=bool),
-        "camera": PV(LC("camera"), value_type=bool), "scene": LC("scene"),
+        "camera": PV(LC("camera"), value_type=bool), "scene": LC("scene"), "detector": LC("detector"),
         "actuation_delay_ms": PV(LC("actuation_delay_ms"), value_type=float)}],
         additional_env={"MUJOCO_GL": "glfw"})
     teleop = Node(package="reflex_ros", executable="cmd_vel_to_sport", output="screen", parameters=[{

@@ -16,6 +16,8 @@ from pathlib import Path
 
 import numpy as np
 
+from reflex.data.windows import WindowConfig
+
 LABELS = ("none", "left", "center", "right")
 
 
@@ -81,8 +83,16 @@ class BallConfig:
 
 
 # Window the ball network was trained on: one binary frame of the last 1 ms of events
-# (Training/train_ball_size.py: ACC_TIME = 1000 us, polarity discarded).
+# (Training/train_ball_size.py: ACC_TIME = 1000 us, polarity discarded), full resolution.
 BALL_WINDOW_MS = 1.0
+
+
+def window_config(detector: str) -> WindowConfig:
+    """Window a detector needs from the camera side: the ball network takes 1 ms at full
+    resolution, the SNN and the simple detector the default 50 ms, 10 steps, downsampled."""
+    if detector == "ball":
+        return WindowConfig(window_ms=BALL_WINDOW_MS, n_bins=1, downsample=1)
+    return WindowConfig()
 
 
 class BallDetector:

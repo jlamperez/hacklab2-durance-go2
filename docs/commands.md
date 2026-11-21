@@ -79,7 +79,8 @@ Only `ros-sim` is complete on its own. The others do nothing visible until their
 
 Arguments (defaults in brackets):
 
-- `ros-sim`: `detector:=snn|simple` [snn], `max_shots:=N` [0, endless], `negative_fraction:=0.3`,
+- `ros-sim`: `detector:=snn|simple|ball` [snn] (`ball`: Durance's ball network from `models/ball`,
+  `device:=cuda` to run it on the GPU), `max_shots:=N` [0, endless], `negative_fraction:=0.3`,
   `actuation_delay_ms:=70.0`, `record:=out/x.mp4`, `mode:=keeper|dodge`,
   `reaction:=euler|move`, `locomotion:=none|rl`, `move_vy:=0.3`, `hold_s:=0.6`,
   `shot_period_s:=3.0`, `seed:=0`, `randomize:=false`, `viewer:=false` (true: also open the
@@ -91,7 +92,7 @@ Arguments (defaults in brackets):
   what it would send), `min_confidence:=0.6`, `consecutive:=2`.
 - `ros-drive`: `viewer:=true`, `actuation_delay_ms:=70.0`, `timeout_s:=0.0`,
   `camera:=false` (true: the dog's simulated event camera and the detector run while you
-  drive), and with the camera `detector:=snn|simple` [snn].
+  drive), and with the camera `detector:=snn|simple|ball` [snn].
 
 Scenery: `ros-sim`, `ros-robot-sim` and `ros-drive` take `scene:=lab|park` [lab]. `park` is
 an outdoor scene built from code (grass, a gravel path, trees, benches, a brick wall, houses);
