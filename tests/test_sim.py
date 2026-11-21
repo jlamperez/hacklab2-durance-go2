@@ -196,3 +196,22 @@ def test_park_scene_is_optional_and_keeps_the_lane_clear():
     assert park.render_eye().std() > 20          # not a flat picture
     with pytest.raises(ValueError):
         Go2Sim(seed=0, scene="moon")
+
+
+def test_slide_follows_the_real_go2_sidestep(sim):
+    """Move y=0.3 for 1 s without the walking policy covers what the real Go2 did."""
+    sim.reset()
+    y0, at = sim.data.qpos[1], {}
+    sim.set_slide(0.0, 0.3, 0.0)
+    for i in range(int(2.0 / sim.dt)):
+        t = (i + 1) * sim.dt
+        if abs(t - 1.0) < sim.dt / 2:
+            sim.set_slide(0.0, 0.0, 0.0)
+        sim.step()
+        for mark in (0.3, 0.5, 1.0, 2.0):
+            if abs(t - mark) < sim.dt / 2:
+                at[mark] = (sim.data.qpos[1] - y0) * 100
+    real = {0.3: 3.0, 0.5: 6.9, 1.0: 20.0, 2.0: 21.6}     # cm, real Go2 on 21 Nov 2026
+    for mark, cm in real.items():
+        assert abs(at[mark] - cm) < 1.0, (mark, at[mark])
+    assert sim.upright() > 0.99 and np.abs(sim.data.qvel[:6]).max() < 0.05

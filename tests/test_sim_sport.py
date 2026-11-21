@@ -33,3 +33,29 @@ def test_sit_and_hello_have_a_simulated_version():
     assert pose_for_request(api.SIT.api_id) == "sit"
     assert pose_for_request(api.RISE_SIT.api_id) == "stand"
     assert pose_for_request(api.HELLO.api_id) == "hello"
+
+
+def test_posture_mode_gates_euler_and_move_like_the_real_go2():
+    from reflex.runtime.sim_sport import PostureMode
+    pm = PostureMode()
+    lean = api.euler_params(0.3, 0, 0)
+    step = api.move_params(0, 0.3, 0)
+    assert not pm.handle(api.EULER.api_id, lean)          # outside posture mode: no effect
+    assert pm.handle(api.MOVE.api_id, step)               # but Move walks
+    assert not pm.handle(api.POSE.api_id, api.pose_params(True))
+    assert pm.handle(api.EULER.api_id, lean)              # inside: Euler leans
+    assert not pm.handle(api.MOVE.api_id, step)           # and Move does not walk
+    pm.handle(api.POSE.api_id, api.pose_params(False))
+    assert pm.handle(api.MOVE.api_id, step)
+    assert pm.handle(api.BALANCE_STAND.api_id)
+
+
+def test_behavior_sequences_take_effect_in_posture_mode():
+    """The requests behavior sends for a lean and back all do what they should."""
+    from reflex.runtime.sim_sport import PostureMode
+    pm = PostureMode()
+    there = api.requests_for_pose("lean_left", "stand", "euler", 0.3, 0.3)
+    back = api.requests_for_pose("stand", "lean_left", "euler", 0.3, 0.3)
+    effects = [(c.name, pm.handle(c.api_id, p)) for c, p in there + back]
+    assert effects == [("Pose", False), ("Euler", True), ("Euler", True), ("Pose", False), ("BalanceStand", True)]
+    assert pm.handle(api.MOVE.api_id, api.move_params(0, 0.3, 0))   # free to walk afterwards
