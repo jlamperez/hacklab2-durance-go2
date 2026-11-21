@@ -27,6 +27,7 @@ setup(
             "web_viewer = reflex_ros.web_viewer_node:main",
             "target = reflex_ros.target_node:main",
             "follow = reflex_ros.follow_node:main",
+            "event_camera = reflex_ros.event_camera_node:main",
         ],
     },
 )

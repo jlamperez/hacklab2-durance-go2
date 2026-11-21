@@ -52,7 +52,8 @@ Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
 | Follow a ball: target contract (`u, v, confidence`), no-learning centroid tracker, move-stop-look controller with safety limits, follow and target nodes, scripted ball in the simulator (`docs/follow.md`) | controller and tracker unit-tested; closed loop run headless without ROS (results in `docs/follow.md`). ROS nodes written, not yet built or run. Gaze mode (`Euler` yaw) not simulated. Not tried on the real Go2 |
-| Camera adapter for the real sensor, SNN on the FPGA (SPLEAT), our nodes driving the real Go2 | not started |
+| Event camera node: GenX320 recordings or the live KV260 stream into the simulation (`docs/events-sim.md`) | sources tested, recordings played through tracker and follow controller without ROS; node and launch file not yet run under ROS; live path not tried with the real camera |
+| SNN on the FPGA (SPLEAT), our nodes driving the real Go2 | not started |
 
 ## Commands
 
@@ -104,6 +105,7 @@ Arguments after a `ros-*` command are `name:=value` pairs.
 | `pixi run -e ros ros-drive` | Simulated dog driven by `/cmd_vel`, converted to the Go2's `Move` command |
 | `pixi run -e ros ros-teleop` | Keyboard that publishes `/cmd_vel` (second terminal, with `ros-drive`) |
 | `pixi run -e ros ros-follow-sim` | Simulated dog, its event camera and a ball rolled by script, plus the target node. Start `ros-follow` next to it |
+| `pixi run -e ros ros-events-sim` | Real events drive the simulated dog: a recording (`source:=data/river/sat_follow2`) or the live KV260 camera (`source:=live`) -> target + follow (or `behavior:=reflex`) -> walking dog (`docs/events-sim.md`) |
 | `pixi run -e ros ros-follow` | Follow node with a keyboard: `f` start, `SPACE` stop, `!` Damp. Starts disabled. Same node for the real Go2; `mode:=gaze` turns the trunk only |
 | `pixi run -e ros ros-tricks` | Keyboard for the Go2's built-in tricks (Hello, Sit, Stretch, dances; flips only with `allow_acrobatics:=true`). The simulator imitates Sit and Hello |
 | `pixi run -e ros ros-web` | Live dashboard in the browser at `http://localhost:8080`: 3D scene, events, decision, reflex state, latency, network activity. Run it next to any of the above |
@@ -117,6 +119,7 @@ or the robot only:
 | `ros-sim` | simulator (balls rolled at the dog) | simulator | yes |
 | `ros-camera` + `ros-robot-sim` | webcam on this PC | simulator | no, the webcam node does |
 | Kria camera + `ros-robot-sim` | webcam on the Kria | simulator | no, the Kria does |
+| `ros-events-sim` | GenX320 recordings, or the live KV260 camera | simulator, walking | no, the `event_camera` node does |
 | `ros-drive` + `ros-teleop` | none (keyboard driving) | simulator, walking | no |
 | at the hackathon | real event camera on the Kria | real Go2 | no simulator |
 
@@ -209,6 +212,7 @@ pixi run -e ros ros-robot-sim                  # and the camera side with detect
 | File | Contents |
 |---|---|
 | `docs/real-robot.md` | What is left before the real robot, first hour with it, the Kria rehearsal and its results |
+| `docs/events-sim.md` | Recordings or the live event camera driving the simulated dog: sources, calibration, what it shows |
 | `docs/recording.md` | Recording takes, the labelling rule, fine-tuning |
 | `docs/river-training.md` | Training the SNN with riverops on a GPU box: synthetic data, recording layout, auto-labels, export to the Kria |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |

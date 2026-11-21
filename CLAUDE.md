@@ -42,6 +42,8 @@ pixi run -e ros ros-drive      # drive the walking dog over ROS 2; second termin
 pixi run -e ros ros-record session:=NAME   # record labelled takes from the live stream (docs/recording.md)
 pixi run follow-sim     # dog follows a scripted ball, headless, no ROS; --video out/follow.mp4
 pixi run -e ros ros-follow-sim # simulated dog + camera + scripted ball + target node (docs/follow.md)
+pixi run -e ros ros-events-sim # recordings (source:=data/river/...) or live KV260 (source:=live) drive the
+                               #   simulated dog; behavior:=follow|reflex (docs/events-sim.md)
 pixi run -e ros ros-follow     # follow node, keyboard: f start, SPACE stop, ! Damp; starts disabled
 pixi run -e ros ros-tricks     # keyboard for built-in tricks (Hello, Sit, ...); acrobatics off by default
 pixi run -e ros ros-web        # dashboard in the browser (viser), http://localhost:8080; listens only
@@ -59,7 +61,7 @@ Three seams let simulation be swapped for the real thing:
 
 | Seam | Before the hackathon | At the hackathon |
 |---|---|---|
-| Event source, `reflex/events/io.py` | MuJoCo emulated camera, phone clips | Durance camera adapter |
+| Event source, `reflex/events/io.py`, `sources.py` | MuJoCo emulated camera, phone clips | `event_camera` node: GenX320 recordings, live KV260 stream |
 | Inference backend, `reflex/runtime/` | PyTorch, ONNX on CPU, simple detector | SPLEAT server on the KV260 (RIVERLib?) |
 | Robot, topic `/api/sport/request` | `go2_sim_bridge` on MuJoCo | the real Go2, same message |
 

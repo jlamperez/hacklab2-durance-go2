@@ -19,6 +19,7 @@ onnxruntime = "*"   # runs the optional walking policy (models/go2_walk.onnx)
 viser = ">=1.0"      # web viewer (3D scene + panels in the browser)
 trimesh = "*"
 pytest = "*"
+h5py = "*"           # event-camera recordings (data/river/*/*.h5)
 torch = { version = ">=2.7", index = "https://download.pytorch.org/whl/cu128" }
 
 [activation.env]
@@ -88,6 +89,18 @@ cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run teleop_twist_keybo
 # In a second terminal: pixi run -e ros ros-follow (press f). Or add follow:=true.
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros follow_sim.launch.py \"$@\"' --"
 
+[feature.ros.tasks.ros-events-sim]
+# Real events drive the simulated dog: a recording (or the live KV260 camera) -> target/follow
+# (or perception/behavior) -> MuJoCo dog. Arguments go to the launch file, e.g.
+#   pixi run -e ros ros-events-sim source:=data/river/sat_follow2
+#   pixi run -e ros ros-events-sim source:=live kria_host:=root@durance-kria.local
+#   pixi run -e ros ros-events-sim source:=data/river/sat_follow2 behavior:=reflex
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros events_sim.launch.py \"$@\"' --"
+
+[feature.ros.tasks.ros-event-camera]
+# Event camera node alone: replay (source:=PATH) or live (source:=live) onto /reflex/events_window.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros event_camera --ros-args $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+
 [feature.ros.tasks.ros-follow]
 # Follow node with its keyboard (f start, SPACE stop, ! Damp). Simulated or real robot.
 #   pixi run -e ros ros-follow mode:=gaze max_vx:=0.2
@@ -151,6 +164,11 @@ cwd = "ros2_ws"
 [feature.kria.tasks.kria-camera]
 # Camera side: webcam as stand-in event camera + perception. Arguments: detector:=simple mirror:=true ...
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros camera.launch.py \"$@\"' --"
+
+[feature.kria.tasks.kria-event-camera]
+# The real event camera on the board: start `despot_debug_camera --host 127.0.0.1 --port 3333`,
+# then this. Publishes /reflex/events_window for a robot side elsewhere on the network.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros event_camera --ros-args -p source:=live $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
 
 [feature.kria.tasks.kria-shell]
 cmd = "bash --rcfile scripts/ros_bashrc -i"
