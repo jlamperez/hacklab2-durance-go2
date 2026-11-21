@@ -102,7 +102,7 @@ const STAGES = {
     body: `<p>Whoever listens on <code>/api/sport/request</code> is the robot.</p>
       <ul>
         <li><b><code>go2_sim_bridge</code></b> with <code>robot_only</code> (<code>ros-robot-sim</code>, <code>ros-drive</code>):
-          a MuJoCo Go2 that maps each request to its closest pose after <code>actuation_delay_ms</code> (300 ms, a guess). In <code>ros-sim</code>
+          a MuJoCo Go2 that maps each request to its closest pose after <code>actuation_delay_ms</code> (70 ms, measured on the real Go2). In <code>ros-sim</code>
           it also launches balls and scores each shot on <code>/reflex/sim/outcome</code>.</li>
         <li>Optional walking: <code>locomotion:=rl</code> makes <code>Move</code> requests walk with a learned policy.</li>
         <li>Real Go2 <span class="badge plan">Saturday</span>: Unitree's sport mode takes the bridge's place. Same message, nothing to change
@@ -294,7 +294,7 @@ function renderBuilder() {
   if (s.cam === "sim") {
     const viewer = s.robot === "simwin" ? " viewer:=true" : "";
     term("PC", "everything simulated: camera, perception, behavior, robot",
-      [`pixi run -e ros ros-sim detector:=${s.det}${park}${viewer}`, "# optional: max_shots:=12 record:=out/loop.mp4 actuation_delay_ms:=300.0"]);
+      [`pixi run -e ros ros-sim detector:=${s.det}${park}${viewer}`, "# optional: max_shots:=12 record:=out/loop.mp4 actuation_delay_ms:=70.0"]);
   }
   if (s.cam === "pc") term("PC", "camera side: webcam + perception", [`pixi run -e ros ros-camera detector:=${s.det}`, "# mirror:=true if left and right look swapped; device:=2 for another camera"]);
   if (s.cam === "kria") {
@@ -304,7 +304,7 @@ function renderBuilder() {
   if (s.cam === "event") term("Kria", "camera side with the real sensor (planned)", ["# not written yet: a camera adapter node + perception with the RIVERLib backend", "# expected to be started like kria-camera, from a real.launch.py"]);
 
   if (s.cam !== "sim") {
-    if (simRobot) term("PC", "robot side: behavior + simulated dog", [`pixi run -e ros ros-robot-sim${s.robot === "simweb" ? " viewer:=false" : ""}${park}`, "# options: mode:=dodge reaction:=move locomotion:=rl actuation_delay_ms:=300.0"]);
+    if (simRobot) term("PC", "robot side: behavior + simulated dog", [`pixi run -e ros ros-robot-sim${s.robot === "simweb" ? " viewer:=false" : ""}${park}`, "# options: mode:=dodge reaction:=move locomotion:=rl actuation_delay_ms:=70.0"]);
     else term("PC", "robot side: behavior node only, the Go2 is the robot", [
       "pixi run -e ros ros-shell",
       "# inside the shell: dry run first, it only logs what it would send",
@@ -339,7 +339,7 @@ const CMDS = [
   ["Data", "PC", "pixi run -e ros ros-record session:=sat_am", "Record labelled takes from the live stream. l c r n start, SPACE ball arrived, x cancel, u undo, q quit"],
   ["Data", "PC", "pixi run build-real data/real/*", "Recorded takes → training set data/real_ds"],
   ["Data", "PC", "pixi run finetune-real --val-session sat_pm", "Build + fine-tune on recorded data → out/models/snn_real.pt"],
-  ["Launchers", "PC", "pixi run -e ros ros-sim", "Everything simulated. detector:=snn|simple max_shots:=N actuation_delay_ms:=300.0 record:=out/x.mp4 viewer:=true scene:=park mode:=keeper|dodge"],
+  ["Launchers", "PC", "pixi run -e ros ros-sim", "Everything simulated. detector:=snn|simple max_shots:=N actuation_delay_ms:=70.0 record:=out/x.mp4 viewer:=true scene:=park mode:=keeper|dodge"],
   ["Launchers", "PC", "pixi run -e ros ros-camera", "Camera side: webcam + perception. device:=0 detector:=simple|snn mirror:=true"],
   ["Launchers", "PC", "pixi run -e ros ros-robot-sim", "Robot side: behavior + simulated dog. viewer:=false enabled:=false reaction:=move locomotion:=rl"],
   ["Launchers", "PC", "pixi run -e ros ros-drive", "Walking dog driven by /cmd_vel. camera:=true adds the simulated camera + detector; scene:=park"],

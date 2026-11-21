@@ -36,10 +36,12 @@ Two loops around that pipeline:
 
 ## Status
 
-Nothing has touched the real Go2 yet. The real event camera (GenX320 on the Kria) has: about
-100 labelled takes in four sessions recorded on 21 Nov, camera on a stand, not on the robot
-(`docs/recording-real-data.md`). Durance's example model was deployed on the board by the team;
-our own SNN has not been.
+Our nodes have not driven the real Go2, and none of our networks has run on the real event
+camera or on Durance's FPGA. The real event camera has been used for recording: about 100
+labelled takes in four sessions on 21 Nov, camera on a stand, not on the robot
+(`docs/recording-real-data.md`); the team also ran Durance's own example model on the board.
+Durance's toolchain has been used off the board: riverops to export the ball detector,
+riversdk.dev to build its firmware (both builds so far failed in place-and-route).
 
 | Part | State |
 |---|---|
@@ -47,14 +49,17 @@ our own SNN has not been.
 | Synthetic dataset with hard negatives (miss, crossing, slow, walker, idle) | working, tested |
 | SNN (26.5k parameters, plain PyTorch) and training | trains in ~90 s; 81 % window accuracy on held-out simulated episodes |
 | No-learning detector and reflex state machine | working, tested |
-| Sport-mode `api_id` table, checked against Unitree's client | done, tested; not tried on a robot |
+| Sport-mode `api_id` table, checked against Unitree's client | done; commands and signs checked by hand on the real Go2, 21 Nov (`docs/real-robot.md`) |
 | Closed loop over ROS 2 in simulation | working; results below |
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
 | Recording over ROS with the webcam stand-in (`ros-record`), labelling and fine-tuning | working with webcam takes |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
 | Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov; about 100 takes |
 | Real-camera takes as training data (`capture/` HDF5 -> network windows) | not started: `build-real` still expects the ROS recorder's format |
-| Camera adapter for the live ROS pipeline, our SNN on the FPGA (RIVER), real Go2 | not started |
+| Ball detector (riverops U-Net, `models/ball/`, trained by the team on the Tübingen event-camera ball dataset, branch `feat/training`) | exported from its checkpoint with `PROVENANCE.md`; runs on the PC in the board's integer arithmetic (matches riverops' fixed-point emulation); sees simulated balls when they are close, 2/400 false frames idle; in the ROS loop in simulation (`detector:=ball`, results below) |
+| Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | failed in place-and-route twice (job #30 and a retry); probably too large for the KV260, not confirmed |
+| Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
+| Camera adapter for the real sensor, SNN on the FPGA (SPLEAT), our nodes driving the real Go2 | not started |
 
 ## Commands
 
@@ -117,7 +122,7 @@ Runs as Python modules from the repo root, in an environment with `river-tools` 
 
 | Command | What it does |
 |---|---|
-| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple`, `max_shots:=12`, `actuation_delay_ms:=300.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
+| `pixi run -e ros ros-sim` | Everything simulated: balls, perception, behavior, scoring. `detector:=snn\|simple\|ball`, `max_shots:=12`, `actuation_delay_ms:=70.0`, `record:=out/loop.mp4`, `locomotion:=rl reaction:=move` for real sidesteps |
 | `pixi run -e ros ros-camera` | Camera side only: webcam as stand-in event camera + perception. `mirror:=true` |
 | `pixi run -e ros ros-robot-sim` | Robot side only: behavior + simulated dog in a 3D window |
 | `pixi run -e ros ros-drive` | Simulated dog driven by `/cmd_vel`, converted to the Go2's `Move` command |
@@ -241,6 +246,7 @@ python -m capture.summarize --plan-session sun_cross3
 | `docs/durance-riversdk.md` | Notes from Durance's docs: Kria, Go2 networking, ROS 2 build, FPGA deployment, capture |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
+| `docs/durance-kria-image.md` | What is on Durance's KV260 microSD image, and what it changes for us |
 | `docs/questions-for-durance.md` | What to ask at the opening |
 | `CLAUDE.md` | Rules and architecture notes for working on this repository with an agent |
 
@@ -276,9 +282,23 @@ windows, listens on `/api/sport/request`), perception and behavior. One run, 12 
 | SNN | 400 ms | 6 / 9 | 3 | 0 | 2 / 3 | 142 ms |
 | No-learning | 300 ms | 2 / 9 | 6 | 1 | 3 / 3 | 112 ms |
 
+Same 12 shots at the measured 70 ms delay, with the ball detector (Durance-style riverops
+U-Net from `models/ball`, run on the PC in the FPGA's integer arithmetic, `detector:=ball`):
+
+| Detector | Actuation delay | Correct | Missed | Wrong side | False triggers | Median margin before arrival |
+|---|---|---|---|---|---|---|
+| SNN | 70 ms | 8 / 9 | 0 | 1 | 2 / 3 | 410 ms |
+| Ball detector | 70 ms | 7 / 9 | 1 | 1 | 3 / 3 | 106 ms |
+
+The ball detector finds balls only once they are close, so it reacts late, and it reacts to
+every ball, including the ones crossing or rolling past: its decision is "a ball is in this
+third of the image", with no notion of approach yet. It was trained on real event data and
+here sees emulated events.
+
 Twelve shots is a smoke test, not a benchmark. The two SNN false triggers are both balls
 crossing sideways. The actuation delay is the time the simulated dog waits before it
-starts moving; 300 ms is a guess to be replaced by a measurement on the real Go2.
+starts moving. These runs used 300 ms, a guess; the default is now 70 ms, measured on the real Go2
+on 21 Nov (`docs/real-robot.md`).
 From newest event to request on the wire: about 6-10 ms of simulated time, with the
 simulation running slower than real time, so this is not a latency claim.
 

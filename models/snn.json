@@ -1,0 +1,28 @@
+{
+  "accuracy": 0.8122577519379846,
+  "per_class": {
+    "none": 0.8579166666666667,
+    "left": 0.7764227642276422,
+    "center": 0.7336956521739131,
+    "right": 0.7412280701754386
+  },
+  "false_alarm": {
+    "approach": 0.19270833333333334,
+    "miss": 0.20161290322580644,
+    "crossing": 0.128125,
+    "slow": 0.10526315789473684,
+    "walker": 0.02142857142857143,
+    "idle": 0.024193548387096774
+  },
+  "false_alarm_all": 0.14208333333333334,
+  "missed_threat": 0.16319444444444445,
+  "wrong_side": 0.08796296296296297,
+  "firing_rate": [
+    0.014284840412437915,
+    0.013889906741678715,
+    0.046124886721372604
+  ],
+  "train_seconds": 85.22659230232239,
+  "parameters": 26516,
+  "validation": "held-out SIMULATED episodes; says nothing about the real camera"
+}
