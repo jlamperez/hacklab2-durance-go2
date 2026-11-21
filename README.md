@@ -36,7 +36,9 @@ Two loops around that pipeline:
 
 ## Status
 
-Nothing has touched the real Go2, the real event camera or Durance's toolchain.
+Our nodes have not driven the real Go2, and nothing has run on the real event camera or on
+Durance's FPGA. Durance's toolchain has been used off the board: riverops to export the
+ball detector, riversdk.dev to build its firmware (first build failed in place-and-route).
 
 | Part | State |
 |---|---|
@@ -49,6 +51,8 @@ Nothing has touched the real Go2, the real event camera or Durance's toolchain.
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
 | Recording, labelling and fine-tuning on recorded data | working with webcam takes; not yet with a real event camera |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
+| Ball detector (riverops U-Net, `models/ball/`, trained by the team on the Tübingen event-camera ball dataset, branch `feat/training`) | exported from its checkpoint with `PROVENANCE.md`; runs on the PC in the board's integer arithmetic (matches riverops' fixed-point emulation); sees simulated balls when they are close, 2/400 false frames idle; not in the ROS loop yet |
+| Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | job #30 failed in place-and-route; being retried |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
 | Camera adapter for the real sensor, SNN on the FPGA (SPLEAT), our nodes driving the real Go2 | not started |
 
