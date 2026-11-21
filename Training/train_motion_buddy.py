@@ -358,14 +358,17 @@ def compute_loss(scores, targets, num_steps):
     return (scores / num_steps - targets).square().mean()
 
 
-def run_epoch(model, loader, device, optimizer=None):
+def run_epoch(model, loader, device, optimizer=None, log_prefix=""):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
     total_error = 0.0
     total = 0
+    batch_count = len(loader)
     with torch.set_grad_enabled(training):
-        for frames, positions in loader:
+        for step, (frames, positions) in enumerate(loader, start=1):
+            if step == 1 or step % 10 == 0 or step == batch_count:
+                print(f"{log_prefix} batch {step}/{batch_count}", flush=True)
             frames = frames.to(device=device, dtype=torch.float32)
             positions = positions.to(device=device, dtype=torch.float32)
             num_steps = frames.shape[1]
@@ -442,9 +445,13 @@ def export_model(model, example_frames, device):
 
 
 def pick_device():
-    if torch.cuda.is_available():
+    cuda = torch.cuda.is_available()
+    print(f"CUDA available: {cuda}", flush=True)
+    if cuda:
+        print(f"GPU: {torch.cuda.get_device_name(0)}", flush=True)
         return torch.device("cuda")
     if torch.backends.mps.is_available():
+        print("MPS available: True", flush=True)
         return torch.device("mps")
     return torch.device("cpu")
 
@@ -533,7 +540,7 @@ def visualize_test(checkpoint_path, output_path, fps):
             f"No checkpoint at {checkpoint_path}. Train first with: python train_motion_buddy.py"
         )
     device = pick_device()
-    print("Device:", device)
+    print("Device:", device, flush=True)
     dataset_dir = ensure_dataset()
     model = BallDetectorModel().to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
@@ -578,7 +585,7 @@ def visualize_test(checkpoint_path, output_path, fps):
 def train():
     torch.manual_seed(SEED)
     device = pick_device()
-    print("Device:", device)
+    print("Device:", device, flush=True)
 
     dataset = ensure_dataset()
     train_arrays, validation_arrays, test_arrays = _read_splits(dataset)
@@ -598,9 +605,13 @@ def train():
 
     model = BallDetectorModel().to(device)
     model.eval()
+    print(f"CUDA available: {torch.cuda.is_available()}", flush=True)
+    print("Running one forward pass", flush=True)
     with torch.no_grad():
         scores = model(example_frames.unsqueeze(0).to(device))
-    print("Output shape:", tuple(scores.shape))
+    prediction = predict_positions(scores)[0].detach().cpu().tolist()
+    print("Output shape:", tuple(scores.shape), flush=True)
+    print(f"Sample prediction (x, y): ({prediction[0]:.0f}, {prediction[1]:.0f})", flush=True)
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY,
@@ -609,8 +620,14 @@ def train():
     best_validation_error = float("inf")
 
     for epoch in range(1, EPOCHS + 1):
-        train_loss, train_error = run_epoch(model, train_loader, device, optimizer)
-        validation_loss, validation_error = run_epoch(model, validation_loader, device)
+        print(f"Epoch {epoch}/{EPOCHS} training", flush=True)
+        train_loss, train_error = run_epoch(
+            model, train_loader, device, optimizer, log_prefix=f"Epoch {epoch} train",
+        )
+        print(f"Epoch {epoch}/{EPOCHS} validation", flush=True)
+        validation_loss, validation_error = run_epoch(
+            model, validation_loader, device, log_prefix=f"Epoch {epoch} validation",
+        )
         if validation_error < best_validation_error:
             best_validation_error = validation_error
             torch.save({
@@ -632,7 +649,8 @@ def train():
     model.load_state_dict(checkpoint["model_state_dict"])
     test_dataset = BallDataset(*test_arrays)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, num_workers=0)
-    test_loss, test_error = run_epoch(model, test_loader, device)
+    print("Test", flush=True)
+    test_loss, test_error = run_epoch(model, test_loader, device, log_prefix="Test")
     print("Best epoch:", checkpoint["epoch"])
     print(f"Best validation error: {checkpoint['validation_error']:.2f} px")
     print(f"Test loss: {test_loss:.4f}")
