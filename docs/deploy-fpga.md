@@ -6,6 +6,30 @@ the board. Written on 21 Nov 2026 for the small ball detector. **Nothing here ha
 loaded on the board yet**; the board side follows Durance's deploy page
 (`docs/durance-riversdk.md`), not our own test.
 
+## Setup, once
+
+Durance's two tools are proprietary wheels, not in git. Get them from Durance's download
+list (`https://riversdk.dev/docs/hackathon/download/`, needs the hackathon login) and put
+them in `third_party/` (gitignored):
+
+| Wheel | Used for | pixi environment |
+|---|---|---|
+| `riverops-0.2.0-py3-none-any.whl` | `export-ball` (checkpoint -> JSON files) | `tools/river/pixi.toml`, default |
+| `river_tools-0.1.0-py3-none-any.whl` | `river-tools deploy` (and `capture`, `play`) | `tools/river/pixi.toml`, `tools` |
+
+```bash
+cp ~/Downloads/riverops-0.2.0-py3-none-any.whl ~/Downloads/river_tools-0.1.0-py3-none-any.whl third_party/
+pixi install --manifest-path tools/river/pixi.toml            # riverops, Python 3.12, torch CPU
+pixi install --manifest-path tools/river/pixi.toml -e tools   # river-tools, Python 3.10
+pixi run --manifest-path tools/river/pixi.toml -e tools river-tools --help
+```
+
+Two environments because river-tools requires Python 3.10 and riverops' torch is
+installed for 3.12. They live in their own manifest, not in the main `pixi.toml`, so the
+main workspace installs without the wheels. Durance's docs install river-tools with
+`pipx`; here it is pixi, like everything else. Not needed: the riversdk.dev login for the
+firmware job, which is done in the browser.
+
 ## The chain
 
 ```
@@ -19,7 +43,7 @@ checkpoint (.pt) ──export-ball──> model.json + parameters.json + readout
                                         │
        weights.txt, config.yaml, metavision_camera.json, spleat.bit.bin, spleat.dtbo, deploy.yaml
                                         │
-                              river-tools deploy ──> Kria
+                         river-tools deploy (pixi) ──> Kria
 ```
 
 Two things are independent, and that is what makes iterating cheap:
@@ -101,8 +125,8 @@ on Durance's card stays.
 5. **Copy** with Durance's tool (it checks sha256 before copying and again on the board):
 
    ```bash
-   river-tools deploy out/spleat/ball_small_model/deploy.yaml root@192.168.77.1 --check-only
-   river-tools deploy out/spleat/ball_small_model/deploy.yaml root@192.168.77.1 --replace
+   pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy out/spleat/ball_small_model/deploy.yaml root@192.168.77.1 --check-only
+   pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy out/spleat/ball_small_model/deploy.yaml root@192.168.77.1 --replace
    ```
 
 6. **Restart and look**, on the board:

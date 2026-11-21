@@ -400,12 +400,13 @@ Inputs: `{model_in}` (River Model Graph) and `{params_in}` (fixed-point paramete
 ## Copy to the board
 
 ```bash
-river-tools deploy {m['out_dir']}/deploy.yaml root@192.168.77.1 --check-only   # checks only
-river-tools deploy {m['out_dir']}/deploy.yaml root@192.168.77.1 --replace      # copies, verifies sha256 on the board
+pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy {m['out_dir']}/deploy.yaml root@192.168.77.1 --check-only
+pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy {m['out_dir']}/deploy.yaml root@192.168.77.1 --replace
 ```
 
-`deploy.yaml` lists every file below with its destination and sha256;
-river-tools checks the sha256 before copying and again on the board. Afterwards, on the
+`deploy.yaml` lists every file below with its destination and sha256; river-tools
+(Durance's tool, setup in `docs/deploy-fpga.md`) checks the sha256 before copying and
+again on the board. Afterwards, on the
 board: `systemctl restart spleat-xmutil-loadapp spleat-server` (or reboot) and
 `journalctl -u spleat-server` to see the server start.
 

@@ -32,6 +32,7 @@ pixi run finetune-real  # build + fine-tune the SNN on recorded data -> out/mode
 pixi run view-data PATH # look inside a dataset folder or an event recording; --sheet/--video save files
 pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt [OUT_DIR] [--script S --commit C]  # checkpoint -> models/ball*/ + PROVENANCE.md
 pixi run spleat-bundle MODEL.json PARAMS.json [--firmware DIR --checkpoint PT]  # -> out/spleat/<model>/ + deploy.yaml for river-tools
+pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy out/spleat/<model>/deploy.yaml root@192.168.77.1  # Durance's tool, Python 3.10
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
 pixi run drive          # same viewer with the walking policy: arrow keys drive the dog (optional mode)
