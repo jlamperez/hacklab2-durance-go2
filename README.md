@@ -258,6 +258,7 @@ python -m capture.summarize --plan-session sun_cross3
 | `docs/data-plan-follow.md` | What to record with the real event camera for following the ball |
 | `docs/durance-riversdk.md` | Notes from Durance's docs: Kria, Go2 networking, ROS 2 build, FPGA deployment, capture |
 | `docs/river-training.md` | Training the SNN with riverops on a GPU box: synthetic data, recording layout, auto-labels, export to the Kria |
+| `docs/simulation-drone.md` | Simulated drone flights (UZ65-sized) in front of the standing Go2: behaviors, head modes, labels |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
 | `docs/durance-kria-image.md` | What is on Durance's KV260 microSD image, and what it changes for us |
