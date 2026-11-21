@@ -20,3 +20,4 @@ ros2_ws/src/unitree_go
 /riverops-*/
 /river_tools-*/
 *.whl
+Training/data/
