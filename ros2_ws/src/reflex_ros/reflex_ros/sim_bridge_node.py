@@ -48,11 +48,11 @@ class SimBridge(Node):
     def __init__(self):
         super().__init__("go2_sim_bridge")
         p = self.declare_parameter
-        # Default from the real Go2 (21 Nov 2026): a lean starts ~70 ms after the command and is
-        # 90 % done at ~270 ms; the simulated lean completes ~120 ms after its delay.
-        delay_ms = float(p("actuation_delay_ms", 150.0).value)
-        if not 50.0 <= delay_ms <= 400.0:
-            self.get_logger().warn(f"actuation_delay_ms={delay_ms:.0f} is outside the 50-400 ms range "
+        # Default fitted to the real Go2 (21 Nov 2026): with 50 ms the simulated lean is 10/50/90 %
+        # done at 94/176/278 ms after the command; the real one at 107/180/273 ms.
+        delay_ms = float(p("actuation_delay_ms", 50.0).value)
+        if not 20.0 <= delay_ms <= 400.0:
+            self.get_logger().warn(f"actuation_delay_ms={delay_ms:.0f} is outside the 20-400 ms range "
                                    "plausible for the real Go2")
         self.delay_s = delay_ms / 1e3
         self.period = float(p("shot_period_s", 3.0).value)

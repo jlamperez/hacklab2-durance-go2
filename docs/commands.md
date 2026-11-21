@@ -78,16 +78,16 @@ Only `ros-sim` is complete on its own. The others do nothing visible until their
 Arguments (defaults in brackets):
 
 - `ros-sim`: `detector:=snn|simple` [snn], `max_shots:=N` [0, endless], `negative_fraction:=0.3`,
-  `actuation_delay_ms:=150.0`, `record:=out/x.mp4`, `mode:=keeper|dodge`,
+  `actuation_delay_ms:=50.0`, `record:=out/x.mp4`, `mode:=keeper|dodge`,
   `reaction:=euler|move`, `locomotion:=none|rl`, `move_vy:=0.3`, `hold_s:=0.6`,
   `shot_period_s:=3.0`, `seed:=0`, `randomize:=false`, `viewer:=false` (true: also open the
   MuJoCo window; by default it runs with no window and you watch it with `ros-web`).
 - `ros-camera`: `device:=0` (camera number), `detector:=simple|snn` [simple], `mirror:=false`,
   `fps:=30.0`, `contrast_threshold:=0.25`, `calibrate_s:=3.0`.
 - `ros-robot-sim`: `viewer:=true` (false: no MuJoCo window), `reaction:=euler|move`,
-  `locomotion:=none|rl`, `actuation_delay_ms:=150.0`, `enabled:=true` (false: only log
+  `locomotion:=none|rl`, `actuation_delay_ms:=50.0`, `enabled:=true` (false: only log
   what it would send), `min_confidence:=0.6`, `consecutive:=2`.
-- `ros-drive`: `viewer:=true`, `actuation_delay_ms:=150.0`, `timeout_s:=0.0`,
+- `ros-drive`: `viewer:=true`, `actuation_delay_ms:=50.0`, `timeout_s:=0.0`,
   `camera:=false` (true: the dog's simulated event camera and the detector run while you
   drive), and with the camera `detector:=snn|simple` [snn].
 

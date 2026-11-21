@@ -22,9 +22,12 @@ GO2_XML = REPO_ROOT / "third_party" / "mujoco_menagerie" / "unitree_go2" / "go2.
 POSES: dict[str, np.ndarray] = {
     "stand": np.tile([0.0, 0.80, -1.50], 4),
     "crouch": np.tile([0.0, 1.25, -2.40], 4),
-    # Leaning shifts the trunk sideways by rolling all four abduction joints.
-    "lean_left": np.tile([-0.35, 0.80, -1.50], 4),
-    "lean_right": np.tile([0.35, 0.80, -1.50], 4),
+    # Leaning: the legs on that side bend 23 % of the way to crouch, so the trunk rolls 8
+    # degrees towards that side and shifts about 4 cm. Fitted to the real Go2's Euler lean
+    # (Pose + Euler x=0.3) measured on 21 Nov 2026: 8 degrees, 90 % done 270 ms after the
+    # command. With actuation_delay_ms=50 the simulated lean follows that curve.
+    "lean_left": np.array([0.0, 0.904, -1.707, 0.0, 0.80, -1.50, 0.0, 0.904, -1.707, 0.0, 0.80, -1.50]),
+    "lean_right": np.array([0.0, 0.80, -1.50, 0.0, 0.904, -1.707, 0.0, 0.80, -1.50, 0.0, 0.904, -1.707]),
 }
 
 # Slow, statically stable tricks, found by trying joint angles in the simulator. They are

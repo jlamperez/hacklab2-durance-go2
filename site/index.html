@@ -157,7 +157,7 @@
         Parameters are randomized per episode so the network does not learn one sensor. <code>reflex/events/emu.py</code></p></div>
     <div class="card"><b>Simulated sport mode</b>
       <p>Translates each <code>/api/sport/request</code> to the closest of the simulator's poses, after a
-        configurable actuation delay (150 ms by default, fitted to the real Go2). <code>reflex/runtime/sim_sport.py</code></p></div>
+        configurable actuation delay (50 ms by default, fitted to the real Go2). <code>reflex/runtime/sim_sport.py</code></p></div>
     <div class="card"><b>Optional walking</b>
       <p>A policy trained with unitree_rl_mjlab (<code>models/go2_walk.onnx</code>) turns a <code>Move</code> into
         steps. Off unless asked for: <code>locomotion:=rl</code> or <code>pixi run drive</code>.
@@ -487,7 +487,7 @@ pixi run finetune-real --val-session sat_pm  <span class="comment"># → out/mod
     <tr><td>No-learning</td><td>300 ms</td><td>2 / 9</td><td>6</td><td>1</td><td>3 / 3</td><td>112 ms</td></tr>
   </table></div>
   <p class="note">Twelve shots is a smoke test, not a benchmark. These runs used a 300 ms actuation delay, a guess; the default
-    is now 150 ms, fitted to the lean measured on the real Go2. Latency inside the simulation runs on simulated time and is not a latency claim.</p>
+    is now 50 ms, fitted to the lean measured on the real Go2. Latency inside the simulation runs on simulated time and is not a latency claim.</p>
 
   <h3>First hour with the real robot, in order</h3>
   <ol>

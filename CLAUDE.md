@@ -33,7 +33,7 @@ pixi run view           # interactive 3D viewer, needs a display
 pixi run drive          # same viewer with the walking policy: arrow keys drive the dog (optional mode)
 pixi run -e ros ros-build   # build ros2_ws (unitree messages, reflex_msgs, reflex_ros)
 pixi run -e ros ros-sim     # closed loop over ROS 2 in simulation; args: detector:=snn|simple
-                            #   max_shots:=N actuation_delay_ms:=150.0 record:=out/x.mp4
+                            #   max_shots:=N actuation_delay_ms:=50.0 record:=out/x.mp4
                             #   viewer:=true (MuJoCo window) scene:=park
 pixi run -e ros ros-camera     # camera side: webcam as stand-in event camera + perception
 pixi run -e ros ros-robot-sim  # robot side: behavior + MuJoCo dog acting only as the robot

@@ -33,7 +33,8 @@ do not fight over the motors. The exact procedure for the Go2 at the hackathon i
 
 Sport mode adds its own latency and ramps. Measured on the real Go2 on 21 Nov 2026 (`docs/real-robot.md`): a
 lean starts about 70 ms after the command and is 90 % done at about 270 ms; a Move starts
-within about 50 ms but covers only 3 cm in the first 300 ms. A
+within about 50 ms but covers only 3 cm in the first 300 ms. The simulator's lean and its 50 ms default delay
+are fitted to the lean. A
 low-level "flinch" could start within tens of milliseconds, which would look much more
 like a reflex. The camera and the SNN react in milliseconds, so the dog may be the
 bottleneck.
