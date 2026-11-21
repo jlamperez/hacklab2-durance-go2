@@ -245,6 +245,7 @@ python -m capture.summarize --plan-session sun_cross3
 | `docs/recording-real-data.md` | How to record, replay, relabel and share real event-camera data; what we have so far |
 | `docs/data-plan-follow.md` | What to record with the real event camera for following the ball |
 | `docs/durance-riversdk.md` | Notes from Durance's docs: Kria, Go2 networking, ROS 2 build, FPGA deployment, capture |
+| `docs/deploy-fpga.md` | Putting a network on the FPGA: every file, which tool makes it, where it goes on the board, the steps |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
 | `docs/durance-kria-image.md` | What is on Durance's KV260 microSD image, and what it changes for us |

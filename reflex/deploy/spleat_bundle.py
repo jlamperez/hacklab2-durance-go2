@@ -1,6 +1,7 @@
 """Turn a riverops export (model JSON + parameters JSON) into the files SPLEAT needs on the KV260.
 
     pixi run spleat-bundle MODEL.json PARAMETERS.json [--out out/spleat/NAME]
+        [--firmware models/firmware/JOB] [--checkpoint CKPT.pt]
 
 Inputs are the two files a riverops training script writes:
   - MODEL.json: `riverops.export.export_for_river(...)`, the River Model Graph.
@@ -11,13 +12,21 @@ Outputs, in one folder:
   - weights.txt              -> /root/weights.txt on the board
   - config.yaml              -> /root/.config/spleat-server/config.yaml
   - metavision_camera.json   -> /root/metavision_camera.json
+  - deploy.yaml             profile for `river-tools deploy` (Durance's tool): every file
+                             above, with its destination on the board and its sha256
   - README.md, manifest.json: where every value comes from, the checks that passed,
     input and output checksums, and what is still unknown.
 
+With --firmware DIR (a folder holding riversdk.dev's firmware-kv260.tar.gz and a
+PROVENANCE.md naming the sha256 of the model file it was built from), spleat.bit.bin and
+spleat.dtbo are extracted next to the other files and added to deploy.yaml, after checking
+that the firmware was built from this very MODEL.json. With --checkpoint, the camera's
+`frequency` is set from the event window the network was trained on (one frame per window).
+
 Nothing here invents a number. Every value is either copied from the inputs, computed
 from them (the computation is in this file), or a default copied from Durance's
-documentation, and the manifest says which. The bitstream (spleat.bit.bin, spleat.dtbo)
-is NOT produced here: it is generated per model on riversdk.dev from MODEL.json.
+documentation, and the manifest says which. The bitstream itself is not produced here: it
+is generated per model on riversdk.dev from MODEL.json, and only taken from --firmware.
 
 Sources referred to below:
   DOC_DEPLOY = Durance's "Deploying a new model on the Kria" page (deploy_a_new_model.html)
@@ -31,7 +40,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,6 +60,16 @@ CAMERA_DEFAULTS = {
     "biases": {"bias_diff": 51, "bias_diff_off": 40, "bias_diff_on": 40, "bias_fo": 29,
                "bias_hpf": 0, "bias_refr": 82},
 }
+# DOC_DEPLOY, "Moving parts": where each file lives on the board.
+DESTINATIONS = {
+    "weights.txt": "/root/weights.txt",
+    "config.yaml": "/root/.config/spleat-server/config.yaml",
+    "metavision_camera.json": "/root/metavision_camera.json",
+    "spleat.bit.bin": "/usr/lib/firmware/xilinx/spleat/spleat.bit.bin",
+    "spleat.dtbo": "/usr/lib/firmware/xilinx/spleat/spleat.dtbo",
+}
+FIRMWARE_ARCHIVE = "firmware-kv260.tar.gz"           # name of riversdk.dev's download
+FIRMWARE_FILES = ("spleat.bit.bin", "spleat.dtbo")
 SENSOR_SIDE = 320                         # DOC_DEPLOY: "The native camera definition is 320x320"
 DOWNSAMPLING_ALLOWED = (1, 2, 4, 8, 16, 32, 64)  # DOC_DEPLOY
 
@@ -202,18 +223,78 @@ def config_yaml(cfg: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def camera_config(model: dict) -> dict:
+def camera_config(model: dict, frequency: float | None = None) -> dict:
     h, w = model["input"]["height"], model["input"]["width"]
     if h != w or SENSOR_SIDE % h or SENSOR_SIDE // h not in DOWNSAMPLING_ALLOWED:
         raise BundleError(f"input {h}x{w} is not the {SENSOR_SIDE}x{SENSOR_SIDE} sensor "
                           f"downsampled by one of {DOWNSAMPLING_ALLOWED}")
     cfg = dict(CAMERA_DEFAULTS)
     cfg["downsampling"] = SENSOR_SIDE // h
+    if frequency is not None:
+        cfg["frequency"] = float(frequency)
     return {k: cfg[k] for k in ("frequency", "downsampling", "noise_filtering_factor", "biases")}
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def checkpoint_window(path: Path) -> dict:
+    """Event window per frame the network was trained on, and the camera frequency for it.
+
+    Training/train_ball_size.py stores `window_ms` in the checkpoint; checkpoints without
+    it were trained on 1 ms (the training code assumes the same). One camera frame per
+    window: Durance's example builds 10 ms frames at `frequency` 100.
+    """
+    import torch
+    ck = torch.load(path, map_location="cpu", weights_only=True)
+    stored = "window_ms" in ck
+    window = float(ck.get("window_ms", 1.0))
+    return {"checkpoint": str(path), "checkpoint_sha256": _sha256(path), "window_ms": window,
+            "window_source": "`window_ms` stored in the checkpoint" if stored
+            else "not stored in the checkpoint; the training code then assumes 1 ms",
+            "frequency": 1000.0 / window, "architecture": ck.get("architecture"),
+            "epoch": ck.get("epoch"), "train_int8": ck.get("train_int8")}
+
+
+def take_firmware(fw_dir: Path, model_sha: str, out_dir: Path) -> dict:
+    """Extract spleat.bit.bin and spleat.dtbo from riversdk.dev's archive into out_dir.
+
+    Refuses firmware built from another model graph: the sha256 of MODEL.json must be the
+    one fw_dir/PROVENANCE.md records for the job's model file.
+    """
+    archive, prov = fw_dir / FIRMWARE_ARCHIVE, fw_dir / "PROVENANCE.md"
+    for f in (archive, prov):
+        if not f.is_file():
+            raise BundleError(f"--firmware {fw_dir}: {f.name} is missing")
+    recorded = re.findall(r"Model file[^\n]*?sha256 `([0-9a-f]{64})`", prov.read_text())
+    if len(recorded) != 1:
+        raise BundleError(f"{prov}: expected one 'Model file ... sha256 `<hex>`' line, found {len(recorded)}")
+    if recorded[0] != model_sha:
+        raise BundleError(f"firmware in {fw_dir} was built from a model graph with sha256 {recorded[0]}, "
+                          f"this MODEL.json is {model_sha}: a different architecture, it would not "
+                          "run these weights. Build firmware for this model on riversdk.dev.")
+    files = {}
+    with tarfile.open(archive, "r:gz") as tar:
+        members = {Path(m.name).name: m for m in tar.getmembers() if m.isfile()}
+        for name in FIRMWARE_FILES:
+            if name not in members:
+                raise BundleError(f"{archive}: no {name} inside (has {sorted(members)})")
+            (out_dir / name).write_bytes(tar.extractfile(members[name]).read())
+            files[name] = _sha256(out_dir / name)
+    return {"dir": str(fw_dir), "archive_sha256": _sha256(archive), "provenance": str(prov),
+            "model_sha256_recorded": recorded[0], "files": files,
+            "ignored_in_archive": sorted(set(members) - set(FIRMWARE_FILES))}
+
+
+def deploy_yaml(name: str, files: dict[str, str]) -> str:
+    """river-tools deploy profile, version 1 (river_tools/deployment/yaml_profile.py): sources
+    relative to this file, absolute destinations, sha256 checked before and after copying."""
+    lines = ["version: 1", f"name: {name}", "files:"]
+    for f, sha in files.items():
+        lines += [f"  - source: {f}", f"    destination: {DESTINATIONS[f]}",
+                  f'    sha256: "{sha}"', '    mode: "0644"']
+    return "\n".join(lines) + "\n"
 
 
 def _git_state() -> str:
@@ -228,7 +309,8 @@ def _git_state() -> str:
         return "unknown (not a git checkout)"
 
 
-def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float) -> dict:
+def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float,
+          firmware: Path | None = None, checkpoint: Path | None = None) -> dict:
     model = json.loads(model_path.read_text())
     params = json.loads(params_path.read_text())
     if scaling != float(1 << POTENTIAL_FRAC):
@@ -242,22 +324,39 @@ def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float) ->
     assert len(values) == n_expected, (len(values), n_expected)
 
     server = server_config(model, shapes, scaling)
-    camera = camera_config(model)
+    window = checkpoint_window(checkpoint) if checkpoint is not None else None
+    camera = camera_config(model, window["frequency"] if window else None)
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    for stale in (*FIRMWARE_FILES, "deploy.yaml"):          # never leave a previous run's firmware
+        (out_dir / stale).unlink(missing_ok=True)
+    fw = take_firmware(firmware, _sha256(model_path), out_dir) if firmware is not None else None
     # DOC_DEPLOY: "the file must not have an empty lines (including at the end)!"
     (out_dir / "weights.txt").write_text("\n".join(map(str, values)))
     (out_dir / "config.yaml").write_text(config_yaml(server))
     (out_dir / "metavision_camera.json").write_text(json.dumps(camera, indent=2) + "\n")
 
-    outputs = ("weights.txt", "config.yaml", "metavision_camera.json")
+    board = ["weights.txt", "config.yaml", "metavision_camera.json", *(FIRMWARE_FILES if fw else ())]
+    board_sums = {name: _sha256(out_dir / name) for name in board}
+    (out_dir / "deploy.yaml").write_text(deploy_yaml(model_path.stem, board_sums))
+    command = f"pixi run spleat-bundle {model_path} {params_path} --out {out_dir}"
+    command += f" --firmware {firmware}" if firmware is not None else ""
+    command += f" --checkpoint {checkpoint}" if checkpoint is not None else ""
+    inputs = {str(model_path): _sha256(model_path), str(params_path): _sha256(params_path)}
+    if window:
+        inputs[str(checkpoint)] = window["checkpoint_sha256"]
+    if fw:
+        inputs[str(firmware / FIRMWARE_ARCHIVE)] = fw["archive_sha256"]
     manifest = {
         "generated_by": "reflex/deploy/spleat_bundle.py",
         "repo_commit": _git_state(),
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "command": f"pixi run spleat-bundle {model_path} {params_path} --out {out_dir}",
-        "inputs": {str(model_path): _sha256(model_path), str(params_path): _sha256(params_path)},
-        "outputs": {name: _sha256(out_dir / name) for name in outputs},
+        "command": command,
+        "out_dir": str(out_dir),
+        "inputs": inputs,
+        "outputs": {**board_sums, "deploy.yaml": _sha256(out_dir / "deploy.yaml")},
+        "firmware": fw,
+        "event_window": window,
         "network": {
             "input": list(shapes["input"]["out"]),
             "output_node": model["outputs"][0],
@@ -276,7 +375,8 @@ def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float) ->
 
 def _readme(m: dict) -> str:
     net, srv, cam = m["network"], m["server_config"], m["camera_config"]
-    (model_in, model_sha), (params_in, params_sha) = m["inputs"].items()
+    fw, win = m["firmware"], m["event_window"]
+    model_in, params_in = list(m["inputs"])[:2]
     rows = "\n".join(
         f"| {l['index']} | {l['node']} | {'+'.join(l['sources'])} | {'x'.join(map(str, l['in']))} "
         f"| {l['upscaling']} | {l['kernel']}/{l['stride']} | {'x'.join(map(str, l['out']))} "
@@ -294,9 +394,20 @@ Regenerate with:
 {m['command']}
 ```
 
-Inputs: `{model_in}` (River Model Graph) and `{params_in}` (fixed-point parameters).
-Not in this folder: the bitstream (`spleat.bit.bin`, `spleat.dtbo`). It is generated per
-model on riversdk.dev from `{model_in}` (board KV260, Prophesee IP GenX320).
+Inputs: `{model_in}` (River Model Graph) and `{params_in}` (fixed-point parameters){_inputs_extra(m)}.
+{_firmware_text(fw, model_in)}
+
+## Copy to the board
+
+```bash
+river-tools deploy {m['out_dir']}/deploy.yaml root@192.168.77.1 --check-only   # checks only
+river-tools deploy {m['out_dir']}/deploy.yaml root@192.168.77.1 --replace      # copies, verifies sha256 on the board
+```
+
+`deploy.yaml` lists every file below with its destination and sha256;
+river-tools checks the sha256 before copying and again on the board. Afterwards, on the
+board: `systemctl restart spleat-xmutil-loadapp spleat-server` (or reboot) and
+`journalctl -u spleat-server` to see the server start.
 
 ## Files and where they go on the board
 
@@ -305,6 +416,7 @@ model on riversdk.dev from `{model_in}` (board KV260, Prophesee IP GenX320).
 | `weights.txt` | `/root/weights.txt` | {net['parameter_values']} integers, one per line, no trailing newline |
 | `config.yaml` | `/root/.config/spleat-server/config.yaml` | server configuration |
 | `metavision_camera.json` | `/root/metavision_camera.json` | camera and Despot configuration |
+{_firmware_rows(fw)}| `deploy.yaml` | stays here | river-tools deploy profile for the files above |
 | `manifest.json` | stays here | everything in this README, machine-readable |
 
 ## Where every value comes from
@@ -332,7 +444,7 @@ the board before replacing it.
 | Key | Value | Source |
 |---|---|---|
 | `downsampling` | {cam['downsampling']} | computed: {SENSOR_SIDE} (native sensor side, deploy page) / {srv['inputs']['width']} (model input) |
-| `frequency` | {cam['frequency']} | deploy page default. **Not checked against how the model was trained** |
+| `frequency` | {cam['frequency']:g} | {_frequency_source(win)} |
 | `noise_filtering_factor` | {cam['noise_filtering_factor']} | deploy page default |
 | `biases` | {cam['biases']} | deploy page default (sensor biases) |
 
@@ -365,8 +477,10 @@ Parameter index i is taken to be the i-th node of the model file.
 - **Neuron reset mode.** The model graph does not record it (riverops docs).
 - **What the output channels mean** and how to decode them: that is in the training
   script, not in the export.
-- **Time steps and frame rate.** How many steps the server runs per frame, whether the
-  neuron state is reset between frames, and the `frequency` the model expects.
+- **Time steps and frame rate.** How many steps the server runs per frame (training used
+  the checkpoint's time steps, with the neuron state reset for every frame) and
+  whether the server resets the state between frames. `frequency` assumes one camera
+  frame per event window (Durance's example: 100 Hz, 10 ms frames); not confirmed by Durance.
 - **The server config format** on the real board (the example comes from the docs).
 
 ## Checksums (sha256)
@@ -377,6 +491,39 @@ Parameter index i is taken to be the i-th node of the model file.
 """
 
 
+def _inputs_extra(m: dict) -> str:
+    extra = []
+    if m["event_window"]:
+        extra.append(f"`{m['event_window']['checkpoint']}` (only its event window is read)")
+    if m["firmware"]:
+        extra.append(f"`{m['firmware']['dir']}` (firmware from riversdk.dev)")
+    return (", " + ", ".join(extra)) if extra else ""
+
+
+def _firmware_text(fw: dict | None, model_in: str) -> str:
+    if not fw:
+        return (f"No firmware in this folder (no `--firmware`). The bitstream is generated per model\n"
+                f"on riversdk.dev from `{model_in}` (board KV260, Prophesee IP GenX320).")
+    return (f"Firmware: `spleat.bit.bin` and `spleat.dtbo` extracted unchanged from `{fw['dir']}/{FIRMWARE_ARCHIVE}`\n"
+            f"(sha256 `{fw['archive_sha256']}`). Checked: `{fw['provenance']}` records the job's model\n"
+            f"file as sha256 `{fw['model_sha256_recorded']}`, the same as `{model_in}`, so the bitstream\n"
+            f"was built for this architecture."
+            + (f" Also in the archive, not used: {fw['ignored_in_archive']}." if fw["ignored_in_archive"] else ""))
+
+
+def _firmware_rows(fw: dict | None) -> str:
+    if not fw:
+        return ""
+    return "".join(f"| `{n}` | `{DESTINATIONS[n]}` | from the firmware archive, unchanged |\n" for n in FIRMWARE_FILES)
+
+
+def _frequency_source(win: dict | None) -> str:
+    if not win:
+        return "deploy page default. **Not matched to the model** (pass `--checkpoint`)"
+    return (f"computed: 1000 / {win['window_ms']:g} ms, the event window per frame ({win['window_source']}, "
+            f"`{win['checkpoint']}`). Assumes one camera frame per window; not confirmed by Durance")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("model", type=Path, help="River Model Graph JSON (export_for_river)")
@@ -384,16 +531,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, help="output folder (default: out/spleat/<model stem>)")
     ap.add_argument("--scaling", type=float, default=float(1 << POTENTIAL_FRAC),
                     help="inputs.scaling, must be 2**fraction_bits of the potentials")
+    ap.add_argument("--firmware", type=Path,
+                    help=f"folder with riversdk.dev's {FIRMWARE_ARCHIVE} and its PROVENANCE.md")
+    ap.add_argument("--checkpoint", type=Path, help="checkpoint (*.pt): sets the camera frequency "
+                                                     "from the event window it was trained on")
     args = ap.parse_args(argv)
     out = args.out or Path("out/spleat") / args.model.stem
     try:
-        m = build(args.model, args.parameters, out, args.scaling)
+        m = build(args.model, args.parameters, out, args.scaling, args.firmware, args.checkpoint)
     except BundleError as e:
         ap.exit(1, f"error: {e}\n")
     net = m["network"]
     print(f"{net['layers']} layers, input {'x'.join(map(str, net['input']))}, "
           f"output {'x'.join(map(str, net['output']))}, {net['parameter_values']} values")
-    print(f"wrote {out}/: weights.txt config.yaml metavision_camera.json README.md manifest.json")
+    extra = " spleat.bit.bin spleat.dtbo" if m["firmware"] else ""
+    print(f"wrote {out}/: weights.txt config.yaml metavision_camera.json{extra} deploy.yaml README.md manifest.json")
+    if m["event_window"]:
+        w = m["event_window"]
+        print(f"camera frequency {m['camera_config']['frequency']:g} Hz from the checkpoint's {w['window_ms']:g} ms window")
     return 0
 
 

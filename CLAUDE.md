@@ -31,7 +31,7 @@ pixi run build-real data/real/*   # recorded sessions -> data/real_ds
 pixi run finetune-real  # build + fine-tune the SNN on recorded data -> out/models/snn_real.pt
 pixi run view-data PATH # look inside a dataset folder or an event recording; --sheet/--video save files
 pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt [OUT_DIR] [--script S --commit C]  # checkpoint -> models/ball*/ + PROVENANCE.md
-pixi run spleat-bundle MODEL.json PARAMS.json  # riverops export -> out/spleat/<model>/ for the KV260
+pixi run spleat-bundle MODEL.json PARAMS.json [--firmware DIR --checkpoint PT]  # -> out/spleat/<model>/ + deploy.yaml for river-tools
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
 pixi run drive          # same viewer with the walking policy: arrow keys drive the dog (optional mode)
@@ -120,6 +120,7 @@ assumptions below, it wins.
 What is left to run on the real robot, and the Kria + webcam rehearsal: `docs/real-robot.md`.
 How to look inside the running ROS 2 system: `docs/inspecting-ros.md`.
 Every command, where it runs and recipes: `docs/commands.md` (keep it in sync with `pixi.toml`).
+Putting a network on the FPGA (files, tools, board paths, steps): `docs/deploy-fpga.md`.
 See `docs/questions-for-durance.md`. For sport mode versus low-level control, and why
 `unitree_mujoco` is not used (yet), see `docs/go2-control.md`.
 
