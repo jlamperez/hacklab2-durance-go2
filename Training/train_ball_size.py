@@ -4,7 +4,7 @@ The network predicts only the ball centre. The circle size drawn in the
 videos comes from the events: the radius around a point that holds
 RADIUS_FRACTION of the event pixels in excess of the local background,
 median-smoothed over neighbouring frames. It measures the visible event blob
-(ball plus 1 ms of motion), not the physical ball. On labeled data it is
+(ball plus one window of motion), not the physical ball. On labeled data it is
 measured around the label (and scaled with the crop like the position) and
 used for both circles and for the "within 1 radius" metric; on unlabeled
 recordings it is measured around the prediction.
@@ -25,7 +25,7 @@ edges).
 
 "No ball": the heatmap softmax has one extra class with a learnable logit
 (off-chip, like the logit scales). Recordings without a ball, passed with
-``--no-ball FOLDER``, are cut into the same 1 ms windows, randomly cropped
+``--no-ball FOLDER``, are cut into windows of the same length, randomly cropped
 and zoomed like the ball frames, and trained towards that class, so the
 heatmap learns to stay quiet. P(ball) compares the heatmap's total activity
 with the no-ball logit; a frame counts as "ball found" at BALL_PROBABILITY.
@@ -34,13 +34,18 @@ The last NO_BALL_VALIDATION of each no-ball file is used for validation.
 Crops, splits, data loading and video writing come from the fast script. The
 export writes ``ball_model.json`` and ``ball_parameters.{json,txt}``, with
 parameters numbered in layer order (printed at export), and the off-chip
-readout constants to ``ball_readout.json``::
+readout constants to ``ball_readout.json``.
+
+Every frame holds the events of the last WINDOW_MS before its label
+(``--window-ms``). The checkpoint stores the window, and ``visualize`` and
+``predict`` use it unless told otherwise; older checkpoints count as 1 ms::
 
     python train_ball_size.py
     python train_ball_size.py train --no-ball data/no_ball
+    python train_ball_size.py train --window-ms 1
     python train_ball_size.py export
     python train_ball_size.py visualize
-    python train_ball_size.py predict data/recording.h5 --window-ms 5
+    python train_ball_size.py predict data/recording.h5
 """
 
 import argparse
@@ -82,6 +87,7 @@ RADIUS_MIN_EVENTS = 6.0
 RADIUS_SMOOTH = 4
 RADIUS_FALLBACK = 5.0
 BALL_PROBABILITY = 0.5
+WINDOW_MS = 5.0
 NO_BALL_SHARE = 0.25
 NO_BALL_STEP_MS = 5.0
 NO_BALL_VALIDATION = 0.2
@@ -667,11 +673,14 @@ def infer(model, dataset, device, batch_size, time_steps):
 
 def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
           no_ball_folders=(), no_ball_step_ms=NO_BALL_STEP_MS,
-          no_ball_window_ms=base.ACC_TIME / 1000.0, no_ball_share=NO_BALL_SHARE):
+          no_ball_window_ms=None, no_ball_share=NO_BALL_SHARE, window_ms=WINDOW_MS):
     torch.manual_seed(base.SEED)
     torch.backends.cudnn.benchmark = True
     device = base.pick_device()
     print("Device:", device, flush=True)
+    base.ACC_TIME = round(window_ms * 1000)
+    no_ball_window_ms = no_ball_window_ms or window_ms
+    print(f"Window: {window_ms:g} ms of events per frame (no-ball frames {no_ball_window_ms:g} ms)")
 
     train_ball, validation_ball, test_dataset = benchmark_splits()
     train_parts, validation_parts = [train_ball], [validation_ball]
@@ -758,6 +767,7 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
                 "sensor": SENSOR,
                 "crop_sides": fast.CROP_SIDES,
                 "time_steps": time_steps,
+                "window_ms": window_ms,
                 "heatmap_stride": STRIDE,
                 "offset_bins": OFFSET_BINS,
                 "architecture": ARCHITECTURE,
@@ -882,11 +892,18 @@ def write_video(model, device, dataset, name, output_path, fps, batch_size, time
         )
 
 
+def checkpoint_window_ms(checkpoint_path):
+    """Window the checkpoint was trained on; 1 ms for checkpoints that do not store it."""
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    return float(checkpoint.get("window_ms", 1.0))
+
+
 def visualize_test(checkpoint_path, output_path, fps, batch_size):
     """Run the checkpoint on the fixed test crops (takes 7 and 8) and write an mp4."""
     device = base.pick_device()
     print("Device:", device, flush=True)
     model, time_steps = load_model(checkpoint_path, device)
+    base.ACC_TIME = round(checkpoint_window_ms(checkpoint_path) * 1000)
     write_video(model, device, benchmark_splits()[2], "test 7-8", output_path, fps,
                 batch_size, time_steps)
 
@@ -898,6 +915,7 @@ def predict_recording(recording, checkpoint_path, output_path, fps, batch_size,
     device = base.pick_device()
     print("Device:", device, flush=True)
     model, time_steps = load_model(checkpoint_path, device)
+    window_ms = window_ms or checkpoint_window_ms(checkpoint_path)
     windows = fast.recording_dataset(
         recording, step_ms * 1000.0, window_ms * 1000.0, use_labels,
     )
@@ -931,9 +949,10 @@ def main():
                                    "(.h5/.hdf5, searched recursively)")
     train_parser.add_argument("--no-ball-step-ms", type=float, default=NO_BALL_STEP_MS,
                               help="spacing of the windows cut from no-ball recordings")
-    train_parser.add_argument("--no-ball-window-ms", type=float,
-                              default=base.ACC_TIME / 1000.0,
-                              help="events per no-ball frame; keep equal to the ball frames (1 ms)")
+    train_parser.add_argument("--window-ms", type=float, default=WINDOW_MS,
+                              help="events per ball frame, ending at each label")
+    train_parser.add_argument("--no-ball-window-ms", type=float, default=None,
+                              help="events per no-ball frame; default: --window-ms")
     train_parser.add_argument("--no-ball-share", type=float, default=NO_BALL_SHARE,
                               help="share of training frames without a ball (resampled); "
                                    "0 = use every no-ball window once")
@@ -953,8 +972,8 @@ def main():
     predict.add_argument("--fps", type=int, default=30)
     predict.add_argument("--step-ms", type=float, default=5.0,
                          help="window spacing for files without labels")
-    predict.add_argument("--window-ms", type=float, default=base.ACC_TIME / 1000.0,
-                         help="events per frame; training used 1 ms")
+    predict.add_argument("--window-ms", type=float, default=None,
+                         help="events per frame; default: the window the checkpoint was trained on")
     predict.add_argument("--no-labels", action="store_true",
                          help="ignore gt_* and use evenly spaced windows")
     args = parser.parse_args()
@@ -976,8 +995,9 @@ def main():
             getattr(args, "min_lr", MIN_LEARNING_RATE),
             getattr(args, "no_ball", []),
             getattr(args, "no_ball_step_ms", NO_BALL_STEP_MS),
-            getattr(args, "no_ball_window_ms", base.ACC_TIME / 1000.0),
+            getattr(args, "no_ball_window_ms", None),
             getattr(args, "no_ball_share", NO_BALL_SHARE),
+            getattr(args, "window_ms", WINDOW_MS),
         )
 
 

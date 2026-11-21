@@ -223,8 +223,9 @@ def _cache_stamp(paths):
 def _read_splits(dataset):
     projected = _recordings(dataset / "projected")
     hand_labeled = _recordings(dataset / "hand_labeled")
-    cache_path = DATASET_ROOT / "prepared_cache.npz"
-    stamp_path = DATASET_ROOT / "prepared_cache_stamp.json"
+    name = "prepared_cache" if ACC_TIME == 1000 else f"prepared_cache_{ACC_TIME}us"
+    cache_path = DATASET_ROOT / f"{name}.npz"
+    stamp_path = DATASET_ROOT / f"{name}_stamp.json"
     stamp = _cache_stamp(projected + hand_labeled)
     if cache_path.exists() and stamp_path.exists():
         meta = json.loads(stamp_path.read_text())
