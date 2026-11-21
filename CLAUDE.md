@@ -40,6 +40,9 @@ pixi run -e ros ros-robot-sim  # robot side: behavior + MuJoCo dog acting only a
 pixi run -e ros ros-drive      # drive the walking dog over ROS 2; second terminal: ros-teleop
                                #   camera:=true adds the simulated event camera + detector while driving
 pixi run -e ros ros-record session:=NAME   # record labelled takes from the live stream (docs/recording.md)
+pixi run follow-sim     # dog follows a scripted ball, headless, no ROS; --video out/follow.mp4
+pixi run -e ros ros-follow-sim # simulated dog + camera + scripted ball + target node (docs/follow.md)
+pixi run -e ros ros-follow     # follow node, keyboard: f start, SPACE stop, ! Damp; starts disabled
 pixi run -e ros ros-tricks     # keyboard for built-in tricks (Hello, Sit, ...); acrobatics off by default
 pixi run -e ros ros-web        # dashboard in the browser (viser), http://localhost:8080; listens only
 pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rqt commands
@@ -71,7 +74,10 @@ Three seams let simulation be swapped for the real thing:
   (`sim_sport.PostureMode`). Optional walking (`locomotion.py`, `models/go2_walk.onnx`,
   a policy trained with unitree_rl_mjlab) is off unless `enable_walking()` / `locomotion:=rl`
   is used; keep it optional. Details in `docs/go2-control.md`.
-- `ros2_ws/src/reflex_msgs`: `EventWindow`, `ReflexDecision`.
+- `ros2_ws/src/reflex_msgs`: `EventWindow`, `ReflexDecision`, `Target`.
+- Following (`docs/follow.md`): `reflex/runtime/target.py` (the `u, v, confidence` contract and
+  the centroid tracker), `reflex/runtime/follow.py` (move-stop-look controller, all safety
+  limits), nodes `target` and `follow`.
 - `ros2_ws/src/reflex_ros`: three nodes. `sim_bridge` (MuJoCo behind the robot's and the
   camera's topics, with a configurable actuation delay, scores every shot), `perception`
   (window -> decision), `behavior` (decision -> `unitree_api/msg/Request`, all safety

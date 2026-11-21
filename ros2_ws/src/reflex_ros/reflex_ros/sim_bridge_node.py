@@ -8,6 +8,8 @@
 
 With robot_only it is just the robot (no camera, no balls, no /clock). Adding camera:=true
 to that keeps the dog's simulated event camera on, e.g. to watch the events while driving.
+Adding target_path:=true moves a ball along a scripted path in front of the dog, for the
+follow node to chase (reflex/sim/follow_sim.py, TargetPath).
 
 It rolls balls (and hard negatives) at the dog, applies incoming requests after a
 configurable actuation delay, and scores each shot. The behavior node cannot tell this
@@ -34,6 +36,7 @@ from reflex.events.emu import EmuConfig, EventEmulator
 from reflex.runtime import sport_api
 from reflex.runtime.reflex_fsm import BEHAVIORS
 from reflex.runtime.sim_sport import PostureMode, pose_for_request
+from reflex.sim.follow_sim import TargetPath, place_ball
 from reflex.sim.scene import BallShot, Go2Sim, to_gray
 from reflex.viz.web_scene import pack_state
 from reflex_msgs.msg import EventWindow
@@ -77,6 +80,10 @@ class SimBridge(Node):
         # really walk, using the learned policy in models/go2_walk.onnx.
         self.locomotion = p("locomotion", "none").value
         scene = p("scene", "lab").value                        # "lab" or "park" (reflex/sim/scenery.py)
+        # target_path: a ball rolled by script in front of the dog, something to follow.
+        # It starts moving after target_start_s, so detectors can calibrate on a still scene.
+        self.target_path = TargetPath() if bool(p("target_path", False).value) else None
+        self.target_start_s = float(p("target_start_s", 5.0).value)
         self.homing = False
 
         self.rng = np.random.default_rng(seed)
@@ -267,6 +274,8 @@ class SimBridge(Node):
         if self.shot is None and sim.time >= self.next_shot_t and self.pose == "stand" and not self.moved:
             self.start_shot()
         self.apply_due()
+        if self.target_path is not None:
+            place_ball(sim, *self.target_path.at(max(0.0, sim.time - self.target_start_s)))
         if self.shot is not None and self.shot["walker"] is not None:
             x, y0, vy = self.shot["walker"]
             sim.set_walker(x, y0 + vy * (sim.time - self.shot["t0"]))

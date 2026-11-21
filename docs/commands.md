@@ -63,6 +63,7 @@ Two kinds: **launchers** start part of the pipeline, **tools** attach to whateve
 | `ros-robot-sim` | no | no | yes | simulated, waits for decisions |
 | `ros-drive` | no | no | no | simulated, walks on `/cmd_vel` |
 | `ros-drive camera:=true` | simulated, moves with the dog | yes | no | simulated, walks on `/cmd_vel` |
+| `ros-follow-sim` | simulated, moves with the dog, a ball rolled by script | target node (centroid) | `ros-follow` (or `follow:=true`) | simulated, walks |
 
 Only `ros-sim` is complete on its own. The others do nothing visible until their partner runs:
 
@@ -72,6 +73,7 @@ Only `ros-sim` is complete on its own. The others do nothing visible until their
 | `ros-robot-sim` | a camera: `kria-camera` on the Kria, or `ros-camera` on a PC with a webcam | the dog waits for decisions on `/reflex/decision` |
 | `ros-camera` / `kria-camera` | a robot: `ros-robot-sim` (or the real Go2 with the behavior node) | decisions are published but nobody acts on them |
 | `ros-drive` | a keyboard: `ros-teleop` (walking) and/or `ros-tricks` (Hello, Sit) | the dog stands still until something publishes `/cmd_vel` or a trick |
+| `ros-follow-sim` | `ros-follow`, then press `f` (or start it with `follow:=true`) | the follow node starts disabled, on purpose |
 
 `ros-web` can be added to any of them; it never replaces a partner.
 
@@ -91,6 +93,11 @@ Arguments (defaults in brackets):
   `camera:=false` (true: the dog's simulated event camera and the detector run while you
   drive), and with the camera `detector:=snn|simple` [snn].
 
+- `ros-follow-sim`: `follow:=false` (true: the follow node runs inside and starts by itself),
+  `mode:=walk|gaze`, `viewer:=true`, `actuation_delay_ms:=300.0`, `target_start_s:=5.0` (the
+  ball waits this long so the target node can calibrate), `zone_top:=0.3`. Details:
+  `docs/follow.md`.
+
 Scenery: `ros-sim`, `ros-robot-sim` and `ros-drive` take `scene:=lab|park` [lab]. `park` is
 an outdoor scene built from code (grass, a gravel path, trees, benches, a brick wall, houses);
 see `reflex/sim/scenery.py`. Give `ros-web` the same value (`ros-web scene:=park`) or it draws
@@ -109,6 +116,8 @@ are lab numbers.
 | `ros-web` | dashboard at `http://localhost:8080`; `port:=8081` | the browser |
 | `ros-teleop` | keyboard to `/cmd_vel`; needs `ros-drive` | its terminal: `i` forward, `,` back, `j` / `l` turn, `J` / `L` sideways, `k` stop |
 | `ros-tricks` | keyboard to built-in tricks; `allow_acrobatics:=true` | its terminal: `h` Hello, `s` Sit, `u` RiseSit, `!` Damp |
+| `ros-follow` | follow node: `/reflex/target` to Move / StopMove (or Euler with `mode:=gaze`); starts disabled. `max_vx:=0.3`, `max_wz:=0.5`, `max_travel_m:=3.0`, `dry_run:=true` | its terminal: `f` start, `SPACE` stop, `!` Damp, `q` quit |
+| `ros-target` | target node alone: `/reflex/events_window` to `/reflex/target`; `zone_top:=0.0` for a drone | — |
 | `ros-record session:=NAME` | record labelled takes from the live stream | its terminal: `l` `c` `r` `n` start, `SPACE` hit, `x` cancel, `u` undo, `q` quit |
 | `ros-shell` | a shell where `ros2` and `rqt` work | — |
 
@@ -122,6 +131,10 @@ ros2 topic hz /reflex/events_window
 rqt_graph
 ros2 run rqt_image_view rqt_image_view /reflex/debug/events_image
 ros2 service call /reflex/recalibrate std_srvs/srv/Trigger     # simple detector only
+ros2 topic echo /reflex/target                                  # where the target is (u, v, confidence)
+ros2 topic echo /reflex/debug/follow                            # follow node: state, burst, travel
+ros2 service call /reflex/follow/enable std_srvs/srv/SetBool "{data: false}"   # stop following
+ros2 service call /reflex/target/recalibrate std_srvs/srv/Trigger
 ```
 
 ## On the Kria

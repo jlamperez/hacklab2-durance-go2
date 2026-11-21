@@ -37,6 +37,7 @@ finetune-real = "bash scripts/finetune_real.sh"   # build + fine-tune on recorde
 view-data = "python -m reflex.viz.view_npz"
 view = { cmd = "python -m reflex.sim.view", env = { MUJOCO_GL = "glfw" } }
 drive = { cmd = "python -m reflex.sim.view --drive --no-balls", env = { MUJOCO_GL = "glfw" } }   # walk the dog with the arrow keys
+follow-sim = "python -m reflex.sim.follow_sim"   # follow a scripted ball, no ROS: prints a summary, --video out/follow.mp4
 
 # --- ROS 2 Humble (RoboStack). Separate environment: `pixi run -e ros ...`
 [feature.ros]
@@ -81,6 +82,20 @@ cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros driv
 
 [feature.ros.tasks.ros-teleop]
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run teleop_twist_keyboard teleop_twist_keyboard'"
+
+[feature.ros.tasks.ros-follow-sim]
+# Follow a scripted ball over ROS 2: simulated dog + its event camera + target node.
+# In a second terminal: pixi run -e ros ros-follow (press f). Or add follow:=true.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros follow_sim.launch.py \"$@\"' --"
+
+[feature.ros.tasks.ros-follow]
+# Follow node with its keyboard (f start, SPACE stop, ! Damp). Simulated or real robot.
+#   pixi run -e ros ros-follow mode:=gaze max_vx:=0.2
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros follow --ros-args $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+
+[feature.ros.tasks.ros-target]
+# Target node alone (events -> /reflex/target), e.g. next to the camera on the Kria side.
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros target --ros-args $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
 
 [feature.ros.tasks.ros-record]
 # Record labelled clips from the live event stream:  pixi run -e ros ros-record session:=sat_am
