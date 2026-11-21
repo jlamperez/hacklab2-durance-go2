@@ -130,8 +130,8 @@ def split_file_lengths(dataset_dir):
 class SizedDataset(fast.SensorDataset):
     """SensorDataset whose targets are (x, y, radius) in sensor pixels; radius 0 = unknown."""
 
-    def __init__(self, events, offsets, positions, radii, crop):
-        super().__init__(events, offsets, positions, crop)
+    def __init__(self, events, offsets, positions, radii, crop, noise_seed=None):
+        super().__init__(events, offsets, positions, crop, noise_seed)
         self.radii = (
             np.zeros(len(self), dtype=np.float32) if radii is None
             else np.asarray(radii, dtype=np.float32)
@@ -146,7 +146,8 @@ class SizedDataset(fast.SensorDataset):
             ((xy[0] - x0) * scale, (xy[1] - y0) * scale, self.radii[index] * scale),
             dtype=np.float32,
         )
-        return torch.from_numpy(fast.resample(pixels, x0, y0, scale)), torch.from_numpy(target)
+        flat = fast.resample(pixels, x0, y0, scale, self.noise_rng(index))
+        return torch.from_numpy(flat), torch.from_numpy(target)
 
 
 def benchmark_splits():
@@ -159,10 +160,14 @@ def benchmark_splits():
         fast.fixed_crop(base.SEED + 1),
         fast.fixed_crop(base.SEED + 2),
     )
+    noise_seeds = (None, base.SEED + 1, base.SEED + 2)
     names = ("train", "validation", "test")
     return tuple(
-        SizedDataset(events, offsets, xy, label_radii(events, offsets, xy, n, name), crop)
-        for (events, offsets, xy), n, crop, name in zip(arrays, lengths, crops, names)
+        SizedDataset(
+            events, offsets, xy, label_radii(events, offsets, xy, n, name), crop, noise_seed,
+        )
+        for (events, offsets, xy), n, crop, noise_seed, name
+        in zip(arrays, lengths, crops, noise_seeds, names)
     )
 
 
@@ -445,7 +450,7 @@ def predict_recording(recording, checkpoint_path, output_path, fps, batch_size,
         )
     dataset = SizedDataset(
         windows.events, windows.offsets, windows.positions if windows.labeled else None,
-        radii, windows.crop,
+        radii, windows.crop, noise_seed=0,
     )
     output_path = output_path or Path(f"{recording.stem}_size_pred.mp4")
     write_video(model, device, dataset, recording.name, output_path, fps,

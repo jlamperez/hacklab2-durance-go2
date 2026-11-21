@@ -9,7 +9,9 @@ Same benchmark data and splits as the original. Changes:
    Validation and test crops are fixed per sample. The varying side doubles as
    scale augmentation, since our camera's lens and ball size are unknown:
    sides below 320 px zoom in (the ball looks up to 4x bigger), sides above
-   zoom out. Zoomed-in pixels fill their whole footprint so the ball stays solid.
+   zoom out. A zoomed-in pixel fills its footprint on the sensor, but each
+   filled pixel is only kept with probability UPSAMPLE_KEEP, so enlarged
+   objects are not unrealistically solid.
 2. The dataset yields sparse pixel indices. The dense frame is built on the
    device and repeated over time with ``expand`` instead of real copies.
 3. Larger batches, and loss and error are accumulated on the device.
@@ -52,6 +54,7 @@ SOURCE_WIDTH = base.CAMERA_WIDTH
 SOURCE_HEIGHT = base.CAMERA_HEIGHT
 CROP_SIDES = (80.0, 720.0)
 CROP_MARGIN = 16.0
+UPSAMPLE_KEEP = 0.75
 HEATMAP_STRIDE = 8
 HEAT = SENSOR // HEATMAP_STRIDE
 TARGET_SIGMA = 1.0
@@ -93,11 +96,12 @@ def fit_crop(width, height):
     return lambda index, xy: ((width - side) / 2, (height - side) / 2, side)
 
 
-def resample(pixels, x0, y0, scale):
+def resample(pixels, x0, y0, scale, rng=None, keep=UPSAMPLE_KEEP):
     """(y, x) source pixels -> unique flat sensor indices for the given crop.
 
-    Zooming out maps each pixel to one sensor pixel. Zooming in fills every
-    sensor pixel a source pixel covers, so objects stay solid, not dotted.
+    Zooming out maps each pixel to one sensor pixel. Zooming in fills the
+    sensor pixels a source pixel covers, so objects are not dotted; with an
+    ``rng``, each filled pixel is kept with probability ``keep``.
     """
     x = (pixels[:, 1].astype(np.float32) - x0) * scale
     y = (pixels[:, 0].astype(np.float32) - y0) * scale
@@ -110,8 +114,11 @@ def resample(pixels, x0, y0, scale):
         inside = (xs < np.ceil(x + scale)[:, None, None]) & (ys < np.ceil(y + scale)[:, None, None])
         xs = np.broadcast_to(xs, inside.shape)[inside]
         ys = np.broadcast_to(ys, inside.shape)[inside]
-    keep = (xs >= 0) & (xs < SENSOR) & (ys >= 0) & (ys < SENSOR)
-    return np.unique(ys[keep].astype(np.int64) * SENSOR + xs[keep].astype(np.int64))
+    valid = (xs >= 0) & (xs < SENSOR) & (ys >= 0) & (ys < SENSOR)
+    flat = np.unique(ys[valid].astype(np.int64) * SENSOR + xs[valid].astype(np.int64))
+    if scale > 1.0 and rng is not None and keep < 1.0:
+        flat = flat[rng.random(len(flat)) < keep]
+    return flat
 
 
 class SensorDataset(Dataset):
@@ -119,10 +126,14 @@ class SensorDataset(Dataset):
 
     ``crop(index, xy)`` returns the square (x0, y0, side), in source pixels,
     that is mapped onto the sensor. Items are (flat indices y * SENSOR + x,
-    position in sensor pixels). ``positions=None`` means unlabeled.
+    position in sensor pixels). ``positions=None`` means unlabeled. Without
+    ``noise_seed`` the upsampling dropout changes on every call (training);
+    with it, it is fixed per index (evaluation).
     """
 
-    def __init__(self, events, offsets, positions, crop):
+    def __init__(self, events, offsets, positions, crop, noise_seed=None):
+        self.noise_seed = noise_seed
+        self.rng = np.random.default_rng(base.SEED)
         self.events = np.ascontiguousarray(events)
         self.offsets = np.ascontiguousarray(offsets)
         self.labeled = positions is not None
@@ -136,12 +147,17 @@ class SensorDataset(Dataset):
     def __len__(self):
         return int(self.positions.shape[0])
 
+    def noise_rng(self, index):
+        if self.noise_seed is None:
+            return self.rng
+        return np.random.default_rng((self.noise_seed, index))
+
     def __getitem__(self, index):
         xy = self.positions[index]
         x0, y0, side = self.crop(index, xy)
         scale = SENSOR / side
         pixels = self.events[self.offsets[index]:self.offsets[index + 1]]
-        flat = resample(pixels, x0, y0, scale)
+        flat = resample(pixels, x0, y0, scale, self.noise_rng(index))
         position = np.array(((xy[0] - x0) * scale, (xy[1] - y0) * scale), dtype=np.float32)
         return torch.from_numpy(flat), torch.from_numpy(position)
 
@@ -288,8 +304,8 @@ def benchmark_splits():
     train_arrays, validation_arrays, test_arrays = base._read_splits(base.ensure_dataset())
     return (
         SensorDataset(*train_arrays, random_crop(np.random.default_rng(base.SEED))),
-        SensorDataset(*validation_arrays, fixed_crop(base.SEED + 1)),
-        SensorDataset(*test_arrays, fixed_crop(base.SEED + 2)),
+        SensorDataset(*validation_arrays, fixed_crop(base.SEED + 1), noise_seed=base.SEED + 1),
+        SensorDataset(*test_arrays, fixed_crop(base.SEED + 2), noise_seed=base.SEED + 2),
     )
 
 
@@ -472,7 +488,7 @@ def recording_dataset(path, step_us, window_us, use_labels=True):
         f"{window_us / 1000:g} ms, median {int(np.median(np.diff(offsets)))} px per window",
         flush=True,
     )
-    return SensorDataset(events, offsets, xy, fit_crop(width, height))
+    return SensorDataset(events, offsets, xy, fit_crop(width, height), noise_seed=0)
 
 
 class VideoWriter(base.VideoWriter):
