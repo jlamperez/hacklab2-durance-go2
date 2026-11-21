@@ -5,9 +5,11 @@ Same benchmark data and splits as the original. Changes:
 1. Every sample is a SENSOR x SENSOR (320x320) frame, the resolution of our
    camera recordings (``reflex-events-v1`` files). Training takes a random
    square crop of the 1280x720 benchmark frame that contains the ball, with a
-   side drawn from CROP_SIDES, and resamples it to 320x320. Validation and test
-   crops are fixed per sample. The varying side doubles as scale augmentation,
-   since our camera's lens and ball size are unknown.
+   side drawn log-uniformly from CROP_SIDES, and resamples it to 320x320.
+   Validation and test crops are fixed per sample. The varying side doubles as
+   scale augmentation, since our camera's lens and ball size are unknown:
+   sides below 320 px zoom in (the ball looks up to 2x bigger), sides above
+   zoom out. Zoomed-in pixels fill their whole footprint so the ball stays solid.
 2. The dataset yields sparse pixel indices. The dense frame is built on the
    device and repeated over time with ``expand`` instead of real copies.
 3. Larger batches, and loss and error are accumulated on the device.
@@ -48,7 +50,7 @@ CHECKPOINT = Path("ball_heatmap_best.pt")
 SENSOR = 320
 SOURCE_WIDTH = base.CAMERA_WIDTH
 SOURCE_HEIGHT = base.CAMERA_HEIGHT
-CROP_SIDES = (320.0, 720.0)
+CROP_SIDES = (160.0, 720.0)
 CROP_MARGIN = 16.0
 HEATMAP_STRIDE = 8
 HEAT = SENSOR // HEATMAP_STRIDE
@@ -69,7 +71,7 @@ def _crop_origin(rng, center, side, limit):
 def random_crop(rng):
     """New crop for every call: (x0, y0, side) in benchmark pixels."""
     def crop(index, xy):
-        side = float(rng.uniform(*CROP_SIDES))
+        side = float(np.exp(rng.uniform(*np.log(CROP_SIDES))))
         return (
             _crop_origin(rng, xy[0], side, SOURCE_WIDTH),
             _crop_origin(rng, xy[1], side, SOURCE_HEIGHT),
@@ -89,6 +91,27 @@ def fit_crop(width, height):
     """Whole width x height frame, centered and scaled to fit the sensor."""
     side = float(max(width, height))
     return lambda index, xy: ((width - side) / 2, (height - side) / 2, side)
+
+
+def resample(pixels, x0, y0, scale):
+    """(y, x) source pixels -> unique flat sensor indices for the given crop.
+
+    Zooming out maps each pixel to one sensor pixel. Zooming in fills every
+    sensor pixel a source pixel covers, so objects stay solid, not dotted.
+    """
+    x = (pixels[:, 1].astype(np.float32) - x0) * scale
+    y = (pixels[:, 0].astype(np.float32) - y0) * scale
+    if scale <= 1.0:
+        xs, ys = np.floor(x), np.floor(y)
+    else:
+        step = np.arange(int(np.ceil(scale)) + 1, dtype=np.float32)
+        xs = np.floor(x)[:, None, None] + step[None, None, :]
+        ys = np.floor(y)[:, None, None] + step[None, :, None]
+        inside = (xs < np.ceil(x + scale)[:, None, None]) & (ys < np.ceil(y + scale)[:, None, None])
+        xs = np.broadcast_to(xs, inside.shape)[inside]
+        ys = np.broadcast_to(ys, inside.shape)[inside]
+    keep = (xs >= 0) & (xs < SENSOR) & (ys >= 0) & (ys < SENSOR)
+    return np.unique(ys[keep].astype(np.int64) * SENSOR + xs[keep].astype(np.int64))
 
 
 class SensorDataset(Dataset):
@@ -117,11 +140,8 @@ class SensorDataset(Dataset):
         xy = self.positions[index]
         x0, y0, side = self.crop(index, xy)
         scale = SENSOR / side
-        pixels = self.events[self.offsets[index]:self.offsets[index + 1]].astype(np.float32)
-        x = np.floor((pixels[:, 1] - x0) * scale)
-        y = np.floor((pixels[:, 0] - y0) * scale)
-        keep = (x >= 0) & (x < SENSOR) & (y >= 0) & (y < SENSOR)
-        flat = np.unique(y[keep].astype(np.int64) * SENSOR + x[keep].astype(np.int64))
+        pixels = self.events[self.offsets[index]:self.offsets[index + 1]]
+        flat = resample(pixels, x0, y0, scale)
         position = np.array(((xy[0] - x0) * scale, (xy[1] - y0) * scale), dtype=np.float32)
         return torch.from_numpy(flat), torch.from_numpy(position)
 
