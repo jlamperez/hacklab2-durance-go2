@@ -3,8 +3,9 @@
 Every file Durance's KV260 needs to run one of our riverops networks on SPLEAT (the FPGA
 inference server), which tool makes it, where it lives in this repo, and where it goes on
 the board. Written on 21 Nov 2026 for the small ball detector. **Nothing here has been
-loaded on the board yet**; the board side follows Durance's deploy page
-(`docs/durance-riversdk.md`), not our own test.
+loaded on the board until 21 Nov evening**: see "Current state" for what was run and
+what has not been seen yet. How camera, server and Durance's ROS 2 nodes connect, and the
+server's message format: `docs/fpga-pipeline.md`.
 
 ## Setup, once
 
@@ -129,13 +130,30 @@ on Durance's card stays.
    pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy out/spleat/ball_small_model/deploy.yaml root@192.168.77.1 --replace
    ```
 
-6. **Restart and look**, on the board:
+6. **Restart and look**, on the board (`ss` is not on Durance's image):
 
    ```bash
    systemctl restart spleat-xmutil-loadapp spleat-server     # or reboot
-   journalctl -u spleat-server -n 50
-   ss -tlnp | grep 3333
+   journalctl -u spleat-xmutil-loadapp -n 10                 # "spleat: Loaded with slot_handle 0"
+   journalctl -u spleat-server -n 10                         # "read config" with our inputs/outputs
+   grep -i ":0D05 " /proc/net/tcp6                           # port 3333 listening
    ```
+
+7. **Read the results** from the laptop. The server only sends something while the camera
+   client on the board (`despot_send_and_forget`, after `despot_test_camera` once per boot)
+   feeds it frames:
+
+   ```bash
+   pixi run spleat-read --save out/spleat_capture.bin        # Ctrl+C to stop
+   ```
+
+   Per message: size, number of values (9x80x80 expected), `latency`, min/max/sum, and
+   `(x, y, P(ball))` decoded with the readout. It assumes the payload is the head's spike
+   counts in channel, row, column order; the first real messages tell whether that holds.
+
+**Back to Durance's example**: the files from before were saved on the board in
+`/root/backup/durance-example/` (and on the laptop in `out/kria_backup/`); copy them back to
+their places and restart the two services.
 
 ## Current state (21 Nov 2026, evening)
 
@@ -143,17 +161,20 @@ on Durance's card stays.
 |---|---|
 | Firmware | `models/firmware/kv260_ball_small_job35/`: job #35, small U-Net, generated. The full-size network failed in place-and-route twice |
 | Model | `models/ball_small/` holds an early QAT checkpoint (epoch 4, 2 ms window, not in git): good enough to test the board path, not to detect balls. A better one, trained on 5 ms windows, is expected |
-| Board | nothing deployed yet |
+| Board (21 Nov, about 23:20) | **deployed with river-tools**: sha256 of the five files checked on the board; bitstream loaded (`dfx-mgr-client: spleat: Loaded with slot_handle 0`, DMA channels created); `backward-server` running with our config (1x320x320 in, 9x80x80 out); port 3333 accepts connections. **Not seen yet**: a single inference. No camera client was running, so no frame reached the server and no message came out |
 
 ## Not known yet
 
-- **How the network output reaches us.** Something has to send camera frames to the
-  server and read the 9x80x80 output. Durance's ROS 2 package `bringup`
-  (`go2-kria-generated.zip`, `ros2 launch bringup pipeline.launch.py port:=...`) does it for
-  their example; whether it handles another output shape is unknown.
-- **The port**: 3333 in the server config of the deploy page, 41017 in its launch example.
-- **`frequency`**: we assume one camera frame per event window (Durance's example: 100 Hz,
-  10 ms frames). Not confirmed.
+- **What the camera client sends for our config.** The model was trained on one binary
+  channel (1 where a pixel had any event) at 320x320. Durance's camera client builds frames
+  of 2 polarities with event counts. Whether `channels: 1` makes it merge polarities, and
+  whether it sends counts above 1, is unknown: the biggest risk for this model.
+- **What the payload holds**: spike counts summed over the time steps (what the readout
+  expects), spikes of one step, or potentials. `spleat-read` assumes the first.
+- **Whether the server sends a 9x80x80 output** (230 kB per message). Durance's own client
+  caps messages at 64 kB; spatial outputs are untested on the FPGA.
+- **`frequency`**: one camera frame per event window, as in Durance's example (100 Hz,
+  10 ms frames, `docs/fpga-pipeline.md`); the port is 3333 (the node's default).
 - **Time steps per frame** and whether the server resets the neuron state between frames.
   Training feeds each frame for 4 steps from a zero state.
 - **The server config format** on the real board: compare with the file already there

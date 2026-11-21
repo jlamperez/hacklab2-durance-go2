@@ -114,6 +114,27 @@ def window_config(detector: str, ball_dir: str | Path = "models/ball") -> Window
     return WindowConfig()
 
 
+def decode_ball_output(counts: np.ndarray, readout: dict) -> tuple[float, float, float]:
+    """(x, y, P(ball)) in network-input pixels from the head's spike counts (C, grid, grid),
+    as `decode` in Training/train_ball_size.py, with the constants of <prefix>_readout.json.
+    Shared by BallDetector (network run on the PC) and the FPGA client (spleat_client)."""
+    r = readout
+    t, cell, bins = r["time_steps"], r["cell_px"], r["offset_bins"]
+    heat = counts[r["channels"]["heatmap"]].ravel() * (r["heatmap_logit_scale"] / t)
+    m = heat.max()
+    p_ball = 1.0 / (1.0 + np.exp(-(m + np.log(np.exp(heat - m).sum()) - r["no_ball_logit"])))
+    row, col = divmod(int(heat.argmax()), r["grid"])
+    centers = (np.arange(bins) + 0.5) * cell / bins
+
+    def offset(key):
+        a, b = r["channels"][key]
+        z = counts[a:b, row, col] * (r["offset_logit_scale"] / t)
+        p = np.exp(z - z.max())
+        return float((p / p.sum() * centers).sum())
+
+    return col * cell + offset("x_offset"), row * cell + offset("y_offset"), float(p_ball)
+
+
 class BallDetector:
     """Durance-style ball detector: the riverops ball network, run as on the FPGA.
 
@@ -154,22 +175,7 @@ class BallDetector:
         return out, x0, y0
 
     def decode(self, counts: np.ndarray) -> tuple[float, float, float]:
-        """(x, y, P(ball)) in input pixels, as `decode` in Training/train_ball_size.py."""
-        r = self.readout
-        t, cell, bins = r["time_steps"], r["cell_px"], r["offset_bins"]
-        heat = counts[r["channels"]["heatmap"]].ravel() * (r["heatmap_logit_scale"] / t)
-        m = heat.max()
-        p_ball = 1.0 / (1.0 + np.exp(-(m + np.log(np.exp(heat - m).sum()) - r["no_ball_logit"])))
-        row, col = divmod(int(heat.argmax()), r["grid"])
-        centers = (np.arange(bins) + 0.5) * cell / bins
-
-        def offset(key):
-            a, b = r["channels"][key]
-            z = counts[a:b, row, col] * (r["offset_logit_scale"] / t)
-            p = np.exp(z - z.max())
-            return float((p / p.sum() * centers).sum())
-
-        return col * cell + offset("x_offset"), row * cell + offset("y_offset"), float(p_ball)
+        return decode_ball_output(counts, self.readout)
 
     def predict(self, window: np.ndarray, t_us: int = 0) -> Decision:
         frame, x0, y0 = self.frame(window)
