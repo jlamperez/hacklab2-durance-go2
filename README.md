@@ -243,6 +243,21 @@ on the lab scene: in the park it scored 5 of 9 balls against 9 of 9 in the lab (
 
 ## Typical sessions
 
+From simulation to the real Go2, the commands used at the end (details on the project guide's
+"Run it" tab and in `docs/commands.md`):
+
+```bash
+# 1. everything simulated
+pixi run -e ros ros-sim viewer:=true
+# 2. real camera + FPGA on the Kria, simulated dog on the laptop
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3
+pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0 viewer:=false
+pixi run -e ros ros-web     # optional; needs the CycloneDDS export in its terminal first
+# 3. the real Go2: first only logs, then (Ctrl-C) for real
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true
+```
+
 Everything simulated, one terminal:
 
 ```bash

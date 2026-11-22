@@ -19,6 +19,7 @@
     </div>
     <nav class="tabs" aria-label="Sections">
       <a href="#overview">Overview</a>
+      <a href="#run">Run it</a>
       <a href="#simulator">Simulator</a>
       <a href="#ros">ROS 2 nodes</a>
       <a href="#setup">Build a setup</a>
@@ -85,7 +86,7 @@ pixi run -e ros ros-web      <span class="comment"># the dashboard, http://local
       <div class="code"><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3
 pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0
 pixi run -e ros ros-web</pre></div>
-      <a href="#kria">The pipeline on the Kria →</a></div>
+      <a href="#run">Every command, step by step →</a></div>
   </div>
 
   <h3>Step 3 · The real Go2</h3>
@@ -203,6 +204,94 @@ ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=
   <p class="note">What is real: the event camera (about 100 recorded takes, and live into the FPGA), two networks on
     the FPGA, and the Go2 turning towards a ball with the whole pipeline on the Kria (22 Nov). What is not measured: the
     accuracy of the live decisions, on the bench or on the robot. The rest of this site's numbers are from simulation.</p>
+</section>
+
+<!-- ================================================================ RUN -->
+<section class="tab" id="tab-run">
+  <h2>Run it: simulation, then the board, then the real dog</h2>
+  <p class="lede">The commands we used at the end, in the order we used them. Each stage swaps one thing: first
+    everything is simulated, then the real camera and FPGA drive the simulated dog, then the same board drives the real
+    Go2. The topics between the boxes never change.</p>
+
+  <h3>Once, on the laptop</h3>
+  <div class="code"><pre>pixi install -a
+pixi run setup                <span class="comment"># Go2 MuJoCo model and Unitree's messages</span>
+pixi run -e ros ros-build     <span class="comment"># again after switching branch or changing a node</span>
+scripts/kria/deploy.sh        <span class="comment"># our nodes onto the Kria, /opt/reflex (needs Durance's Docker image)</span></pre></div>
+
+  <h3>Stage 1 · Everything in simulation <span class="badge sim">laptop only</span></h3>
+  <p>MuJoCo is the camera and the robot; the network runs on the PC. Nothing else is needed.</p>
+  <div class="code"><div class="label"><span class="where">PC</span> terminal 1</div><pre>pixi run -e ros ros-sim viewer:=true    <span class="comment"># balls, camera, network, behavior, robot</span></pre></div>
+  <div class="code"><div class="label"><span class="where">PC</span> terminal 2, optional</div><pre>pixi run -e ros ros-web                 <span class="comment"># http://localhost:8080</span></pre></div>
+
+  <h3>Stage 2 · Real camera and FPGA, simulated dog <span class="badge ok">board + laptop</span></h3>
+  <p>The Kria plugged into the laptop with a cable (<code>enp8s0</code> on the laptop, the board at
+    <code>192.168.77.1</code>). The camera, the FPGA and the zone run on the board; the dog is MuJoCo on the laptop.</p>
+
+  <div class="card"><b>1 · Kria: camera → FPGA → zone</b>
+    <div class="code"><div class="label"><span class="where">PC → Kria</span> terminal 1</div><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3 enabled:=false</pre></div>
+    <div class="table-wrap"><table>
+      <tr><th>Argument</th><th>What it does</th></tr>
+      <tr><td><code>robot:=sim</code></td><td>The board's ROS traffic goes out on the cable to the laptop, where the simulated dog is. <code>real</code> sends it to the Go2</td></tr>
+      <tr><td><code>model:=ball_v3</code></td><td>The six-zone network. It must be the one loaded on the FPGA, or <code>run.sh</code> refuses to start</td></tr>
+      <tr><td><code>enabled:=false</code></td><td>The board's behavior node only logs, so it does not fight with <code>ros-look</code> on the laptop. Leave it out to let the board drive the dog itself (look mode)</td></tr>
+    </table></div>
+    <p>From <code>models/ball_v3/run_args</code> it adds by itself:</p>
+    <div class="table-wrap"><table>
+      <tr><th>Argument</th><th>Value</th><th>What it does</th></tr>
+      <tr><td><code>margin</code></td><td>−10</td><td>Any zone spike beats <code>none</code></td></tr>
+      <tr><td><code>vote_window</code>, <code>vote_min</code></td><td>1, 1</td><td>No vote: every detection changes the zone at once</td></tr>
+      <tr><td><code>zone_hold_s</code></td><td>0.5</td><td>A zone stays published 0.5 s before going back to <code>none</code></td></tr>
+      <tr><td><code>mode</code></td><td>look</td><td>The board's behavior node turns the trunk towards the zone</td></tr>
+    </table></div>
+    <p>It checks the camera first (<code>despot_test_camera</code>), then starts everything. Every 10 s you should see
+      something like <code>last 10 s: 47 frames/s from despot, 46/s to the FPGA, 46/s answered</code>.</p></div>
+
+  <div class="card"><b>2 · Laptop: in every new terminal, paste this first</b>
+    <div class="code"><pre>export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI='&lt;CycloneDDS&gt;&lt;Domain Id="any"&gt;&lt;General&gt;&lt;Interfaces&gt;&lt;NetworkInterface name="enp8s0"/&gt;&lt;/Interfaces&gt;&lt;/General&gt;&lt;/Domain&gt;&lt;/CycloneDDS&gt;'</pre></div>
+    <p>So ROS uses the cable to the Kria (<code>enp8s0</code>), not the Wi-Fi. Not needed for <code>ros-robot-sim</code>,
+      which takes it as <code>dds_interface:=enp8s0</code>.</p></div>
+
+  <div class="card"><b>3 · Laptop: the simulated dog</b>
+    <div class="code"><div class="label"><span class="where">PC</span> terminal 2</div><pre>pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0 viewer:=false</pre></div>
+    <div class="table-wrap"><table>
+      <tr><th>Argument</th><th>What it does</th></tr>
+      <tr><td><code>behavior:=false</code></td><td>No decision node here: MuJoCo only plays the robot and obeys the requests it gets</td></tr>
+      <tr><td><code>dds_interface:=enp8s0</code></td><td>Listens on the Kria's cable</td></tr>
+      <tr><td><code>viewer:=false</code></td><td>No MuJoCo window, the dog is in the browser. <code>true</code> adds the window</td></tr>
+    </table></div></div>
+
+  <div class="card"><b>4 · Laptop: the dog looks at the zone</b>
+    <div class="code"><div class="label"><span class="where">PC</span> terminal 3</div><pre>pixi run -e ros ros-look</pre></div>
+    <ul>
+      <li>Reads <code>/durance/ball_zone</code> and turns the dog's trunk towards the zone.</li>
+      <li>Starts disabled: <kbd>f</kbd> in this terminal starts it, <kbd>SPACE</kbd> stops it.</li>
+      <li><code>autostart:=true</code> starts it enabled; <code>dry_run:=true</code> only logs.</li>
+    </ul>
+    <p>Skip this step if the board drives (step 1 without <code>enabled:=false</code>).</p></div>
+
+  <div class="card"><b>5 · Laptop: the dashboard</b>
+    <div class="code"><div class="label"><span class="where">PC</span> terminal 4</div><pre>pixi run -e ros ros-web       <span class="comment"># http://localhost:8080</span></pre></div>
+    <p>The dog in 3D; the camera picture with the 2×3 grid and the detected zone outlined in green; the "Ball zone"
+      panel with the current zone and the detections per zone.</p></div>
+
+  <div class="card"><b>6 · Optional: the zones as text</b>
+    <div class="code"><pre>pixi run -e ros ros-shell -c 'ros2 topic echo --qos-durability transient_local --qos-reliability reliable /durance/ball_zone'</pre></div></div>
+
+  <p class="note">To test: move the ball close to the camera, and fast. The green square should follow it and the dog
+    turn towards it.</p>
+
+  <h3>Stage 3 · The real Go2 <span class="badge ok">board on the dog</span></h3>
+  <p>The Kria and the camera on the dog's back, the Go2 on the board's USB-Ethernet adapter. With <code>robot:=real</code>
+    the board's ROS traffic goes to the Go2 only: the laptop sees nothing, so <code>ros-look</code> and <code>ros-web</code>
+    cannot be used and the board's behavior node does the looking. Emergency stop and the Unitree remote in someone's
+    hand.</p>
+  <div class="code"><div class="label"><span class="where">PC → Kria</span> 1 · the dog does not move: the log shows what it would send</div><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3</pre></div>
+  <div class="code"><div class="label"><span class="where">PC → Kria</span> 2 · Ctrl-C and, if the log makes sense, for real</div><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true
+<span class="comment"># what ran on 22 Nov, with twice the default angles:</span>
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2</pre></div>
+  <p>On Ctrl-C the behavior node straightens the trunk before it exits. The remote is the real stop.</p>
 </section>
 
 <!-- ================================================================ SIMULATOR -->

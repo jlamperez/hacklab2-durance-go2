@@ -244,6 +244,43 @@ folder in a Python environment that has `river-tools` and `h5py` (on the Windows
 
 Each line is one terminal.
 
+### From simulation to the real Go2: the commands used at the end (22 Nov)
+
+Same order on the project guide's "Run it" tab. Once on the laptop: `pixi run -e ros ros-build`
+(again after switching branch) and `scripts/kria/deploy.sh`.
+
+**Stage 1, everything simulated**
+```bash
+pixi run -e ros ros-sim viewer:=true
+pixi run -e ros ros-web                      # optional
+```
+
+**Stage 2, real camera and FPGA on the Kria, simulated dog on the laptop** (Kria on the cable, `enp8s0`)
+```bash
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3 enabled:=false   # Kria: camera -> FPGA -> zone
+pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0 viewer:=false      # MuJoCo as the robot only
+pixi run -e ros ros-look                     # f start, SPACE stop; autostart:=true, dry_run:=true
+pixi run -e ros ros-web                      # http://localhost:8080: camera, 2x3 grid, zone panel
+pixi run -e ros ros-shell -c 'ros2 topic echo --qos-durability transient_local --qos-reliability reliable /durance/ball_zone'   # optional
+```
+In every laptop terminal except `ros-robot-sim` (which takes `dds_interface`), first:
+```bash
+export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI='<CycloneDDS><Domain Id="any"><General><Interfaces><NetworkInterface name="enp8s0"/></Interfaces></General></Domain></CycloneDDS>'
+```
+`enabled:=false` keeps the board's behavior node to logging so it does not fight with `ros-look`;
+without it the board drives the dog itself and `ros-look` is not needed. `models/ball_v3/run_args`
+adds `margin:=-10 vote_window:=1 vote_min:=1 zone_hold_s:=0.5 mode:=look`. Every 10 s the board
+logs something like `last 10 s: 47 frames/s from despot, 46/s to the FPGA, 46/s answered`.
+Move the ball close to the camera, and fast.
+
+**Stage 3, the real Go2** (board and camera on the dog; the laptop sees nothing, the board's behavior node looks)
+```bash
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3                  # logs what it would send
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true    # Ctrl-C the first, then this
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2   # what ran on 22 Nov
+```
+
 **See the whole loop work, with a score**
 ```bash
 pixi run -e ros ros-sim

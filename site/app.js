@@ -49,7 +49,7 @@ document.addEventListener("click", (e) => {
 })();
 
 /* ------------------------------------------------------------------ tabs */
-const TABS = ["overview", "simulator", "ros", "setup", "kria", "fpga", "data", "commands", "status"];
+const TABS = ["overview", "run", "simulator", "ros", "setup", "kria", "fpga", "data", "commands", "status"];
 function showTab() {
   const id = location.hash.slice(1);
   const tab = TABS.includes(id) ? id : "overview";
