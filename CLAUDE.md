@@ -46,7 +46,7 @@ pixi run spleat-bundle MODEL.json PARAMS.json [--firmware DIR --checkpoint PT]  
 pixi run spleat-read [--host H --save F | --file F]  # read the FPGA results from the Kria (port 3333), or decode saved ones
 pixi run spleat-read --zones-dir models/zones3     # same, for the target-zone SNN: winning zone over the last 20 frames
 scripts/kria/deploy.sh                             # cross-compile reflex_msgs/reflex_ros (Durance's Docker image) -> /opt/reflex on the Kria
-ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim|real   # whole pipeline on the Kria (camera, FPGA, decision, behavior)
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim|real [model:=zones3|ball_v3]   # whole pipeline on the Kria (camera, FPGA, decision, behavior); model must be the one on the FPGA
 pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0   # laptop: MuJoCo dog as the robot for robot:=sim
 pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy out/spleat/<model>/deploy.yaml root@192.168.77.1  # Durance's tool, Python 3.10
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
