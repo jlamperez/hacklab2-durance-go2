@@ -327,7 +327,7 @@ def _git_state() -> str:
 
 def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float,
           firmware: Path | None = None, checkpoint: Path | None = None,
-          noise_filter: bool = True) -> dict:
+          noise_filter: bool = True, frequency: float | None = None) -> dict:
     model = json.loads(model_path.read_text())
     params = json.loads(params_path.read_text())
     if scaling != float(1 << POTENTIAL_FRAC):
@@ -342,7 +342,10 @@ def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float,
 
     server = server_config(model, shapes, scaling)
     window = checkpoint_window(checkpoint) if checkpoint is not None else None
-    camera = camera_config(model, window["frequency"] if window else None, noise_filter)
+    if frequency is not None:      # chosen by hand: recorded in the README and the manifest
+        window = {**(window or {}), "frequency_override": float(frequency)}
+    camera = camera_config(model, frequency if frequency is not None else
+                           window["frequency"] if window else None, noise_filter)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in (*FIRMWARE_FILES, "deploy.yaml"):          # never leave a previous run's firmware
@@ -359,8 +362,10 @@ def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float,
     command = f"pixi run spleat-bundle {model_path} {params_path} --out {out_dir}"
     command += f" --firmware {firmware}" if firmware is not None else ""
     command += f" --checkpoint {checkpoint}" if checkpoint is not None else ""
+    command += " --no-noise-filter" if not noise_filter else ""
+    command += f" --frequency {frequency:g}" if frequency is not None else ""
     inputs = {str(model_path): _sha256(model_path), str(params_path): _sha256(params_path)}
-    if window:
+    if window and "checkpoint_sha256" in window:
         inputs[str(checkpoint)] = window["checkpoint_sha256"]
     if fw:
         inputs[str(firmware / FIRMWARE_ARCHIVE)] = fw["archive_sha256"]
@@ -536,6 +541,10 @@ def _firmware_rows(fw: dict | None) -> str:
 
 
 def _frequency_source(win: dict | None) -> str:
+    if win and "frequency_override" in win:
+        trained = (f"; the network was trained on {win['window_ms']:g} ms windows ({1000 / win['window_ms']:g} Hz)"
+                   if "window_ms" in win else "")
+        return f"`--frequency`, set by hand{trained}"
     if not win:
         return "deploy page default. **Not matched to the model** (pass `--checkpoint`)"
     return (f"computed: 1000 / {win['window_ms']:g} ms, the event window per frame ({win['window_source']}, "
@@ -553,6 +562,9 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"folder with riversdk.dev's {FIRMWARE_ARCHIVE} and its PROVENANCE.md")
     ap.add_argument("--checkpoint", type=Path, help="checkpoint (*.pt): sets the camera frequency "
                                                      "from the event window it was trained on")
+    ap.add_argument("--frequency", type=float,
+                    help="camera frames per second, overriding the checkpoint's window (models/ball_v3: 50, "
+                         "so that every frame reaches the FPGA; docs/fpga-ball-zones-v3-2026-11-22.md)")
     ap.add_argument("--no-noise-filter", action="store_true",
                     help="leave noise_filtering_factor out of metavision_camera.json (filter off), "
                          "for networks trained on raw recordings")
@@ -560,7 +572,7 @@ def main(argv: list[str] | None = None) -> int:
     out = args.out or Path("out/spleat") / args.model.stem
     try:
         m = build(args.model, args.parameters, out, args.scaling, args.firmware, args.checkpoint,
-                  noise_filter=not args.no_noise_filter)
+                  noise_filter=not args.no_noise_filter, frequency=args.frequency)
     except BundleError as e:
         ap.exit(1, f"error: {e}\n")
     net = m["network"]
@@ -568,7 +580,9 @@ def main(argv: list[str] | None = None) -> int:
           f"output {'x'.join(map(str, net['output']))}, {net['parameter_values']} values")
     extra = " spleat.bit.bin spleat.dtbo" if m["firmware"] else ""
     print(f"wrote {out}/: weights.txt config.yaml metavision_camera.json{extra} deploy.yaml README.md manifest.json")
-    if m["event_window"]:
+    if m["event_window"] and "frequency_override" in m["event_window"]:
+        print(f"camera frequency {m['camera_config']['frequency']:g} Hz (--frequency)")
+    elif m["event_window"]:
         w = m["event_window"]
         print(f"camera frequency {m['camera_config']['frequency']:g} Hz from the checkpoint's {w['window_ms']:g} ms window")
     return 0

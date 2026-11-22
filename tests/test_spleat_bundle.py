@@ -147,3 +147,16 @@ def test_noise_filter_can_be_removed():
     assert camera_config(model)["noise_filtering_factor"] == 0.5
     cam = camera_config(model, 200.0, noise_filter=False)
     assert "noise_filtering_factor" not in cam and cam["frequency"] == 200.0 and cam["downsampling"] == 1
+
+
+def test_frequency_by_hand_overrides_the_checkpoint(tmp_path):
+    torch = pytest.importorskip("torch")
+    model = tiny_model()
+    mp, pp = tmp_path / "m.json", tmp_path / "p.json"
+    mp.write_text(json.dumps(model))
+    pp.write_text(json.dumps(tiny_params(model)))
+    torch.save({"window_ms": 5.0}, tmp_path / "c.pt")
+    m = build(mp, pp, tmp_path / "out", 4096.0, checkpoint=tmp_path / "c.pt", frequency=50.0)
+    assert json.loads((tmp_path / "out" / "metavision_camera.json").read_text())["frequency"] == 50.0
+    assert "--frequency 50" in m["command"]
+    assert "set by hand" in (tmp_path / "out" / "README.md").read_text()
