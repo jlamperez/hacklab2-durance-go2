@@ -1,0 +1,109 @@
+{
+  "names": [
+    "none",
+    "left",
+    "center",
+    "right"
+  ],
+  "frame": {
+    "sensor": 320,
+    "bin_us": 10000,
+    "downsample": 4,
+    "norm": "mean",
+    "flip_x": false
+  },
+  "labels": {
+    "n_bins": 3,
+    "method": "blob",
+    "min_events": 30,
+    "margin": 0.0,
+    "fill_gap_frames": 10,
+    "min_blob": 8,
+    "kernel": 11,
+    "integrate": 1,
+    "min_compact": 0.55,
+    "gate_frames": 20,
+    "gate_cells": 6.0,
+    "gate_speed": 3.0,
+    "min_run": 3,
+    "hot_frac": 0.2,
+    "clutter_frac": 0.3,
+    "clutter_min_frames": 300,
+    "noise_factor": 2.0,
+    "noise_pct": 99.0,
+    "ego_kinds": [
+      "drone"
+    ],
+    "ego_kernel": 5,
+    "ego_lag": 20,
+    "ego_search": 30,
+    "ego_own": 10,
+    "ego_min_cells": 150,
+    "ego_min_match": 0.3,
+    "ego_patch": 7,
+    "ego_scene_match": 0.35,
+    "ego_self_match": 0.5,
+    "ego_min_rel": 2.0,
+    "ego_hold": 30,
+    "ego_candidates": 6
+  },
+  "window": {
+    "frames": 40,
+    "readout": 20,
+    "label_frames": 5,
+    "stride": 5
+  },
+  "model": {
+    "channels": [
+      16,
+      32,
+      32,
+      64
+    ],
+    "decay": 0.93,
+    "v_threshold": 1.0,
+    "reset_mode": "HARD"
+  },
+  "n_classes": 4,
+  "targets": [
+    "ball"
+  ],
+  "args": {
+    "data": [
+      "data/river"
+    ],
+    "targets": [
+      "ball"
+    ],
+    "val_sessions": [
+      "val"
+    ],
+    "test_sessions": [],
+    "out": "out/river/zones3_v1",
+    "init": null,
+    "freeze_trunk": false,
+    "epochs": 15,
+    "batch": 32,
+    "lr": 0.003,
+    "weight_decay": 0.0001,
+    "samples_per_epoch": 4000,
+    "workers": 8,
+    "n_bins": 3,
+    "min_events": 30,
+    "downsample": 4,
+    "norm": "mean",
+    "flip_x": false,
+    "frames": 40,
+    "readout": 20,
+    "no_soft": false,
+    "channels": [
+      16,
+      32,
+      32,
+      64
+    ],
+    "no_export": false,
+    "seed": 42,
+    "bn_calib_batches": 20
+  }
+}

@@ -55,6 +55,11 @@ Two things are independent, and that is what makes iterating cheap:
 - **The weights go separately**, as `weights.txt`. A new checkpoint of the same
   architecture only changes `weights.txt` (and `metavision_camera.json` if its event
   window changed).
+- **`weights.txt` is two's complement.** Weights and biases go as unsigned 0-255
+  (-16 -> 240), threshold and leak as they are. riverops 0.2.0's `export_params` gives signed
+  values; with those the network runs but computes something else (checked on the board,
+  `docs/fpga-zones3-2026-11-22.md`). `spleat-bundle` and `reflex.river.train` both write two's
+  complement. A network that works on the board: `models/zones3` (job #44).
 
 ## Files to the board
 

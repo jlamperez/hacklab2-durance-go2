@@ -77,6 +77,8 @@ def main(argv=None):
             v = np.frombuffer(pay, "<f4")
             line += (f", {v.size} values, max {v.max():.3g}, sum {v.sum():.4g}, "
                      f"nonzero {int(np.count_nonzero(v))}")
+            if v.size <= 16:
+                line += f", values {[int(a) if a == int(a) else float(a) for a in v]}"
         print(line, flush=True)
     return 0
 

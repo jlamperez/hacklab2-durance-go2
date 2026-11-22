@@ -15,7 +15,11 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
   FPGA (the team also ran Durance's own example model on the board). The small ball detector
   was loaded on the FPGA on 21 Nov; on 22 Nov, fed by the real camera through
   `tools/spleat_merge_proxy.py`, one inference came back, then the FPGA hung; Durance's example
-  runs on the same board, so it is our bitstream (`docs/fpga-run-2026-11-22.md`). Keep the status table in `README.md` honest.
+  runs on the same board, so it is our bitstream (`docs/fpga-run-2026-11-22.md`). On 22 Nov the
+  target-zone SNN (`models/zones3`, firmware job #44, Durance-shaped: 2x80x80 -> conv chain ->
+  4x1x1) runs on the FPGA: fed synthetic frames it answers every frame and matches the
+  fixed-point emulation; not yet fed by the real camera (`docs/fpga-zones3-2026-11-22.md`).
+  `weights.txt` for the board is two's complement, not riverops' signed export. Keep the status table in `README.md` honest.
 - **Never write a Unitree `api_id` from memory.** Each one is checked against
   `ros2_sport_client` in `unitree_ros2` and recorded with its source file and commit.
 - Keep the model small and in plain PyTorch. It has to be ported to Durance's RIVERLib,
