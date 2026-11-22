@@ -84,6 +84,25 @@ def test_leans_are_mirror_images(sim):
     assert abs(y_l + y_r) < 0.005 and abs(roll_l + roll_r) < 1.0 and abs(z_l - z_r) < 0.005
 
 
+@pytest.mark.parametrize("pitch,yaw", [(0.0, 0.3), (0.0, -0.3), (0.2, 0.0), (-0.2, 0.0), (0.2, -0.3)])
+def test_set_trunk_turns_the_trunk_with_the_feet_planted(sim, pitch, yaw):
+    """Euler yaw / pitch (look mode). + yaw turns left, + pitch lowers the nose."""
+    sim.reset()
+    x0 = sim.data.qpos[0:2].copy()
+    sim.set_trunk(0.0, pitch, yaw)
+    for _ in range(int(1.0 / sim.dt)):
+        sim.step()
+    w, x, y, z = sim.data.qpos[3:7]
+    got_pitch = np.arcsin(np.clip(2 * (w * y - z * x), -1, 1))
+    got_yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    assert abs(got_yaw - yaw) < np.radians(2.5) and abs(got_pitch - pitch) < np.radians(2.5)
+    assert np.linalg.norm(sim.data.qpos[0:2] - x0) < 0.02       # turned in place
+    sim.set_trunk(0.0, 0.0, 0.0)
+    for _ in range(int(1.0 / sim.dt)):
+        sim.step()
+    assert sim.upright() > 0.99
+
+
 def test_dog_recovers_to_stand_from_every_pose(sim):
     sim.reset()
     z_stand = sim.data.qpos[2]

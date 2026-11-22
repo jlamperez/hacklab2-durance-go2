@@ -2,6 +2,7 @@
 
     ros2 launch reflex_ros follow_sim.launch.py          # then, second terminal: ros-follow, press f
     ros2 launch reflex_ros follow_sim.launch.py follow:=true    # follow node included, starts by itself
+    ros2 launch reflex_ros follow_sim.launch.py follow:=true mode:=look   # nine trunk gestures, no walking
 
   sim_bridge (robot only, walking dog, its event camera, a ball moved by script)
     -> /reflex/events_window -> target node (CentroidTracker) -> /reflex/target
@@ -15,12 +16,13 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, RegisterEventHandler, Shutdown
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.substitutions import LaunchConfiguration as LC
+from launch.substitutions import LaunchConfiguration as LC, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue as PV
 
 ARGS = {"actuation_delay_ms": "300.0", "viewer": "true", "scene": "lab", "follow": "false", "mode": "walk",
-        "target_start_s": "5.0", "zone_top": "0.3"}
+        "target_start_s": "5.0", "zone_top": "0.3",
+        "vfov_deg": "60.0"}   # the simulated head camera: 320 x 180, 60 deg vertically, about 90 horizontally
 
 
 def generate_launch_description():
@@ -29,11 +31,14 @@ def generate_launch_description():
         "target_start_s": PV(LC("target_start_s"), value_type=float),
         "viewer": PV(LC("viewer"), value_type=bool), "scene": LC("scene"),
         "actuation_delay_ms": PV(LC("actuation_delay_ms"), value_type=float)}],
-        additional_env={"MUJOCO_GL": "glfw"})
+        # GLFW only for the MuJoCo window; without it (viewer:=false, e.g. sim-arm in Docker) EGL renders
+        # the head camera offscreen.
+        additional_env={"MUJOCO_GL": PythonExpression(["'glfw' if '", LC("viewer"), "' == 'true' else 'egl'"])})
     target = Node(package="reflex_ros", executable="target", output="screen", parameters=[{
         "zone_top": PV(LC("zone_top"), value_type=float)}])
     follow = Node(package="reflex_ros", executable="follow", output="screen", parameters=[{
-        "mode": LC("mode"), "autostart": True}], condition=IfCondition(LC("follow")))
+        "mode": LC("mode"), "vfov_deg": PV(LC("vfov_deg"), value_type=float), "autostart": True}],
+        condition=IfCondition(LC("follow")))
     return LaunchDescription([DeclareLaunchArgument(k, default_value=v) for k, v in ARGS.items()]
                              + [bridge, target, follow,
                                 RegisterEventHandler(OnProcessExit(target_action=bridge, on_exit=[Shutdown()]))])

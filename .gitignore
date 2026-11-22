@@ -17,3 +17,8 @@ ros2_ws/src/unitree_go
 /riverops-*/
 /river_tools-*/
 *.whl
+
+# local clutter
+.DS_Store
+MUJOCO_LOG.TXT
+/Claude outputs/

@@ -35,7 +35,7 @@ from reflex.events import repr as ev_repr
 from reflex.events.emu import EmuConfig, EventEmulator
 from reflex.runtime import sport_api
 from reflex.runtime.reflex_fsm import BEHAVIORS
-from reflex.runtime.sim_sport import PostureMode, pose_for_request
+from reflex.runtime.sim_sport import PostureMode, euler_for_request, pose_for_request
 from reflex.sim.follow_sim import TargetPath, place_ball
 from reflex.sim.scene import BallShot, Go2Sim, to_gray
 from reflex.viz.web_scene import pack_state
@@ -116,7 +116,7 @@ class SimBridge(Node):
         self.latency_pub = self.create_publisher(Float32, "/reflex/debug/latency_ms", 10)
         self.create_subscription(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
 
-        self.pending = []            # (apply_time_s, pose, api name, velocity or None)
+        self.pending = []            # (apply_time_s, pose, api name, velocity or None, trunk angles or None)
         self.posture = PostureMode()   # Euler acts only after Pose(true), Move only without it
         self.moved = False           # the dog has walked since it was last on its spot
         self.pose = "stand"
@@ -152,7 +152,8 @@ class SimBridge(Node):
                 self.get_logger().info(f"{name}: accepted but no effect with posture mode "
                                        f"{'on' if self.posture.on else 'off'}, as on the real Go2")
             return
-        pose = pose_for_request(api_id, msg.parameter)
+        angles = euler_for_request(api_id, msg.parameter)   # Euler with yaw or pitch: turn the trunk
+        pose = "trunk" if angles is not None else pose_for_request(api_id, msg.parameter)
         if pose is None:
             self.get_logger().warn(f"{name}: no equivalent in the simulator, ignored")
             return
@@ -172,11 +173,11 @@ class SimBridge(Node):
             if self.robot_only:
                 self.get_logger().info(f"{name} -> {pose}; {self.latencies_ms[-1]:.0f} ms from newest event to request, "
                                        f"applied after {self.delay_s * 1e3:.0f} ms more")
-        self.pending.append((self.sim.time + self.delay_s, pose, name, velocity))
+        self.pending.append((self.sim.time + self.delay_s, pose, name, velocity, angles))
 
     def apply_due(self) -> None:
         while self.pending and self.pending[0][0] <= self.sim.time:
-            _, pose, name, velocity = self.pending.pop(0)
+            _, pose, name, velocity, angles = self.pending.pop(0)
             if velocity is not None and self.locomotion == "rl":
                 if not (self.sim.mode == "pose" and not any(velocity)):   # StopMove while posing: nothing to do
                     vx, vy, wz = velocity
@@ -191,6 +192,9 @@ class SimBridge(Node):
                 self.moved = self.moved or any(velocity)
             elif pose == "damp":
                 self.sim.damped = True
+            elif pose == "trunk":
+                self.sim.damped = False
+                self.sim.set_trunk(*angles)
             elif pose in ("sit", "hello"):
                 self.sim.damped = False
                 self.sim.play(pose)

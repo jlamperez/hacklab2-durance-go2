@@ -1,6 +1,8 @@
 """Event camera: recordings played back, or the live GenX320 on the KV260.
 
   publishes  /reflex/events_window        reflex_msgs/EventWindow  (320x320 sensor, 80x80 cells)
+             /reflex/events_fullres       reflex_msgs/EventWindow  (1 bin, 320x320, last `fullres_ms`;
+                                          for the SNN ball detector, only while someone subscribes)
              /reflex/debug/events_image   sensor_msgs/Image (only if someone subscribes)
              /reflex/debug/replay         std_msgs/String, JSON: which take is playing
 
@@ -30,7 +32,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
-from reflex.data.windows import WindowConfig
+from reflex.data.windows import WindowConfig, make_window
 from reflex.events import repr as ev_repr
 from reflex.events.sources import LiveSource, ReplaySource, find_takes, still_take
 from reflex.runtime.windower import StreamWindower
@@ -50,6 +52,10 @@ class EventCamera(Node):
         flip_x, flip_y = bool(p("flip_x", False).value), bool(p("flip_y", False).value)
         rate_hz = float(p("rate_hz", 50.0).value)
         self.cfg = WindowConfig(height=height, width=width)
+        # Full resolution, one bin: the ball SNN's input (reflex/runtime/ball_snn.py). Must be shorter
+        # than the main window, which is all the windower keeps.
+        fullres_ms = min(float(p("fullres_ms", 20.0).value), self.cfg.window_ms)
+        self.fullres_cfg = WindowConfig(window_ms=fullres_ms, n_bins=1, downsample=1, height=height, width=width)
         self.windower = StreamWindower(self.cfg)
         log = self.get_logger().info
         if source == "live":
@@ -73,6 +79,7 @@ class EventCamera(Node):
             for t in takes:
                 log(f"  {t.describe()}")
         self.win_pub = self.create_publisher(EventWindow, "/reflex/events_window", qos_profile_sensor_data)
+        self.fullres_pub = self.create_publisher(EventWindow, "/reflex/events_fullres", qos_profile_sensor_data)
         self.img_pub = self.create_publisher(Image, "/reflex/debug/events_image", 2)
         self.take_pub = self.create_publisher(String, "/reflex/debug/replay", 10)
         self._take_name, self._finished_said = None, False
@@ -101,6 +108,14 @@ class EventCamera(Node):
         msg.n_bins, msg.channels, msg.height, msg.width = self.cfg.shape
         msg.data = array("B", self.windower.window(t_end).tobytes())
         self.win_pub.publish(msg)
+        if self.fullres_pub.get_subscription_count() > 0:
+            full = EventWindow()
+            full.header = msg.header
+            full.window_ms = float(self.fullres_cfg.window_ms)
+            full.n_bins, full.channels, full.height, full.width = self.fullres_cfg.shape
+            recent = self.windower.recent(t_end, span_ms=self.fullres_cfg.window_ms)
+            full.data = array("B", make_window(recent, t_end, self.fullres_cfg).tobytes())
+            self.fullres_pub.publish(full)
         if self.img_pub.get_subscription_count() > 0:
             bgr = ev_repr.render(ev_repr.to_frame(self.windower.recent(t_end), self.cfg.height, self.cfg.width), 1.5)
             img = Image()

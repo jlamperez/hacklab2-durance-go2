@@ -26,6 +26,8 @@ setup(
             "tricks = reflex_ros.tricks_node:main",
             "web_viewer = reflex_ros.web_viewer_node:main",
             "target = reflex_ros.target_node:main",
+            "ball_target = reflex_ros.ball_target_node:main",
+            "ball_zone_sim = reflex_ros.ball_zone_sim_node:main",
             "follow = reflex_ros.follow_node:main",
             "event_camera = reflex_ros.event_camera_node:main",
         ],

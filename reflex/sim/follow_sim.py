@@ -2,7 +2,8 @@
 
     python -m reflex.sim.follow_sim                      # 40 s, prints a summary
     python -m reflex.sim.follow_sim --video out/follow.mp4
-    python -m reflex.sim.follow_sim --mode gaze          # trunk only: yaw is NOT simulated, see below
+    python -m reflex.sim.follow_sim --mode gaze          # trunk only, yaw
+    python -m reflex.sim.follow_sim --mode look --video out/look.mp4   # nine gestures, feet planted
 
 What runs: walking Go2 (learned policy) -> head camera -> event emulator -> 50 ms window ->
 CentroidTracker -> FollowController -> Move / StopMove, applied after an actuation delay.
@@ -10,8 +11,9 @@ The ball is moved by script along `TargetPath`: it rolls slowly, stops, changes 
 
 The SNN is not in this loop: it is trained on real recordings and would be tested on
 them. This checks the controller, its timing and its safety limits against a camera
-that moves with the dog. The simulator has no trunk yaw for `Euler`, so gaze mode only
-shows the commands it would send.
+that moves with the dog. In gaze and look modes the dog stands (no walking policy) and
+Euler turns its trunk with the feet planted (`Go2Sim.set_trunk`, our stand-in for sport
+mode's posture mode); the ball goes left, right, near and far in front of it instead.
 """
 from __future__ import annotations
 
@@ -61,6 +63,10 @@ class TargetPath:
         return p[-1].copy(), np.zeros(2)
 
 
+# For the modes that stand still: in front of the dog, left / right / near / far.
+LOOK_PATH = [(1.2, 0.0), (1.4, 0.9), (2.6, 0.9), (2.6, -0.9), (1.2, -0.7), (1.0, 0.0), (3.0, 0.0)]
+
+
 def place_ball(sim: Go2Sim, xy, vel) -> None:
     sim.launch_raw(xy, vel, BALL_RADIUS, BALL_RGB)
 
@@ -69,15 +75,17 @@ def run(duration_s: float = 40.0, mode: str = "walk", delay_ms: float = 300.0, s
         video: str | None = None, cfg: FollowConfig | None = None, path: TargetPath | None = None,
         camera_hz: float = 100.0) -> dict:
     sim = Go2Sim(seed=seed)
-    sim.enable_walking()
+    standing = (cfg.mode if cfg else mode) in ("gaze", "look")
+    if not standing:
+        sim.enable_walking()
     rng = np.random.default_rng(seed)
     h, w = sim.eye_hw
     emu = EventEmulator(h, w, EmuConfig(), rng)
     wcfg = WindowConfig()
-    path = path or TargetPath()
+    path = path or (TargetPath(waypoints=LOOK_PATH) if standing else TargetPath())
     tracker = CentroidTracker()
     hfov = math.degrees(2 * math.atan(math.tan(math.radians(60) / 2) * w / h))
-    ctrl = FollowController(cfg or FollowConfig(mode=mode, hfov_deg=hfov))
+    ctrl = FollowController(cfg or FollowConfig(mode=mode, hfov_deg=hfov, vfov_deg=60.0))
     stride = max(1, round(0.02 / sim.dt))          # one window every 20 ms, as in the bridge
     # Rendering is the slow part (software rendering: ~0.1 s a frame). The bridge renders
     # every physics step; here every 1/camera_hz s, which the emulator handles.
@@ -92,7 +100,9 @@ def run(duration_s: float = 40.0, mode: str = "walk", delay_ms: float = 300.0, s
     place_ball(sim, *path.at(0.0))
     emu.reset(to_gray(sim.render_eye()), 0)
     calib, calibrated = [], False
-    log = {"in_view": 0, "frames": 0, "dist": [], "commands": {}, "halted_at": None}
+    log = {"in_view": 0, "frames": 0, "dist": [], "commands": {}, "halted_at": None, "gestures": [],
+           "err": [], "err0": []}
+    eye_id, base_id = sim.model.camera("eye").id, sim.model.body("base").id
     t_enable = 1.5                                  # first second: calibrate on a still scene
     steps = int(duration_s / sim.dt)
     for i in range(steps):
@@ -105,7 +115,9 @@ def run(duration_s: float = 40.0, mode: str = "walk", delay_ms: float = 300.0, s
                 sim.set_velocity(cmd.vx, 0.0, cmd.wz)
             elif cmd.kind == "stop":
                 sim.set_velocity(0.0, 0.0, 0.0)
-            # balance_stand: the dog already stands; euler: no trunk yaw in this simulator
+            elif cmd.kind == "euler":
+                sim.set_trunk(0.0, cmd.pitch, cmd.yaw)
+            # balance_stand: the dog already stands
         sim.step()
         if i % render_every == 0:
             recent.append(emu.step(to_gray(sim.render_eye()), int(sim.time * 1e6)))
@@ -125,6 +137,8 @@ def run(duration_s: float = 40.0, mode: str = "walk", delay_ms: float = 300.0, s
         target = tracker.predict(window, t_us)
         for cmd in ctrl.update(target, sim.time):
             log["commands"][cmd.kind] = log["commands"].get(cmd.kind, 0) + 1
+            if ctrl.cfg.mode == "look":
+                log["gestures"].append((round(sim.time, 1), ctrl.gesture))
             pending.append((sim.time + delay_ms / 1e3, cmd))
         if ctrl.state == "halted" and log["halted_at"] is None:
             log["halted_at"] = round(sim.time, 1)
@@ -137,6 +151,16 @@ def run(duration_s: float = 40.0, mode: str = "walk", delay_ms: float = 300.0, s
         log["frames"] += 1
         log["in_view"] += abs(bearing) < math.radians(30) and 0.3 < dist < 2.5
         log["dist"].append(dist)
+        if ctrl.cfg.mode == "look" and path.at(sim.time - t_enable)[1].any():
+            # While the ball rolls (paused, an event camera cannot see it): angle between where
+            # the trunk points and the ball, and the same for a dog that keeps looking ahead.
+            eye = sim.data.cam_xpos[eye_id]
+            to_ball = np.array([bx, by, BALL_RADIUS]) - eye
+            to_ball /= np.linalg.norm(to_ball)
+            fwd = sim.data.xmat[base_id].reshape(3, 3)[:, 0]
+            ahead = np.array([1.0, 0.0, 0.0])
+            log["err"].append(math.degrees(math.acos(np.clip(fwd @ to_ball, -1, 1))))
+            log["err0"].append(math.degrees(math.acos(np.clip(ahead @ to_ball, -1, 1))))
         if writer is not None and i % (2 * stride) == 0:
             writer.append_data(_frame(sim, recent, ctrl, target, h, w))
     if writer is not None:
@@ -151,6 +175,9 @@ def run(duration_s: float = 40.0, mode: str = "walk", delay_ms: float = 300.0, s
         "upright": round(sim.upright(), 2),
         "commands": log["commands"], "halted_at_s": log["halted_at"],
         "min_events_threshold": round(tracker.cfg.min_events, 1),
+        **({"median_deg_trunk_to_ball": round(float(np.median(log["err"])), 1) if log["err"] else None,
+            "median_deg_if_looking_ahead": round(float(np.median(log["err0"])), 1) if log["err0"] else None,
+            "gestures": log["gestures"]} if ctrl.cfg.mode == "look" else {}),
     }
 
 
@@ -169,7 +196,7 @@ def _frame(sim, recent, ctrl, target, h, w):
     b = ctrl.burst
     txt = (f"t {sim.time:5.1f} s  state {ctrl.state:9s}  "
            + (f"vx {b.vx:.2f} wz {b.wz:+.2f}" if b is not None and b.kind == "move" else "")
-           + f"  travel {ctrl.travel_m:.1f} m")
+           + (f"  look {ctrl.gesture}" if ctrl.cfg.mode == "look" else f"  travel {ctrl.travel_m:.1f} m"))
     cv2.putText(bar, txt, (8, 21), FONT, 0.55, (230, 230, 230), 1, cv2.LINE_AA)
     return np.vstack([frame, bar])
 
@@ -177,7 +204,7 @@ def _frame(sim, recent, ctrl, target, h, w):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--duration", type=float, default=40.0)
-    ap.add_argument("--mode", choices=("walk", "gaze"), default="walk")
+    ap.add_argument("--mode", choices=("walk", "gaze", "look"), default="walk")
     ap.add_argument("--delay-ms", type=float, default=300.0, help="actuation delay of the robot")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--video", default=None, help="write an mp4 here")

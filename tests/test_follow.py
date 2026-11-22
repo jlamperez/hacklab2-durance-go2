@@ -173,6 +173,90 @@ def test_gaze_turns_the_trunk_within_limits_and_recentres_when_lost():
     assert [c.yaw for _, c in sent if c.kind == "euler"] == [0.0]
 
 
+# --- look mode: nine gestures ---------------------------------------------------------------
+
+def looker(**kw):
+    kw = {"mode": "look", "move_s": 0.2, "settle_s": 0.2, "lost_s": 1.0, **kw}
+    return enabled(**kw)
+
+
+def gestures_for(ctrl, targets, t0=0.0):
+    sent, t = run(ctrl, targets, t0=t0)
+    assert all(c.kind == "euler" for _, c in sent)       # never walks
+    return [c.reason.split(":")[0].removeprefix("look ") for _, c in sent], t
+
+
+# u, v for a target on a fixed camera (camera_on_trunk=False): image position -> gesture.
+@pytest.mark.parametrize("u,v,name", [
+    (0.0, 0.0, None), (-0.8, 0.0, "left"), (0.8, 0.0, "right"), (0.0, -0.8, "up"), (0.0, 0.8, "down"),
+    (-0.8, -0.8, "left_up"), (-0.8, 0.8, "left_down"), (0.8, -0.8, "right_up"), (0.8, 0.8, "right_down"),
+])
+def test_look_maps_each_ninth_of_the_image_to_its_gesture(u, v, name):
+    ctrl = looker(camera_on_trunk=False)
+    names, _ = gestures_for(ctrl, [seen(u, v)] * 20)
+    assert names == ([] if name is None else [name])      # centre: already there, nothing sent
+    assert ctrl.gesture == (name or "center")
+
+
+def test_look_signs_left_is_positive_yaw_and_up_is_nose_up():
+    ctrl = looker(camera_on_trunk=False, look_yaw=0.3, look_pitch=0.2)
+    sent, _ = run(ctrl, [seen(-0.8, -0.8)] * 20)
+    (_, c), = sent
+    assert c.yaw == pytest.approx(0.3) and c.pitch == pytest.approx(-0.2)
+    ctrl = looker(camera_on_trunk=False, look_yaw=0.3, look_pitch=0.2)
+    (_, c), = run(ctrl, [seen(0.8, 0.8)] * 20)[0]
+    assert c.yaw == pytest.approx(-0.3) and c.pitch == pytest.approx(0.2)
+
+
+def test_look_with_camera_on_trunk_does_not_look_back_once_facing_the_target():
+    # Target 20 deg left. After the left gesture (17 deg) the camera sees it 3 deg left of
+    # centre; the controller adds the gesture back and stays on "left".
+    ctrl = looker(look_yaw=0.3)
+    u_before = math.tan(math.radians(-20)) / math.tan(math.radians(45))
+    u_after = math.tan(math.radians(-20 + math.degrees(0.3))) / math.tan(math.radians(45))
+    names, t = gestures_for(ctrl, [seen(u_before)] * 10)
+    assert names == ["left"]
+    names, _ = gestures_for(ctrl, [seen(u_after)] * 100, t0=t)
+    assert names == [] and ctrl.gesture == "left"
+
+
+def test_look_hysteresis_stops_flicker_on_a_boundary():
+    ctrl = looker(camera_on_trunk=False, look_h_deg=12.0, look_hyst_deg=4.0)
+    u = lambda deg: -math.tan(math.radians(deg)) / math.tan(math.radians(45))
+    names, t = gestures_for(ctrl, [seen(u(14))] * 20)        # past 12 but not past 12 + 4
+    assert names == []
+    names, t = gestures_for(ctrl, [seen(u(17))] * 20, t0=t)  # past 16: left
+    assert names == ["left"]
+    names, t = gestures_for(ctrl, [seen(u(10))] * 20, t0=t)  # back under 12 but not under 8
+    assert names == []
+    names, _ = gestures_for(ctrl, [seen(u(6))] * 20, t0=t)   # under 8: centre
+    assert names == ["center"]
+
+
+def test_look_waits_for_settling_and_recentres_when_lost():
+    ctrl = looker(camera_on_trunk=False)
+    sent, t = run(ctrl, [seen(-0.8)] * 5)                    # 2 sightings -> left, at t = 0.02
+    assert [c.reason.startswith("look left") for _, c in sent] == [True]
+    sent, t = run(ctrl, [seen(0.8)] * 15, t0=t)              # moving + settling: 0.4 s
+    assert sent == []
+    sent, t = run(ctrl, [seen(0.8)] * 5, t0=t)
+    assert [c.reason.split(":")[0] for _, c in sent] == ["look right"]
+    sent, _ = run(ctrl, [no_target()] * 100, t0=t)
+    assert [(c.yaw, c.pitch) for _, c in sent] == [(0.0, 0.0)] and ctrl.gesture == "center"
+
+
+def test_look_disable_and_manual_gestures():
+    ctrl = looker()
+    (c,) = ctrl.look("right_down", 0.0)
+    assert c.yaw < 0 and c.pitch > 0 and ctrl.gesture == "right_down"
+    (c,) = ctrl.disable(0.1)
+    assert (c.kind, c.yaw, c.pitch) == ("euler", 0.0, 0.0) and ctrl.gesture == "center"
+    (c,) = ctrl.look("up", 0.2)                               # works while disabled too
+    assert c.pitch < 0 and ctrl.state == "disabled"
+    with pytest.raises(ValueError):
+        ctrl.look("backflip", 0.3)
+
+
 def test_angle_matches_the_field_of_view():
     ctrl = FollowController(FollowConfig(hfov_deg=90.0))
     assert math.isclose(ctrl.angle_to(1.0), -math.radians(45), rel_tol=1e-6)

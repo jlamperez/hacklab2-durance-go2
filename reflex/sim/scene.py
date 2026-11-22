@@ -47,6 +47,52 @@ MOTIONS = {
 
 KP, KD = 60.0, 3.0
 
+_FEET = ("FL", "FR", "RL", "RR")
+
+
+def trunk_pose(model: mujoco.MjModel, roll: float, pitch: float, yaw: float) -> np.ndarray:
+    """Joint targets that turn the trunk in place with the feet where `stand` puts them.
+
+    Our stand-in for sport mode's Euler in posture mode: the trunk rotates about its own
+    origin, R = Rz(yaw) Ry(pitch) Rx(roll), right-hand rule in the dog frame (pitch > 0
+    lowers the nose). How far and about which point the real Go2 turns is not measured;
+    only roll was checked (see POSES["lean_*"], which Euler with roll alone still uses).
+    Solved by damped least squares on the four foot positions.
+    """
+    d = mujoco.MjData(model)
+    jnt = model.actuator_trnid[:, 0]
+    q_adr, v_adr = model.jnt_qposadr[jnt], model.jnt_dofadr[jnt]
+    feet = [model.geom(n).id for n in _FEET]
+    d.qpos[0:3] = [0.0, 0.0, 0.36]
+    d.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+    d.qpos[q_adr] = POSES["stand"]
+    mujoco.mj_kinematics(model, d)
+    goal = np.concatenate([d.geom_xpos[g].copy() for g in feet])
+    half = np.array([roll, pitch, yaw]) / 2
+    qx = np.array([np.cos(half[0]), np.sin(half[0]), 0, 0])
+    qy = np.array([np.cos(half[1]), 0, np.sin(half[1]), 0])
+    qz = np.array([np.cos(half[2]), 0, 0, np.sin(half[2])])
+    tmp, quat = np.zeros(4), np.zeros(4)
+    mujoco.mju_mulQuat(tmp, qz, qy)
+    mujoco.mju_mulQuat(quat, tmp, qx)
+    d.qpos[3:7] = quat
+    jacp = np.zeros((3, model.nv))
+    lo, hi = model.jnt_range[jnt, 0], model.jnt_range[jnt, 1]
+    for _ in range(100):
+        mujoco.mj_kinematics(model, d)
+        mujoco.mj_comPos(model, d)
+        err = goal - np.concatenate([d.geom_xpos[g] for g in feet])
+        if np.abs(err).max() < 1e-5:
+            break
+        rows = []
+        for g in feet:
+            mujoco.mj_jacGeom(model, d, jacp, None, g)
+            rows.append(jacp[:, v_adr].copy())
+        J = np.vstack(rows)
+        dq = J.T @ np.linalg.solve(J @ J.T + 1e-4 * np.eye(12), err)
+        d.qpos[q_adr] = np.clip(d.qpos[q_adr] + dq, lo, hi)
+    return d.qpos[q_adr].copy()
+
 # Sidestep without the walking policy (Go2Sim.set_slide): the standing dog is moved as a
 # whole, its speed following the command as a first-order lag. Fitted to a Move y=0.3 for
 # 1 s on the real Go2 (21 Nov 2026): 0.4 / 1.4 / 3.0 / 6.9 / 20.0 cm at 0.1 / 0.2 / 0.3 /
@@ -211,6 +257,7 @@ class Go2Sim:
         self._contact = (int(m.opt.cone), float(m.opt.impratio))
         self._steps = 0
         self._motion: list | None = None      # keyframes left to play, see MOTIONS
+        self._trunk_cache: dict = {}          # (roll, pitch, yaw) -> joint targets, see set_trunk
         self.reset()
 
     @property
@@ -245,6 +292,20 @@ class Go2Sim:
             return
         self._motion = None
         self.q_des = POSES[name].copy()
+
+    def set_trunk(self, roll: float, pitch: float, yaw: float) -> None:
+        """Turn the trunk in place, feet planted: sport mode's Euler (see `trunk_pose`)."""
+        key = (round(roll, 3), round(pitch, 3), round(yaw, 3))
+        if not any(key):
+            self.set_pose("stand")
+            return
+        if key not in self._trunk_cache:
+            self._trunk_cache[key] = trunk_pose(self.model, *key)
+        self._set_mode("pose")
+        self.command[:] = 0
+        self.slide_cmd[:] = 0
+        self._motion = None
+        self.q_des = self._trunk_cache[key].copy()
 
     def play(self, name: str) -> None:
         """Start a slow trick: sit, rise, hello. Joint targets move through its keyframes."""

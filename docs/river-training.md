@@ -163,6 +163,17 @@ python -m reflex.river.train --data data/river --val-sessions sat_pm --test-sess
 
 Add `--data data/river data/river_synth` to keep the synthetic data in the mix.
 
+### Ball positions for the ball SNN in `Training/`
+
+```bash
+python -m reflex.river.export_positions data/river --out data/river_positions
+```
+
+Writes the tracker's per-frame ball position (sensor pixels) as `gt_x`, `gt_y`, `gt_t`
+into a copy of each ball take, and copies the `none` takes to `no_ball/`. Format and
+caveats in `data/river_positions/README.md`. From the 21 Nov sessions: 13 takes, 1,493
+labelled frames.
+
 ### Drone takes: the camera moves
 
 Drone takes are recorded with the camera moving, and then the whole scene fires: the ball
