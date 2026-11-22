@@ -68,6 +68,15 @@ class RiverNet:
 
         `frames`: (C, H, W) fed at every step, or (T, C, H, W) one per step.
         """
+        return self.run_steps(frames, time_steps).sum(axis=0)
+
+    @torch.no_grad()
+    def run_steps(self, frames: np.ndarray | torch.Tensor, time_steps: int) -> np.ndarray:
+        """Output spikes of every step, shape (T, C, H, W), state kept from step to step.
+
+        With one frame per step this is what spleat-server does on the board: one step per
+        frame, neuron state carried over (docs/fpga-zones3-2026-11-22.md).
+        """
         x = torch.as_tensor(frames, dtype=torch.float32, device=self.device)
         if x.dim() == 3:
             x = x.expand(time_steps, *x.shape)
@@ -93,4 +102,4 @@ class RiverNet:
                 v = v * (1.0 - s)
                 out.append(s)
             spikes[layer["name"]] = torch.stack(out)
-        return spikes[self.output].sum(dim=0)[0].cpu().numpy()
+        return spikes[self.output][:, 0].cpu().numpy()
