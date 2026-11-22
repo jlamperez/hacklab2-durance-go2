@@ -97,6 +97,13 @@ camera picture with the 2x3 grid, the published zone outlined and the FPGA's spi
 On the laptop every terminal needs `CYCLONEDDS_URI` on `enp8s0` (docs/commands.md), and the
 follow node starts disabled (`f`, or the `/reflex/follow/enable` service).
 
+Afterwards the board's behavior node got the same look mode (`mode:=look`, set by
+`models/ball_v3/run_args`; logic in `reflex/runtime/zone_look.py` on top of the follow
+controller): it reads the six zones from `/durance/ball_zone`, so the row is no longer lost
+(`/reflex/decision` only says left / center / right), and the loop needs no node on the laptop.
+That is what lets it drive the real Go2, which the laptop cannot reach with `robot:=real`.
+Unit-tested and run on the laptop against a hand-published zone; not yet run on the board.
+
 Live, ball moved in front of the camera for a minute: 162 zone spikes, 10-19 per second while
 it moved fast and close, 41 zone changes published; zones flicker between neighbours at a
 border. Not measured: which share of the published zones was right.
@@ -115,5 +122,5 @@ measured layer by layer.
 - Retrain (fine-tune) on our camera's data: small balls at the real distance, no zoom, 20 ms
   windows, one step per frame with state kept. Same architecture: only `weights.txt` changes.
 - Accuracy of the published zones, measured.
-- The real Go2 (`ros-look` with `dry_run:=true` first).
+- The real Go2: `run.sh robot:=real model:=ball_v3`, first without `enabled:=true` (docs/real-robot.md).
 - The firmware's job number (`models/firmware/ball_zones_v3/PROVENANCE.md`).

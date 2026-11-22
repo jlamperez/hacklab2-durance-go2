@@ -10,7 +10,9 @@ Runs on the board (scripts/kria/run.sh sources everything and checks the camera 
                            (what the network sees, for ros-web); `tap:=false`: despot -> server directly
   fpga_perception          spleat-server's output -> /reflex/decision (readout of `model_dir`:
                            models/zones3 or models/ball_v3, which must match what is on the FPGA)
-  behavior                 /reflex/decision -> /api/sport/request (all safety logic)
+  behavior                 /reflex/decision -> /api/sport/request (all safety logic); with
+                           mode:=look (models/ball_v3/run_args) /durance/ball_zone instead: the
+                           trunk points at the ball's zone, six zones -> yaw and pitch
 
 Only the robot changes. `robot` picks the network the DDS traffic leaves on:
   real  /etc/cyclonedds/cyclonedds-go2.xml (USB-Ethernet adapter, 192.168.123.99) -> the Go2
@@ -44,6 +46,9 @@ ARGS = {
     "zone_rows": "auto",            # rows of the zone grid in the tap's picture; auto: from model_dir
     "mode": "keeper", "reaction": "euler", "min_confidence": "0.45", "consecutive": "2",
     "move_vy": "0.3", "hold_s": "0.6",
+    # mode:=look: trunk gestures towards the six zones. Small angles until checked on the real Go2.
+    "look_yaw": "0.15", "look_pitch": "0.1", "camera_on_trunk": "false", "invert_pitch": "false",
+    "lost_s": "2.0",
 }
 
 DDS = {
@@ -51,6 +56,10 @@ DDS = {
     "sim": "<CycloneDDS><Domain Id=\"any\"><General><Interfaces>"
            "<NetworkInterface name=\"eth0\"/></Interfaces></General></Domain></CycloneDDS>",
 }
+
+
+def _bool(text: str) -> bool:
+    return text.lower() in ("1", "true", "yes")
 
 
 def _zone_rows(model_dir: str) -> int:
@@ -97,7 +106,12 @@ def _setup(context):
             "min_confidence": float(LC("min_confidence").perform(context)),
             "consecutive": int(LC("consecutive").perform(context)),
             "move_vy": float(LC("move_vy").perform(context)),
-            "hold_s": float(LC("hold_s").perform(context))}]),
+            "hold_s": float(LC("hold_s").perform(context)),
+            "look_yaw": float(LC("look_yaw").perform(context)),
+            "look_pitch": float(LC("look_pitch").perform(context)),
+            "camera_on_trunk": _bool(LC("camera_on_trunk").perform(context)),
+            "invert_pitch": _bool(LC("invert_pitch").perform(context)),
+            "lost_s": float(LC("lost_s").perform(context))}]),
     ]
     return actions
 

@@ -48,7 +48,7 @@ on a new machine either `mkdir -p out/models && cp models/snn.* out/models/`, or
 | `pixi run spleat-bundle MODEL.json PARAMS.json [--firmware models/firmware/JOB] [--checkpoint CKPT.pt]` | riverops export into the files for the KV260: `weights.txt`, `config.yaml`, `metavision_camera.json`, with `--firmware` the bitstream (refused if built from another model graph), and `deploy.yaml` for `river-tools deploy`; `--checkpoint` sets the camera frequency from the model's event window. README says where each value comes from | nothing; writes `out/spleat/<model>/` |
 | `pixi run spleat-read [--host 192.168.77.1] [--save out/x.bin]` | read the FPGA results from the Kria's SPLEAT server (port 3333): size, values, `(x, y, P(ball))` per message. Needs the camera client running on the board. `--file F` decodes saved replies (`--save`, or `tools/spleat_merge_proxy.py --save` on the board). `--zones-dir models/zones3`: for the target-zone SNN, prints the 4 values and the winning zone over the last 20 frames (`reflex/runtime/zones_readout.py`; `--margin N` makes a zone beat `none` by N spikes) | nothing; prints per message |
 | `scripts/kria/deploy.sh [root@192.168.77.1]` | cross-compile `reflex_msgs` and `reflex_ros` for the Kria with Durance's Docker image (`durance/go2-yocto:humble`, built once with `./manage.sh image` in their `go2-kria` folder) and install them, the `reflex` package and `models/zones3`'s readout files in `/opt/reflex` | `ros2_ws/install-yocto/`, `/opt/reflex` on the board |
-| `ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim\|real [enabled:=true] [tap:=false]` | on the Kria: `despot_test_camera`, spleat-server on 3334, then `kria.launch.py`: despot, `camera_tap`, `fpga_perception`, `behavior`. `robot:=real` starts behavior disabled | nothing |
+| `ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim\|real [enabled:=true] [tap:=false]` | on the Kria: `despot_test_camera`, spleat-server on 3334, then `kria.launch.py`: despot, `camera_tap`, `fpga_perception`, `behavior`. `robot:=real` starts behavior disabled. With `model:=ball_v3` behavior runs `mode:=look` (six zones -> trunk yaw and pitch; `look_yaw:=0.15 look_pitch:=0.1 camera_on_trunk:=false invert_pitch:=false lost_s:=2.0`); `mode:=keeper` for the left / center / right reflexes | nothing |
 | `pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0` | laptop: the MuJoCo dog as the robot only, for `run.sh robot:=sim`; `dds_interface` is the laptop's interface towards the Kria | nothing |
 | `python3 /root/spleat_sniff.py [--seconds 15]` (on the Kria, after `systemctl stop spleat-server`) | stands in for the SPLEAT server on port 3333 and records what the camera client sends; prints message keys and payload shapes. `--decode F` on the laptop | `/root/spleat_in.bin` |
 | `python3 /root/spleat_merge_proxy.py [--save /root/replies.bin]` (on the Kria, server on port 3334) | between `despot_send_and_forget` and the server: merges its 2 polarity channels into 1, one frame in flight, prints the replies. Board commands in its docstring | replies file with `--save` |
@@ -251,16 +251,25 @@ pixi run -e ros ros-web            # optional
 ```
 
 **FPGA ball zones (ball_v3) turn the simulated dog's trunk** (`docs/fpga-ball-zones-v3-2026-11-22.md`).
-The FPGA must hold ball_v3 (`out/spleat/ball_zones_model`, camera at 50 Hz). In every PC terminal
-except `ros-robot-sim`, first:
+The FPGA must hold ball_v3 (`out/spleat/ball_zones_model`, camera at 50 Hz). After
+`scripts/kria/deploy.sh`, the board's behavior node does the looking (`mode:=look` from
+`models/ball_v3/run_args`): no node on the laptop sends commands. `ros-web` needs, in its terminal, first:
 `export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI='<CycloneDDS><Domain Id="any"><General><Interfaces><NetworkInterface name="enp8s0"/></Interfaces></General></Domain></CycloneDDS>'`
 ```bash
-ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3 enabled:=false   # Kria
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3   # Kria: camera, FPGA, zone, behavior (look)
 pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0 viewer:=false
-pixi run -e ros ros-look            # press f (starts disabled)
 pixi run -e ros ros-web             # http://localhost:8080: camera, 2x3 grid, zone, spikes per zone
 ```
-The ball must be close to the camera and moved fast.
+The ball must be close to the camera and moved fast. To drive it from the laptop instead
+(keyboard, gestures by hand): `run.sh ... enabled:=false` and `pixi run -e ros ros-look`, `f` to start.
+
+**Same on the real Go2** (not run yet; `docs/real-robot.md`). With `robot:=real` the board's
+DDS leaves on the Go2's adapter only: the laptop sees nothing, `ros-look` and `ros-web` cannot
+be used. Only the board's behavior node can drive the dog.
+```bash
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3                  # logs what it would send
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true    # moves; small angles by default
+```
 
 **Compare the network with the simple detector**
 ```bash

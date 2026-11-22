@@ -5,3 +5,6 @@ margin:=-10
 vote_window:=1
 vote_min:=1
 zone_hold_s:=0.5
+# The behavior node points the trunk at the six zones (column -> yaw, row -> pitch) instead of
+# the left / center / right reflexes. mode:=keeper on the command line for the reflexes.
+mode:=look

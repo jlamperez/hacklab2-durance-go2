@@ -27,7 +27,7 @@ camera -> [camera adapter] -> /reflex/events_window
 | Perception node | Works with `snn` (PyTorch) and `simple` | Third detector backend: a client for Durance's SPLEAT server (`backward-server`) | SPLEAT protocol, port, input shape |
 | Network | Trained on simulated events only | Fine-tune on real recordings (`pixi run finetune-real`); export to SPLEAT's `weights_file` | Real data, supported layers, weights format |
 | Recording and labelling tool | `ros-record`, `build-real`, `finetune-real` written and tested on the simulator stream (`docs/recording.md`) | Try with real takes; it records the windows the adapter publishes, not raw events | Camera adapter |
-| Behavior node | Done; signs and the Pose requirement checked by hand on the real Go2 (21 Nov) | Run the node itself against the robot | Laptop on the Go2 network, or a build for the Kria |
+| Behavior node | Done; signs and the Pose requirement checked by hand on the real Go2 (21 Nov). Runs on the Kria (`run.sh`); `mode:=look` (ball_v3's default) points the trunk at the six FPGA zones | Run the node itself against the robot: look mode below | - |
 | Default reaction | `behavior` still defaults to `reaction: euler` (a lean) | For a dodge, run with `reaction:=move` or change the default: on the real Go2 a lean moved the trunk 0.6 cm, a 1 s sidestep about 22 cm | Team decision |
 | Simulated lean and sidestep | Fitted to the real Go2: lean rolls 8° in place, sidestep follows the measured profile, posture mode modelled, 70 ms delay | Confirm the sideways shift with a ruler on video (the state estimator said 0.6 cm for a lean, 22 cm for a 1 s sidestep) | Robot |
 | Launch for the real setup | `camera.launch.py` (camera side) exists; behavior runs alone with `ros2 run reflex_ros behavior` | A `real.launch.py` once the camera adapter exists | - |
@@ -48,6 +48,28 @@ camera -> [camera adapter] -> /reflex/events_window
    events: this sets the simple detector's threshold and becomes training negatives.
 5. Measure command-to-motion delay and put it in `actuation_delay_ms` of the simulator.
    **Done 21 Nov 2026**: see the table below; default now 70 ms.
+
+## Look mode on the real Go2 (ball_v3), not run yet
+
+Everything runs on the Kria: camera, FPGA, `fpga_perception`, and `behavior` in `mode:=look`
+(`models/ball_v3/run_args`), which turns the six zones into trunk gestures (column -> Euler
+yaw, row -> Euler pitch, `reflex/runtime/zone_look.py`). It has to run on the board: with
+`robot:=real` the board's DDS leaves on the Go2's adapter only, and the laptop (on `eth0`,
+`192.168.77.x`) cannot reach the robot, so `ros-look` and `ros-web` are out.
+
+Roll was checked on 21 Nov; yaw and pitch, which look mode uses, were not.
+
+1. `scripts/kria/deploy.sh` from the laptop (current commit to `/opt/reflex`).
+2. Emergency stop and the Unitree remote in someone's hand. Robot standing in sport mode.
+3. `ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3`: behavior is
+   disabled and logs `[disabled] would send Euler ...`. Ball at the camera's left: `z` > 0.
+   Upper row: `y` < 0 (nose up).
+4. Same with `enabled:=true` (defaults `look_yaw:=0.15 look_pitch:=0.1`). If the upper row
+   tilts the nose down, add `invert_pitch:=true`. If left turns the dog right, stop.
+5. `camera_on_trunk:=false` is the default (camera on a stand). With the camera on the dog,
+   set it to true, and expect the dog's own turn to make events.
+6. On SIGINT behavior sends Euler 0 and Pose false before it exits (checked on the laptop
+   with the node alone; through `ros2 launch` on the board, not yet). The remote is the real stop.
 
 ## First session with the real Go2, 21 Nov 2026
 
