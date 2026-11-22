@@ -399,16 +399,16 @@ class BallDetector(nn.Module):
         return self.log_logit_scales.clamp(low, high).exp()
 
 
-def export_model(model, example_frames, device):
-    """Write <EXPORT_PREFIX>_model.json and _parameters.{json,txt} for the U-Net."""
-    model.eval()
-    model_json = export_for_river(model.body, example_frames.unsqueeze(0).to(device))
+def export_network(body, example_frames, device):
+    """Write <EXPORT_PREFIX>_model.json and _parameters.{json,txt} for a spiking network."""
+    body.eval()
+    model_json = export_for_river(body, example_frames.unsqueeze(0).to(device))
     Path(f"{EXPORT_PREFIX}_model.json").write_text(model_json)
     print(f"Saved architecture to: {EXPORT_PREFIX}_model.json")
 
-    prepared = prepare_qat(model, QUANT_CONFIG).eval()
+    prepared = prepare_qat(body, QUANT_CONFIG).eval()
     layers = [
-        (name, module) for name, module in prepared.body.named_children()
+        (name, module) for name, module in prepared.named_children()
         if isinstance(module, SpikingConvBN2d)
     ]
     weights, biases, neurons = {}, {}, {}
@@ -428,6 +428,11 @@ def export_model(model, example_frames, device):
     Path(f"{EXPORT_PREFIX}_parameters.txt").write_text("\n".join(map(str, values)))
     print(f"Saved parameters to: {EXPORT_PREFIX}_parameters.json and {EXPORT_PREFIX}_parameters.txt")
 
+
+def export_model(model, example_frames, device):
+    """Export the U-Net with export_network, plus <EXPORT_PREFIX>_readout.json."""
+    model.eval()
+    export_network(model.body, example_frames, device)
     heat_scale, offset_scale = model.logit_scales().tolist()
     readout = {
         "time_steps": int(example_frames.shape[0]),
@@ -682,17 +687,12 @@ def infer(model, dataset, device, batch_size, time_steps):
     return np.concatenate(predicted, axis=0)
 
 
-def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
-          no_ball_folders=(), no_ball_step_ms=NO_BALL_STEP_MS,
-          no_ball_window_ms=None, no_ball_share=NO_BALL_SHARE, window_ms=WINDOW_MS):
-    torch.manual_seed(base.SEED)
-    torch.backends.cudnn.benchmark = True
-    device = base.pick_device()
-    print("Device:", device, flush=True)
-    base.ACC_TIME = round(window_ms * 1000)
-    no_ball_window_ms = no_ball_window_ms or window_ms
-    print(f"Window: {window_ms:g} ms of events per frame (no-ball frames {no_ball_window_ms:g} ms)")
+def training_data(no_ball_folders, no_ball_step_ms, no_ball_window_ms, no_ball_share):
+    """(train, validation, test, train ball part, validation ball part) datasets.
 
+    No-ball windows, if any folders are given, join training (resampled to
+    ``no_ball_share``) and validation; the test set holds ball frames only.
+    """
     train_ball, validation_ball, test_dataset = benchmark_splits()
     train_parts, validation_parts = [train_ball], [validation_ball]
     if no_ball_folders:
@@ -710,8 +710,6 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
             )
     train_dataset = ConcatDataset(train_parts)
     validation_dataset = ConcatDataset(validation_parts)
-    train_loader = fast.make_loader(train_dataset, batch_size, shuffle=True)
-    validation_loader = fast.make_loader(validation_dataset, batch_size)
     print(
         f"Training frames: {len(train_dataset)} ({len(train_ball)} ball, "
         f"{len(train_dataset) - len(train_ball)} no-ball)"
@@ -720,6 +718,25 @@ def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
         f"Validation frames: {len(validation_dataset)} ({len(validation_ball)} ball, "
         f"{len(validation_dataset) - len(validation_ball)} no-ball)"
     )
+    return train_dataset, validation_dataset, test_dataset, train_ball, validation_ball
+
+
+def train(batch_size, epochs, time_steps, learning_rate, min_learning_rate,
+          no_ball_folders=(), no_ball_step_ms=NO_BALL_STEP_MS,
+          no_ball_window_ms=None, no_ball_share=NO_BALL_SHARE, window_ms=WINDOW_MS):
+    torch.manual_seed(base.SEED)
+    torch.backends.cudnn.benchmark = True
+    device = base.pick_device()
+    print("Device:", device, flush=True)
+    base.ACC_TIME = round(window_ms * 1000)
+    no_ball_window_ms = no_ball_window_ms or window_ms
+    print(f"Window: {window_ms:g} ms of events per frame (no-ball frames {no_ball_window_ms:g} ms)")
+
+    train_dataset, validation_dataset, test_dataset, train_ball, validation_ball = training_data(
+        no_ball_folders, no_ball_step_ms, no_ball_window_ms, no_ball_share,
+    )
+    train_loader = fast.make_loader(train_dataset, batch_size, shuffle=True)
+    validation_loader = fast.make_loader(validation_dataset, batch_size)
     print(
         f"Sensor: {SENSOR}x{SENSOR}, crop sides "
         f"{fast.CROP_SIDES[0]:.0f}-{fast.CROP_SIDES[1]:.0f} px"
