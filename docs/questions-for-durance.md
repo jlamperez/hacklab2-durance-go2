@@ -31,6 +31,23 @@ Some are partly answered by reading their KV260 microSD image on 21 Nov
 10. Do you have data already recorded with the event camera?
 11. How is the board's power consumption measured?
 
+## SPLEAT hangs on our model (asked on 22 Nov)
+
+Logs: `docs/fpga-run-2026-11-22.md`.
+
+> Our small U-Net (job #35, input 1x320x320, output 9x80x80) on SPLEAT: the server accepts
+> the frames, the first inference after loading the bitstream returned once (latency
+> 219331), then the next one fails with `error reading through dma: rx hardware status:
+> ProxyTimeout`. After reloading, the first frame never returns. Are spatial outputs
+> (9x80x80) or 320x320 inputs supported? Is there a limit on output size or a reset needed
+> between frames?
+
+Also worth asking: the unit of `latency`, and whether `despot_send_and_forget` can send one
+channel (it builds 2 polarities, fixed at compile time; we merge them in
+`tools/spleat_merge_proxy.py`).
+
+Answer: not yet.
+
 ## Assumptions these answers will confirm or break
 
 | Assumption in the code | Question | What the card says |

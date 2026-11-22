@@ -139,9 +139,13 @@ on Durance's card stays.
    grep -i ":0D05 " /proc/net/tcp6                           # port 3333 listening
    ```
 
-7. **Read the results** from the laptop. The server only sends something while the camera
-   client on the board (`despot_send_and_forget`, after `despot_test_camera` once per boot)
-   feeds it frames:
+7. **Feed it frames.** `despot_send_and_forget` always sends 2 channels; for a 1-channel
+   network put `tools/spleat_merge_proxy.py` between despot and the server (its docstring
+   has the board commands: server on port 3334, proxy on 3333). The replies come back on
+   the proxy's connection; it saves them with `--save`, and `pixi run spleat-read --file F`
+   decodes them on the laptop. `despot_test_camera` is needed once per boot and after every
+   bitstream reload. **Read the results** from the laptop directly (if the network takes
+   despot's frames as they are):
 
    ```bash
    pixi run spleat-read --save out/spleat_capture.bin        # Ctrl+C to stop
@@ -155,20 +159,40 @@ on Durance's card stays.
 `/root/backup/durance-example/` (and on the laptop in `out/kria_backup/`); copy them back to
 their places and restart the two services.
 
-## Current state (21 Nov 2026, evening)
+## Current state (22 Nov 2026)
 
 | | |
 |---|---|
 | Firmware | `models/firmware/kv260_ball_small_job35/`: job #35, small U-Net, generated. The full-size network failed in place-and-route twice |
 | Model | `models/ball_small/` holds an early QAT checkpoint (epoch 4, 2 ms window, not in git): good enough to test the board path, not to detect balls. A better one, trained on 5 ms windows, is expected |
 | Board (21 Nov, about 23:20) | **deployed with river-tools**: sha256 of the five files checked on the board; bitstream loaded (`dfx-mgr-client: spleat: Loaded with slot_handle 0`, DMA channels created); `backward-server` running with our config (1x320x320 in, 9x80x80 out); port 3333 accepts connections. **Not seen yet**: a single inference. No camera client was running, so no frame reached the server and no message came out |
+| Board (22 Nov) | despot's frames are 2x320x320 and the server refuses them; through `tools/spleat_merge_proxy.py` (channels merged, server on port 3334) they are accepted. **One inference came back** (9x80x80, `latency: 219331`), then the FPGA hung: `rx hardware status: ProxyTimeout`. After a bitstream reload the first frame did not come back. Logs: `docs/fpga-run-2026-11-22.md`; question to Durance in `docs/questions-for-durance.md` |
 
 ## Not known yet
 
 - **What the camera client sends for our config.** The model was trained on one binary
   channel (1 where a pixel had any event) at 320x320. Durance's camera client builds frames
   of 2 polarities with event counts. Whether `channels: 1` makes it merge polarities, and
-  whether it sends counts above 1, is unknown: the biggest risk for this model.
+  whether it sends counts above 1, is unknown: the biggest risk for this model. The
+  binary's strings (22 Nov) show 2 channels fixed at compile time, with no config key for
+  channels (`docs/fpga-pipeline.md`, "The despot binaries"): most likely it does not merge.
+  **Seen on the board, 22 Nov**: with `despot_send_and_forget` running, `backward-server`
+  receives messages every few ms and rejects each one: `level=ERROR msg="error validating
+  message" service=spleat-facade err="wrong payload size"`. No inference ran. The sizes
+  themselves were cut off in the log. **Captured on 22 Nov** (`tools/spleat_sniff.py` in
+  place of the server, `downsampling: 1`, `frequency: 500`): 4-byte big-endian length + CBOR
+  map with two keys, `{"id": n, "payload": <819200 bytes>}`; the payload is **2x320x320
+  float32 little-endian event counts** (first frame values 0-3, later frames 0/1 with a few
+  dozen non-zero pixels). Our server expects 1x320x320 (409600 bytes). Adapter:
+  `tools/spleat_merge_proxy.py` (despot -> 3333 -> merge, any event = 1.0 -> 3334 -> server).
+  **Run on the board, 22 Nov**: the server accepts the merged frames (`sending to spleat
+  msg_id=0 shape=1x320x320`). First run: one reply, 9x80x80 float32, `latency: 219331`, then
+  the FPGA never answered the second frame: `error reading through dma: rx hardware status:
+  ProxyTimeout` (msg_id=1). With 40 frames in flight the server then refused everything
+  ("pipeline is already full"). After reloading the bitstream and with one frame in flight
+  (`--max-inflight 1`), the first frame got no reply in 20 s. So far: one inference out of
+  two attempts, then the hardware hangs. Suspects: the 9x80x80 spatial output or the
+  320x320 input (Durance's example is 2x80x80 in, 5x1x1 out). To ask Durance.
 - **What the payload holds**: spike counts summed over the time steps (what the readout
   expects), spikes of one step, or potentials. `spleat-read` assumes the first.
 - **Whether the server sends a 9x80x80 output** (230 kB per message). Durance's own client

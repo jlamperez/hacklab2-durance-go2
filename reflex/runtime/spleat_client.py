@@ -162,6 +162,8 @@ def parse_message(body: bytes, shape: tuple[int, int, int] | None) -> dict:
     if not isinstance(msg, dict):
         raise ProtocolError(f"message is a CBOR {type(msg).__name__}, not a map")
     payload = msg.get("payload")
+    if payload is None and msg.get("error"):
+        payload = b""  # the server's error replies (e.g. "pipeline is already full") carry no payload
     if not isinstance(payload, bytes):
         raise ProtocolError(f"no byte-string 'payload' (keys: {sorted(map(str, msg))})")
     if len(payload) % 4:
@@ -201,6 +203,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="the config.yaml deployed to the board, for the expected output shape")
     ap.add_argument("--count", type=int, default=0, help="stop after N messages (0: until Ctrl+C)")
     ap.add_argument("--save", type=Path, help="append every raw message (4-byte length + body) to this file")
+    ap.add_argument("--file", type=Path,
+                    help="decode saved messages (from --save, or tools/spleat_merge_proxy.py --save) "
+                         "instead of connecting")
     args = ap.parse_args(argv)
 
     shape = server_shape(args.config)
@@ -213,37 +218,58 @@ def main(argv: list[str] | None = None) -> int:
     save = args.save.open("ab") if args.save else None
 
     from reflex.runtime.detectors import decode_ball_output
-    with socket.create_connection((args.host, args.port), timeout=10) as sock:
-        sock.settimeout(None)
-        print(f"connected to {args.host}:{args.port}; waiting for messages (the camera client must run)", flush=True)
-        n, t0, t_prev = 0, time.monotonic(), None
-        try:
-            while not args.count or n < args.count:
-                body = read_message(sock)
-                now = time.monotonic()
-                if save:
-                    save.write(struct.pack(">I", len(body)) + body)
-                m = parse_message(body, shape)
-                v = m["values"]
-                line = (f"#{n:<5d} id {m.get('id')!s:>6} {len(body):7d} B  {m['n_values']} values"
-                        f"{'' if m['shape_ok'] else ' (UNEXPECTED COUNT)'}  latency {m.get('latency')}  "
-                        f"min {v.min():.3g} max {v.max():.3g} sum {v.sum():.4g} nonzero {int((v != 0).sum())}")
-                if m.get("error"):
-                    line += f"  error {m['error']!r}"
-                if readout and m["shape_ok"]:
-                    x, y, p = decode_ball_output(v, readout)
-                    line += f"  -> x {x:.0f} y {y:.0f} P(ball) {p:.2f}"
-                if t_prev is not None:
-                    line += f"  dt {1e3 * (now - t_prev):.0f} ms"
-                print(line, flush=True)
-                n, t_prev = n + 1, now
-        except KeyboardInterrupt:
-            pass
-        finally:
+
+    def file_messages(path: Path):
+        data = path.read_bytes()
+        i = 0
+        while i + 4 <= len(data):
+            (length,) = struct.unpack(">I", data[i:i + 4])
+            if i + 4 + length > len(data):
+                print(f"last message cut at byte {i}", flush=True)
+                return
+            yield data[i + 4:i + 4 + length]
+            i += 4 + length
+
+    def socket_messages():
+        with socket.create_connection((args.host, args.port), timeout=10) as sock:
+            sock.settimeout(None)
+            print(f"connected to {args.host}:{args.port}; waiting for messages "
+                  "(the camera client must run)", flush=True)
+            while True:
+                yield read_message(sock)
+
+    source = file_messages(args.file) if args.file else socket_messages()
+    n, t0, t_prev = 0, time.monotonic(), None
+    try:
+        for body in source:
+            if args.count and n >= args.count:
+                break
+            now = time.monotonic()
             if save:
-                save.close()
-        if n > 1:
-            print(f"{n} messages in {time.monotonic() - t0:.1f} s")
+                save.write(struct.pack(">I", len(body)) + body)
+            m = parse_message(body, shape)
+            v = m["values"]
+            line = (f"#{n:<5d} id {m.get('id')!s:>6} {len(body):7d} B  {m['n_values']} values"
+                    f"{'' if m['shape_ok'] else ' (UNEXPECTED COUNT)'}  latency {m.get('latency')}")
+            if v.size:
+                line += (f"  min {v.min():.3g} max {v.max():.3g} sum {v.sum():.4g} "
+                         f"nonzero {int((v != 0).sum())}")
+            if m.get("error"):
+                line += f"  error {m['error']!r}"
+            if readout and m["shape_ok"]:
+                x, y, p = decode_ball_output(v, readout)
+                line += f"  -> x {x:.0f} y {y:.0f} P(ball) {p:.2f}"
+            if t_prev is not None and not args.file:
+                line += f"  dt {1e3 * (now - t_prev):.0f} ms"
+            print(line, flush=True)
+            n, t_prev = n + 1, now
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if save:
+            save.close()
+    if n > 1:
+        print(f"{n} messages in {time.monotonic() - t0:.1f} s")
     return 0
 
 

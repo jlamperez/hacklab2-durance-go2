@@ -36,15 +36,17 @@ Two loops around that pipeline:
 
 ## Status
 
-Our nodes have not driven the real Go2, and none of our networks has run on the real event
-camera or on Durance's FPGA. The real event camera has been used for recording: about 100
+Our nodes have not driven the real Go2. One of our networks has run once on Durance's FPGA,
+fed by the real event camera: one inference on 22 Nov, then the hardware hung
+(`docs/fpga-run-2026-11-22.md`). The real event camera has been used for recording: about 100
 labelled takes in four sessions on 21 Nov, camera on a stand, not on the robot
 (`docs/recording-real-data.md`); the team also ran Durance's own example model on the board.
 Durance's toolchain has been used off the board: riverops to export the ball detector,
 riversdk.dev to build its firmware (the full-size network failed in place-and-route, the
-small one built). The small ball detector was loaded on the board's FPGA on 21 Nov and its
-server runs with our config, but no inference has been seen yet: no camera client was
-feeding it (`docs/deploy-fpga.md`).
+small one built). The small ball detector was loaded on the board's FPGA on 21 Nov. On 22 Nov,
+with Durance's camera client and our adapter merging its two polarity channels, one
+inference came back (9x80x80), then the FPGA stopped answering (`ProxyTimeout`); asked
+Durance (`docs/deploy-fpga.md`).
 
 | Part | State |
 |---|---|
@@ -60,9 +62,10 @@ feeding it (`docs/deploy-fpga.md`).
 | Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov; about 100 takes |
 | Real-camera takes as training data (`capture/` HDF5 -> network windows) | not started: `build-real` still expects the ROS recorder's format |
 | Ball detector (riverops U-Net, `models/ball/`, trained by the team on the Tübingen event-camera ball dataset, branch `feat/training`) | exported from its checkpoint with `PROVENANCE.md`; runs on the PC in the board's integer arithmetic (matches riverops' fixed-point emulation); sees simulated balls when they are close, 2/400 false frames idle; in the ROS loop in simulation (`detector:=ball`, results below). Small network (`models/ball_small`, for the FPGA): trained in float it broke once quantized to int8 (BatchNorm-folded weights saturate; a ball in every empty frame); retraining with quantization-aware training (riverops `prepare_qat`) is in progress, an early checkpoint no longer breaks when quantized but is not trained enough yet |
-| Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | full-size network: failed in place-and-route twice (job #30 and a retry). Small network (`train_ball_small.py`, about 5x fewer weights): generated, job #35, in `models/firmware/kv260_ball_small_job35/`; serves any weights of that architecture. **Deployed on the Kria on 21 Nov** with an early QAT checkpoint: bitstream loaded, server running with our config, port 3333 open. No inference seen yet: no camera client was feeding it (`docs/deploy-fpga.md`) |
+| Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | full-size network: failed in place-and-route twice (job #30 and a retry). Small network (`train_ball_small.py`, about 5x fewer weights): generated, job #35, in `models/firmware/kv260_ball_small_job35/`; serves any weights of that architecture. **Deployed on the Kria on 21 Nov** with an early QAT checkpoint: bitstream loaded, server running with our config, port 3333 open. 22 Nov: fed by the real camera through `tools/spleat_merge_proxy.py`, one inference came back, then the FPGA hung (`docs/fpga-run-2026-11-22.md`) |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
-| Camera adapter for the real sensor, SNN on the FPGA (SPLEAT), our nodes driving the real Go2 | not started |
+| Camera to FPGA on the board (Durance's `despot_send_and_forget` + `tools/spleat_merge_proxy.py`) | runs: frames accepted by the server, one inference back, then the FPGA hung (`docs/fpga-run-2026-11-22.md`) |
+| Our nodes driving the real Go2 | not started |
 
 ## Commands
 
@@ -249,6 +252,7 @@ python -m capture.summarize --plan-session sun_cross3
 | `docs/data-plan-follow.md` | What to record with the real event camera for following the ball |
 | `docs/durance-riversdk.md` | Notes from Durance's docs: Kria, Go2 networking, ROS 2 build, FPGA deployment, capture |
 | `docs/deploy-fpga.md` | Putting a network on the FPGA: every file, which tool makes it, where it goes on the board, the steps |
+| `docs/fpga-run-2026-11-22.md` | First runs of the ball detector on the FPGA with the real camera: logs, one inference, then the hang |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |
 | `docs/durance-kria-image.md` | What is on Durance's KV260 microSD image, and what it changes for us |
