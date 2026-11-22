@@ -5,8 +5,9 @@ exported to `models/ball_v3/`: 2x320x320 binary polarity frames of 5 ms in, 10 `
 in a chain, 7x1x1 out: `upper_left ... lower_right, none`) put on the KV260 with its own
 firmware (`models/firmware/ball_zones_v3/`, job number not recorded).
 
-Result: **it runs and computes what the export says, but as the board runs it, it hardly
-ever picks a zone.**
+Result: **it runs on the board with the real camera and drives the follow node's look mode
+in simulation, but only for a ball close to the camera and moved fast.** Sections 1-5 are the
+first attempt (nothing came out); sections 6-9 how it was made to work.
 
 ## 1. Deployment
 
@@ -61,9 +62,58 @@ runs one step per frame and keeps the state, and with `max_inflight` 1 it sees a
 frame in five. Run that way, `none` dominates even on recordings. Also, as trained, these
 three takes do not come out right (left and right both `lower_middle`); three takes only.
 
-## 5. Open
+Sections 3-4 judged the network by the zones3 take labels (from-left, ...), which say where
+the ball comes from, not which sixth of the image it is in; the next sections do not.
 
-- Retrain one step per frame with the state carried over (as `models/zones3`), or find out
-  whether spleat-server can run several steps per frame.
-- A measured ball test (side of each throw noted), and the image orientation.
+## 5. Per frame against the tracked ball position
+
+The 21 Nov `cross` takes (ball rolling at about 2 m), each 5 ms frame scored against the zone of
+the ball's tracked position (`reflex.river.autolabel`; its row is less trusted than its column):
+as trained (4 steps, reset) 18-37 % correct in the lower row, 0-7 % in the upper, `none` 58 %;
+as the board runs it, 4-24 % in the lower row and `none` 100 % (it never invents a zone).
+
+## 6. What made it work live
+
+1. **Every frame must reach the FPGA.** 30 s of despot's frames captured on the board
+   (`sniff_sparse.py`, scratch) and run through the emulation: with every frame, the network
+   fires `upper_right` 16 times while a ball is held up right (second 20-21); with one frame in
+   three, which was what reached the FPGA, none of it. Camera to **50 Hz** (`frequency` 50,
+   `spleat-bundle --frequency 50`; merging two frames in emulation kept 13 of the 16) and
+   `camera_tap max_inflight` 4: 46-50 frames/s from despot, all answered.
+2. **The board computes the same on real frames.** The 30 s capture replayed into the FPGA
+   (pairs merged, as HWC): `upper_right` at 20.4-20.9 s as in the emulation; 1294 of 1525
+   frames identical (the server state was not reset before).
+3. **Readout.** The `none` neuron fires every frame, so a zone never had more spikes than
+   `none` over 4 frames: nothing was published. `margin` -10 (any zone spike wins; a negative
+   margin was ignored before, fixed in `zones_readout.py`), no vote, a zone held 0.5 s
+   (`models/ball_v3/run_args`, read by `run.sh`).
+
+## 7. The loop
+
+`run.sh robot:=sim model:=ball_v3 enabled:=false` on the board: `fpga_perception` publishes
+the zone on `/durance/ball_zone` (reliable, transient-local); on the laptop `ros-look` (follow
+node, `mode:=look input:=zone`) turns the simulated dog's trunk towards it, `ros-web` shows the
+camera picture with the 2x3 grid, the published zone outlined and the FPGA's spikes per zone.
+On the laptop every terminal needs `CYCLONEDDS_URI` on `enp8s0` (docs/commands.md), and the
+follow node starts disabled (`f`, or the `/reflex/follow/enable` service).
+
+Live, ball moved in front of the camera for a minute: 162 zone spikes, 10-19 per second while
+it moved fast and close, 41 zone changes published; zones flicker between neighbours at a
+border. Not measured: which share of the published zones was right.
+
+## 8. Why only close and fast
+
+Layer 0 is a 1x1 ConvLIF with bias 41: every pixel spikes every few frames with no event at
+all, and a single event already makes it spike. What tells the ball from that background is
+many pixels at once, through layer 1's 8x8 filters. The training data (the teammates' dataset,
+`projected` and `hand_labeled`, zoomed crops, balls up to about 140 px across) have big balls; a
+ball a few pixels wide is background to the network. Reasoning from the parameters, not
+measured layer by layer.
+
+## 9. Open
+
+- Retrain (fine-tune) on our camera's data: small balls at the real distance, no zoom, 20 ms
+  windows, one step per frame with state kept. Same architecture: only `weights.txt` changes.
+- Accuracy of the published zones, measured.
+- The real Go2 (`ros-look` with `dry_run:=true` first).
 - The firmware's job number (`models/firmware/ball_zones_v3/PROVENANCE.md`).

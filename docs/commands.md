@@ -250,6 +250,18 @@ pixi run -e ros ros-sim
 pixi run -e ros ros-web            # optional
 ```
 
+**FPGA ball zones (ball_v3) turn the simulated dog's trunk** (`docs/fpga-ball-zones-v3-2026-11-22.md`).
+The FPGA must hold ball_v3 (`out/spleat/ball_zones_model`, camera at 50 Hz). In every PC terminal
+except `ros-robot-sim`, first:
+`export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI='<CycloneDDS><Domain Id="any"><General><Interfaces><NetworkInterface name="enp8s0"/></Interfaces></General></Domain></CycloneDDS>'`
+```bash
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3 enabled:=false   # Kria
+pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0 viewer:=false
+pixi run -e ros ros-look            # press f (starts disabled)
+pixi run -e ros ros-web             # http://localhost:8080: camera, 2x3 grid, zone, spikes per zone
+```
+The ball must be close to the camera and moved fast.
+
 **Compare the network with the simple detector**
 ```bash
 pixi run -e ros ros-sim detector:=snn max_shots:=10
