@@ -21,3 +21,6 @@ ros2_ws/src/unitree_go
 /river_tools-*/
 *.whl
 Training/data/
+ros2_ws/build-yocto/
+ros2_ws/install-yocto/
+ros2_ws/log-yocto/
