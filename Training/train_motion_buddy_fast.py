@@ -50,6 +50,7 @@ BATCH_SIZE = 64
 TIME_STEPS = 4
 CHECKPOINT = Path("ball_heatmap_best.pt")
 SENSOR = 320
+INPUT_CHANNELS = 1
 SOURCE_WIDTH = base.CAMERA_WIDTH
 SOURCE_HEIGHT = base.CAMERA_HEIGHT
 CROP_SIDES = (80.0, 720.0)
@@ -97,16 +98,22 @@ def fit_crop(width, height):
 
 
 def resample(pixels, x0, y0, scale, rng=None, keep=UPSAMPLE_KEEP):
-    """(y, x) source pixels -> unique flat sensor indices for the given crop.
+    """(y, x, p) source pixels -> unique flat indices into [INPUT_CHANNELS, SENSOR, SENSOR].
 
-    Zooming out maps each pixel to one sensor pixel. Zooming in fills the
-    sensor pixels a source pixel covers, so objects are not dotted; with an
-    ``rng``, each filled pixel is kept with probability ``keep``.
+    With INPUT_CHANNELS = 2, OFF events go to channel 0 and ON events to
+    channel 1; with 1, polarity is merged. Zooming out maps each pixel to one
+    sensor pixel. Zooming in fills the sensor pixels a source pixel covers, so
+    objects are not dotted; with an ``rng``, each filled pixel is kept with
+    probability ``keep``.
     """
     x = (pixels[:, 1].astype(np.float32) - x0) * scale
     y = (pixels[:, 0].astype(np.float32) - y0) * scale
+    channel = (
+        pixels[:, 2].astype(np.int64) if INPUT_CHANNELS > 1
+        else np.zeros(len(pixels), dtype=np.int64)
+    )
     if scale <= 1.0:
-        xs, ys = np.floor(x), np.floor(y)
+        xs, ys, cs = np.floor(x), np.floor(y), channel
     else:
         step = np.arange(int(np.ceil(scale)) + 1, dtype=np.float32)
         xs = np.floor(x)[:, None, None] + step[None, None, :]
@@ -114,8 +121,11 @@ def resample(pixels, x0, y0, scale, rng=None, keep=UPSAMPLE_KEEP):
         inside = (xs < np.ceil(x + scale)[:, None, None]) & (ys < np.ceil(y + scale)[:, None, None])
         xs = np.broadcast_to(xs, inside.shape)[inside]
         ys = np.broadcast_to(ys, inside.shape)[inside]
+        cs = np.broadcast_to(channel[:, None, None], inside.shape)[inside]
     valid = (xs >= 0) & (xs < SENSOR) & (ys >= 0) & (ys < SENSOR)
-    flat = np.unique(ys[valid].astype(np.int64) * SENSOR + xs[valid].astype(np.int64))
+    flat = np.unique(
+        (cs[valid] * SENSOR + ys[valid].astype(np.int64)) * SENSOR + xs[valid].astype(np.int64)
+    )
     if scale > 1.0 and rng is not None and keep < 1.0:
         flat = flat[rng.random(len(flat)) < keep]
     return flat
@@ -164,7 +174,7 @@ class SensorDataset(Dataset):
 
 def collate(batch):
     pixels, positions = zip(*batch)
-    flat = torch.cat([p + i * SENSOR * SENSOR for i, p in enumerate(pixels)])
+    flat = torch.cat([p + i * INPUT_CHANNELS * SENSOR * SENSOR for i, p in enumerate(pixels)])
     return flat, torch.stack(positions)
 
 
@@ -177,19 +187,19 @@ def make_loader(dataset, batch_size, shuffle=False):
 
 
 def to_frames(flat, batch_size, device, time_steps):
-    """Scatter flat indices into [B, T, 1, SENSOR, SENSOR] on the device; T is a view."""
-    frames = torch.zeros(batch_size * SENSOR * SENSOR, device=device)
+    """Scatter flat indices into [B, T, INPUT_CHANNELS, SENSOR, SENSOR] on the device; T is a view."""
+    frames = torch.zeros(batch_size * INPUT_CHANNELS * SENSOR * SENSOR, device=device)
     frames[flat.to(device, non_blocking=True)] = 1.0
-    return frames.view(batch_size, 1, 1, SENSOR, SENSOR).expand(
+    return frames.view(batch_size, 1, INPUT_CHANNELS, SENSOR, SENSOR).expand(
         -1, time_steps, -1, -1, -1,
     )
 
 
 def dense_sample(dataset, index, time_steps):
     flat, position = dataset[index]
-    frame = torch.zeros(SENSOR * SENSOR)
+    frame = torch.zeros(INPUT_CHANNELS * SENSOR * SENSOR)
     frame[flat] = 1.0
-    return frame.view(1, SENSOR, SENSOR).repeat(time_steps, 1, 1, 1), position
+    return frame.view(INPUT_CHANNELS, SENSOR, SENSOR).repeat(time_steps, 1, 1, 1), position
 
 
 class HeatmapBallDetector(nn.Module):
@@ -430,10 +440,10 @@ def check_hdf5(path):
 
 
 def read_recording(path):
-    """Return (x, y, t, width, height, labels) from either supported layout.
+    """Return (x, y, t, p, width, height, labels) from either supported layout.
 
     ``reflex-events-v1``: ``events/{x,y,t,p}`` with ``width``/``height`` attributes.
-    Benchmark: ``event_{x,y,t}`` on a 1280x720 sensor, optional ``gt_{x,y,t}``.
+    Benchmark: ``event_{x,y,t,p}`` on a 1280x720 sensor, optional ``gt_{x,y,t}``.
     Times are in µs. ``labels`` is (gt_x, gt_y, gt_t) or None.
     """
     with h5py.File(path, "r") as handle:
@@ -442,32 +452,32 @@ def read_recording(path):
             if unit != "us":
                 raise ValueError(f"{path}: t_unit is {unit!r}, expected 'us'")
             group = handle["events"]
-            x, y, t = group["x"][()], group["y"][()], group["t"][()]
+            x, y, t, p = (group[key][()] for key in "xytp")
             width = int(handle.attrs.get("width", int(x.max()) + 1))
             height = int(handle.attrs.get("height", int(y.max()) + 1))
-            return x, y, t, width, height, None
-        missing = {"event_x", "event_y", "event_t"} - set(handle.keys())
+            return x, y, t, p, width, height, None
+        missing = {"event_x", "event_y", "event_t", "event_p"} - set(handle.keys())
         if missing:
             raise KeyError(
-                f"{path}: neither events/{{x,y,t}} nor {', '.join(sorted(missing))}"
+                f"{path}: neither events/{{x,y,t,p}} nor {', '.join(sorted(missing))}"
             )
-        x, y, t = (base._column(handle, f"event_{key}") for key in "xyt")
+        x, y, t, p = (base._column(handle, f"event_{key}") for key in "xytp")
         labels = None
         if {"gt_x", "gt_y", "gt_t"} <= set(handle.keys()):
             labels = tuple(base._column(handle, f"gt_{key}").astype(np.float64) for key in "xyt")
-        return x, y, t, SOURCE_WIDTH, SOURCE_HEIGHT, labels
+        return x, y, t, p, SOURCE_WIDTH, SOURCE_HEIGHT, labels
 
 
 def recording_dataset(path, step_us, window_us, use_labels=True):
     """One window per label, or one every ``step_us``, fitted to the sensor."""
-    x, y, t, width, height, labels = read_recording(path)
+    x, y, t, p, width, height, labels = read_recording(path)
     if t.size == 0:
         raise ValueError(f"{path} has no events")
     if width > SOURCE_WIDTH or height > SOURCE_HEIGHT:
         raise ValueError(f"{path}: {width}x{height} sensors are not supported")
     t = t.astype(np.float64)
     order = np.argsort(t, kind="mergesort")
-    x, y, t = x[order], y[order], t[order]
+    x, y, t, p = x[order], y[order], t[order], p[order]
     xy = None
     if use_labels and labels is not None:
         gx, gy, gt = labels
@@ -479,10 +489,10 @@ def recording_dataset(path, step_us, window_us, use_labels=True):
         ends = np.arange(t[0] + window_us, t[-1] + step_us, step_us)
     starts = np.searchsorted(t, ends - window_us, side="left")
     stops = np.searchsorted(t, ends, side="right")
-    pixels = [base._window_pixels(x[a:b], y[a:b]) for a, b in zip(starts, stops)]
+    pixels = [base._window_pixels(x[a:b], y[a:b], p[a:b]) for a, b in zip(starts, stops)]
     offsets = np.zeros(len(pixels) + 1, dtype=np.int64)
     offsets[1:] = np.cumsum([len(window) for window in pixels])
-    events = np.concatenate(pixels, axis=0) if offsets[-1] else np.zeros((0, 2), np.uint16)
+    events = np.concatenate(pixels, axis=0) if offsets[-1] else np.zeros((0, 3), np.uint16)
     print(
         f"{path.name}: {width}x{height}, {len(pixels)} windows of "
         f"{window_us / 1000:g} ms, median {int(np.median(np.diff(offsets)))} px per window",
@@ -520,7 +530,7 @@ def render_frame(flat, prediction, truth, caption, prediction_radius=6.0, truth_
     Radii are in sensor pixels. ``prediction=None`` draws no red ring.
     """
     image = np.zeros((SENSOR * SENSOR, 3), dtype=np.uint8)
-    image[flat.numpy()] = 210
+    image[flat.numpy() % (SENSOR * SENSOR)] = 210
     image = image.reshape(SENSOR, SENSOR, 3)
     image = image.repeat(DISPLAY_SCALE, axis=0).repeat(DISPLAY_SCALE, axis=1)
     picture = Image.fromarray(image)
