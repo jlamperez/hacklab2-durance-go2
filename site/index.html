@@ -35,41 +35,106 @@
 
 <!-- ================================================================ OVERVIEW -->
 <section class="tab" id="tab-overview">
-  <h2>One pipeline, four swappable boxes</h2>
-  <p class="lede">An event camera sees a ball coming. A small spiking neural network decides
-    <code>none / left / center / right</code>. A state machine turns that into one safe action, and the Go2
-    gets a sport-mode command. Every box talks to the next through a ROS 2 topic, so each one can be replaced
-    by a simulated, a stand-in or a real version without touching the others. Click a box.</p>
+  <h2>Naturally playful: a robot dog that watches a ball</h2>
+  <p class="lede">An event camera on the Go2 sees a ball move. A small spiking neural network on the Kria KV260's FPGA
+    says where it is: one of six zones (upper or lower × left, middle or right) or <code>none</code>. The dog turns its
+    trunk towards that zone. We got there in three steps: everything in simulation, then the real camera driving the
+    simulated dog, then the real dog.</p>
 
+  <div class="grid two">
+    <figure class="figure card">
+      <video src="media/presentation.mp4" poster="media/presentation-poster.jpg" controls playsinline preload="none"></video>
+      <figcaption><b>The final presentation</b> (3 min): starting point, target, simulator, data acquisition, training,
+        the processing pipeline, results and what comes next.</figcaption>
+    </figure>
+    <figure class="figure card">
+      <video src="media/real-go2-highlights.mp4" autoplay muted loop playsinline preload="metadata"></video>
+      <figcaption><b>The real Go2, 22 Nov.</b> Kria and event camera on its back, the network on the FPGA, the trunk
+        following the ball. Filmed by hand; accuracy not measured. <a href="media/real-go2-highlights.gif" download>GIF</a></figcaption>
+    </figure>
+  </div>
+
+  <h3>Step 1 · Everything in simulation</h3>
+  <div class="grid two">
+    <figure class="figure card">
+      <video src="media/demo.mp4" poster="media/demo-poster.jpg" controls muted loop playsinline preload="none"></video>
+      <figcaption>MuJoCo plays both the camera and the robot: balls rolled at a standing Go2, its head camera turned into
+        events by an emulator (red ON, blue OFF). The simulated dog copies what we measured on the real one: 70 ms
+        delay, posture mode, sidestep profile.</figcaption>
+    </figure>
+    <div class="card"><b>Why first</b>
+      <p>The robot and the camera were only there for the weekend. The simulator let us build the whole loop before:
+        ROS 2 topics, the behavior node with its safety limits, the sport-mode commands, the dashboard. On the day only
+        the boxes changed, not the topics between them.</p>
+      <div class="code"><pre>pixi run -e ros ros-sim      <span class="comment"># camera, network, behavior, robot: all simulated</span>
+pixi run -e ros ros-web      <span class="comment"># the dashboard, http://localhost:8080</span></pre></div>
+      <a href="#simulator">The simulator →</a></div>
+  </div>
+
+  <h3>Step 2 · The real event camera drives the simulated dog</h3>
+  <div class="grid two">
+    <figure class="figure card">
+      <video src="media/real-camera-sim.mp4" poster="media/real-camera-sim-poster.jpg" controls muted loop playsinline preload="none"></video>
+      <figcaption>The GenX320 on the Kria sees a real ball; the network on the FPGA names its zone (the green square in
+        the 2×3 grid on the right); the board's behavior node turns the <b>simulated</b> dog on the laptop over the cable.</figcaption>
+    </figure>
+    <div class="card"><b>The board does everything</b>
+      <p>Camera, FPGA, decision and behavior all run on the Kria. Only the robot is still simulated: the requests go over the
+        Ethernet cable to MuJoCo on the laptop. To get here the board's input had to match training exactly
+        (<a href="#kria">what we fixed</a>).</p>
+      <div class="code"><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3
+pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0
+pixi run -e ros ros-web</pre></div>
+      <a href="#kria">The pipeline on the Kria →</a></div>
+  </div>
+
+  <h3>Step 3 · The real Go2</h3>
+  <div class="grid two">
+    <figure class="figure card">
+      <img src="media/real-go2.jpg" alt="A teammate holds a ball in front of the Go2, which carries the Kria board and the event camera on its back" loading="lazy">
+      <figcaption>The Kria and the event camera ride on the dog. Same program, same topics; only the robot changed.</figcaption>
+    </figure>
+    <div class="card"><b>Only the robot changes</b>
+      <p><code>robot:=real</code> sends the same requests to the Go2's sport mode instead of the simulator. The behavior
+        node starts disabled and only logs what it would send; <code>enabled:=true</code> is passed on purpose, with
+        someone holding the Unitree remote.</p>
+      <div class="code"><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3                <span class="comment"># logs only</span>
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true  <span class="comment"># moves</span></pre></div>
+      <p class="note">What it is and is not: the dog turns its trunk towards a ball held and moved close to the camera.
+        ball_v3 was trained on big, close, fast balls; no accuracy has been measured on the robot.</p></div>
+  </div>
+
+  <h3>One pipeline, four swappable boxes</h3>
+  <p>Every box talks to the next through a ROS 2 topic, so each one can be a simulated, a stand-in or a real version
+    without touching the others. Click a box.</p>
   <div class="pipeline" id="pipeline">
     <button class="stage" data-stage="source" aria-pressed="true">
       <div class="kicker">1 · Event source</div>
       <div class="name">Camera</div>
       <ul>
-        <li>MuJoCo emulated camera <span class="badge ok">works</span></li>
-        <li>Webcam stand-in (PC / Kria) <span class="badge ok">works</span></li>
-        <li>Real event camera (GenX320) <span class="badge ok">works</span></li>
+        <li>GenX320 on the Kria <span class="badge ok">real</span></li>
+        <li>Recordings of it <span class="badge ok">works</span></li>
+        <li>MuJoCo emulated camera <span class="badge sim">sim</span></li>
       </ul>
     </button>
-    <div class="wire"><div class="topic">/reflex/events_window</div><div class="arrow"></div><div class="what">EventWindow · 50 ms of events</div></div>
+    <div class="wire"><div class="topic">frames → FPGA</div><div class="arrow"></div><div class="what">despot · 2×320×320, 50 frames/s</div></div>
     <button class="stage" data-stage="perception" aria-pressed="false">
       <div class="kicker">2 · Perception</div>
-      <div class="name">Detector</div>
+      <div class="name">Ball zone SNN</div>
       <ul>
-        <li>SNN in PyTorch (CPU / GPU) <span class="badge ok">works</span></li>
-        <li>No-learning detector <span class="badge ok">works</span></li>
-        <li>SNN on the Kria's FPGA <span class="badge ok">runs</span></li>
+        <li>ball_v3 on the FPGA: six zones <span class="badge ok">runs</span></li>
+        <li>zones3 on the FPGA: left / center / right <span class="badge ok">runs</span></li>
+        <li>SNN or detectors on the PC <span class="badge sim">sim</span></li>
       </ul>
     </button>
-    <div class="wire"><div class="topic">/reflex/decision</div><div class="arrow"></div><div class="what">ReflexDecision · label + confidence</div></div>
+    <div class="wire"><div class="topic">/durance/ball_zone</div><div class="arrow"></div><div class="what">upper/lower × left/middle/right, or none</div></div>
     <button class="stage" data-stage="behavior" aria-pressed="false">
       <div class="kicker">3 · Behavior</div>
-      <div class="name">Reflex state machine</div>
+      <div class="name">Look at the ball</div>
       <ul>
-        <li>FSM + safety limits <span class="badge ok">works</span></li>
-        <li>keeper (block) / dodge <span class="badge ok">works</span></li>
-        <li>Look mode: trunk towards the ball <span class="badge ok">works</span></li>
-        <li>Our nodes on the real robot <span class="badge warn">untried</span></li>
+        <li>Look mode: column → yaw, row → pitch <span class="badge ok">works</span></li>
+        <li>Safety limits, starts disabled <span class="badge ok">works</span></li>
+        <li>Reflex: keeper / dodge <span class="badge sim">sim</span></li>
       </ul>
     </button>
     <div class="wire"><div class="topic">/api/sport/request</div><div class="arrow"></div><div class="what">unitree_api/Request · sport mode</div></div>
@@ -77,44 +142,21 @@
       <div class="kicker">4 · Robot</div>
       <div class="name">Go2</div>
       <ul>
-        <li>MuJoCo Go2 (go2_sim_bridge) <span class="badge ok">works</span></li>
-        <li>Optional walking policy <span class="badge ok">works</span></li>
-        <li>Real Go2, commands sent by hand <span class="badge ok">done</span></li>
+        <li>Real Go2 <span class="badge ok">22 Nov</span></li>
+        <li>MuJoCo Go2 <span class="badge sim">sim</span></li>
+        <li>Optional walking policy <span class="badge sim">sim</span></li>
       </ul>
     </button>
   </div>
 
   <div class="card stage-detail" id="stage-detail"></div>
 
-  <h3>Where it stands, Sunday 22 Nov</h3>
-  <div class="grid three">
-    <div class="card"><b>Real camera → FPGA</b> <span class="badge ok">runs</span>
-      <p>The GenX320 feeds two of our networks on the Kria's FPGA: <code>zones3</code> (none / left / center / right)
-        and <code>ball_v3</code> (six zones). The board's output matches the laptop's fixed-point emulation.</p>
-      <a href="#fpga">FPGA &amp; networks →</a></div>
-    <div class="card"><b>Whole pipeline on the Kria</b> <span class="badge ok">runs</span>
-      <p>Camera, FPGA, decision and behavior all run on the board (<code>/opt/reflex/run.sh</code>). They drive the
-        <b>simulated</b> dog on the laptop over the cable; the trunk turns towards the ball's zone.</p>
-      <a href="#kria">Kria KV260 →</a></div>
-    <div class="card"><b>Real Go2</b> <span class="badge warn">by hand only</span>
-      <p>Sport-mode commands sent by hand moved the real dog on 21 Nov: signs checked, a 70 ms delay measured and copied
-        into the simulator. Our nodes have not driven it yet.</p>
-      <a href="#status">Status &amp; results →</a></div>
-  </div>
-
-  <h3>See it</h3>
-  <div class="grid two">
-    <figure class="figure card">
-      <video src="media/demo.mp4" poster="media/demo-poster.jpg" controls muted loop playsinline preload="none"></video>
-      <figcaption><code>pixi run sim</code>: third-person view, the dog's RGB view and the emulated event camera
-        (red ON, blue OFF) for three shots. Everything here is simulated.</figcaption>
-    </figure>
-    <figure class="figure card">
-      <img src="img/web_viewer.png" alt="Web dashboard: 3D dog on the left, event camera, decision bars, reflex state, latency and network activity on the right" loading="lazy">
-      <figcaption><code>pixi run -e ros ros-web</code>: the whole pipeline in the browser at
-        <code>http://localhost:8080</code>, next to any launcher.</figcaption>
-    </figure>
-  </div>
+  <h3>The dashboard</h3>
+  <figure class="figure card">
+    <img src="img/web_viewer.png" alt="Web dashboard: 3D dog on the left, event camera, decision bars, reflex state, latency and network activity on the right" loading="lazy">
+    <figcaption><code>pixi run -e ros ros-web</code>: the dog, the camera picture with the zone grid, the decision and the
+      spikes per zone, in the browser at <code>http://localhost:8080</code>, next to any launcher.</figcaption>
+  </figure>
 
   <h3>Two loops around the pipeline</h3>
   <div class="grid two">
@@ -158,8 +200,8 @@
     <tr><td><code>scripts/kria/</code>, <code>tools/</code></td><td>Cross-compile and deploy to the board, <code>run.sh</code>; board probes, replays into the FPGA, emulation checks</td></tr>
   </table></div>
   <p class="note">What is real: the event camera (about 100 recorded takes, and live into the FPGA), two networks on
-    the FPGA, sport-mode commands sent to the Go2 by hand. What is not: our nodes have never driven the real Go2, and no
-    accuracy has been measured for the live decisions. Everything else on this site is simulation.</p>
+    the FPGA, and the Go2 turning towards a ball with the whole pipeline on the Kria (22 Nov). What is not measured: the
+    accuracy of the live decisions, on the bench or on the robot. The rest of this site's numbers are from simulation.</p>
 </section>
 
 <!-- ================================================================ SIMULATOR -->
@@ -338,7 +380,7 @@ rqt_graph</pre></div>
       <fieldset><legend>3 · Robot</legend>
         <label class="opt"><input type="radio" name="robot" value="simwin" checked><span>Simulated Go2, MuJoCo window</span></label>
         <label class="opt"><input type="radio" name="robot" value="simweb"><span>Simulated Go2, headless<small>watch it in the browser dashboard</small></span></label>
-        <label class="opt"><input type="radio" name="robot" value="real"><span>Real Go2 <span class="badge warn">untried</span><small>behavior node alone; the Go2 replaces the simulator</small></span></label>
+        <label class="opt"><input type="radio" name="robot" value="real"><span>Real Go2<small>the Go2 replaces the simulator; run on 22 Nov with the real camera + FPGA route</small></span></label>
       </fieldset>
       <fieldset id="fs-scene"><legend>Scene</legend>
         <label class="opt"><input type="radio" name="scene" value="lab" checked><span>Lab (default, what the network was trained on)</span></label>
@@ -361,7 +403,7 @@ rqt_graph</pre></div>
   <h2>Kria KV260: the whole pipeline on the board</h2>
   <p class="lede">On Durance's KV260 the camera, the network on the FPGA, the decision and the behavior node all run on
     the board. Only the robot changes: <code>robot:=sim</code> sends the requests to the simulated dog on the laptop over
-    the cable, <code>robot:=real</code> to the Go2. Runs since 22 Nov with the simulated dog; not yet with the real one.</p>
+    the cable, <code>robot:=real</code> to the Go2. Both ran on 22 Nov.</p>
 
   <div class="machines">
     <div class="machine"><h4>Kria KV260 <span class="badge ok">runs</span></h4>
@@ -373,7 +415,7 @@ rqt_graph</pre></div>
     <div class="machine"><h4>Laptop, robot:=sim</h4>
       <div class="nd sim"><b>go2_sim_bridge</b><br>the simulated dog, robot only</div>
       <div class="nd sim"><b>reflex_web_viewer</b><br>camera picture, zone grid, spikes</div></div>
-    <div class="machine"><h4>Go2, robot:=real <span class="badge warn">not run</span></h4>
+    <div class="machine"><h4>Go2, robot:=real <span class="badge ok">22 Nov</span></h4>
       <div class="nd plan"><b>sport mode</b><br>USB-Ethernet adapter on the board, 192.168.123.x</div></div>
   </div>
 
@@ -389,12 +431,12 @@ rqt_graph</pre></div>
 pixi run -e ros ros-web     <span class="comment"># http://localhost:8080</span></pre></div>
       <p>The ball must be close to the camera and moved fast.</p></div>
   </div>
-  <div class="warnbox"><b>Real Go2: not run yet.</b> With <code>robot:=real</code> the board's DDS leaves on the
+  <div class="warnbox"><b>Real Go2.</b> With <code>robot:=real</code> the board's DDS leaves on the
     Go2's adapter only, so the laptop sees nothing; only the board's behavior node can drive the dog. It starts disabled
     and logs what it would send. Emergency stop and the Unitree remote in someone's hand first.
     <div class="code"><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3                 <span class="comment"># logs only</span>
 ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true   <span class="comment"># moves, small angles</span></pre></div>
-    Yaw and pitch signs of the look gestures have not been checked on the real robot.</div>
+    Small angles by default (<code>look_yaw:=0.15 look_pitch:=0.1</code>); <code>invert_pitch:=true</code> if the upper row tilts the nose down.</div>
 
   <h3>What <code>run.sh</code> does</h3>
   <ol>
@@ -476,7 +518,7 @@ cd hacklab2-durance-go2
     <tr><td><b><code>ball_v3</code></b><br><small>zone classifier</small></td><td>2×320×320, 5 ms → 2×3 zones + <code>none</code></td>
       <td>the teammates' dataset (big balls)</td>
       <td><span class="badge ok">runs, in the loop</span> output identical to the emulation on recorded live frames.
-        Drives the simulated dog's look mode. Reacts only to a ball close to the camera, moved fast</td></tr>
+        Drives the look mode of the simulated dog and, on 22 Nov, of the real Go2. Reacts only to a ball close to the camera, moved fast</td></tr>
     <tr><td><code>ball_small</code><br><small>U-Net, job #35</small></td><td>320×320 → 9×80×80 heatmap</td>
       <td>Tübingen event-camera ball dataset</td>
       <td><span class="badge warn">hangs the FPGA</span> one inference, then nothing. Durance's example runs on the same board, so it is the architecture</td></tr>
@@ -639,13 +681,13 @@ pixi run finetune-real --val-session sat_pm  <span class="comment"># → out/mod
     <tr><td>Real event camera: guided recording with labels, replay, HDF5 (<code>capture/</code>)</td><td><span class="badge ok">working</span> about 100 takes on 21 Nov, camera on a stand</td></tr>
     <tr><td>riverops training on real takes, auto-labels per frame (<code>reflex/river/</code>)</td><td><span class="badge ok">working</span> zones3: 81 % balanced accuracy, 38 % false triggers on validation (same room, optimistic)</td></tr>
     <tr><td>zones3 on the FPGA (firmware job #44)</td><td><span class="badge ok">runs</span> matches the emulation; real camera at 100 frames/s; live accuracy not measured</td></tr>
-    <tr><td>ball_v3 on the FPGA, six zones</td><td><span class="badge ok">runs, in the loop</span> turns the <b>simulated</b> dog's trunk; only big, close, fast balls; accuracy not measured</td></tr>
+    <tr><td>ball_v3 on the FPGA, six zones</td><td><span class="badge ok">runs, in the loop</span> turns the trunk of the simulated dog and of the real Go2; only big, close, fast balls; accuracy not measured</td></tr>
     <tr><td>Ball U-Nets on the FPGA</td><td><span class="badge warn">hang the FPGA / no firmware</span> narrowed to the architecture, not to a layer</td></tr>
-    <tr><td>Whole pipeline on the Kria (<code>run.sh</code>, <code>kria.launch.py</code>)</td><td><span class="badge ok">runs</span> drives the simulated dog over the cable; live decisions weak with today's scene</td></tr>
+    <tr><td>Whole pipeline on the Kria (<code>run.sh</code>, <code>kria.launch.py</code>)</td><td><span class="badge ok">runs</span> drives the simulated dog over the cable, and the real Go2 with the board on its back</td></tr>
     <tr><td>Follow / look controller, target contract, centroid tracker</td><td><span class="badge sim">simulation</span> unit-tested; look mode in the loop with ball_v3; yaw and pitch not checked on the real Go2</td></tr>
     <tr><td>Recordings or the live camera driving the simulated dog (<code>ros-events-sim</code>)</td><td><span class="badge sim">simulation</span> sources tested without ROS; launch not yet run under ROS</td></tr>
     <tr><td>Optional walking, keyboard and <code>/cmd_vel</code> driving, simulated drone flights</td><td><span class="badge sim">simulation</span></td></tr>
-    <tr><td>Our nodes driving the real Go2</td><td><span class="badge plan">not started</span></td></tr>
+    <tr><td>Our nodes driving the real Go2</td><td><span class="badge ok">done, 22 Nov</span> look mode with ball_v3: the trunk follows a ball held close to the camera (videos on the overview). Not measured</td></tr>
   </table></div>
 
   <h3>The real Go2, by hand, 21 Nov 2026</h3>
@@ -683,8 +725,8 @@ pixi run finetune-real --val-session sat_pm  <span class="comment"># → out/mod
 
   <h3>Open</h3>
   <ul>
-    <li>Our nodes on the real Go2: <code>run.sh robot:=real</code> disabled first, then <code>enabled:=true</code> with someone on the remote.</li>
-    <li>No accuracy figure for the live decisions of either FPGA network.</li>
+    <li>No accuracy figure for the live decisions of either FPGA network, on the bench or on the robot.</li>
+    <li>Make the dog follow and walk towards a moving ball, not only look at it.</li>
     <li>ball_v3 needs fine-tuning on our camera's data (small balls at the real distance); same architecture, so only the weights change.</li>
     <li>Image orientation through despot is unchecked.</li>
     <li>The U-Net hang on the FPGA is narrowed to its architecture, not to a layer.</li>
@@ -692,7 +734,7 @@ pixi run finetune-real --val-session sat_pm  <span class="comment"># → out/mod
 </section>
 
 </main>
-<footer>hacklab2-durance-go2 · HackLab #2, CIC Berlin, 21–22 Nov 2026 · Our nodes have not driven the real Go2; live FPGA decisions are not measured.</footer>
+<footer>hacklab2-durance-go2 · HackLab #2, CIC Berlin, 21–22 Nov 2026 · The real Go2 looked at the ball on 22 Nov; live accuracy is not measured.</footer>
 <script src="app.js"></script>
 </body>
 </html>

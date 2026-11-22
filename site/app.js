@@ -63,20 +63,25 @@ window.addEventListener("hashchange", showTab);
 /* ------------------------------------------------------------------ pipeline */
 const STAGES = {
   source: {
-    title: "Event source → /reflex/events_window",
-    body: `<p>Publishes one <code>EventWindow</code> per step: the last 50 ms of events binned into 10 time steps,
-      2 polarities, 45 × 80 cells. Three programs can play this part:</p>
+    title: "Event source",
+    body: `<p>On the robot the GenX320 sits on the Kria, and Durance's <b>despot</b> sends its frames (2 polarities × 320 × 320)
+      straight to the FPGA; nothing about events crosses ROS. In simulation and on the PC, the source publishes
+      <code>EventWindow</code> messages on <code>/reflex/events_window</code> instead. Programs that can play this part:</p>
       <ul>
         <li><b><code>go2_sim_bridge</code></b> (in <code>ros-sim</code>): renders the dog's head camera in MuJoCo and runs the emulator.</li>
         <li><b><code>event_camera_webcam</code></b> (<code>ros-camera</code> on a PC, <code>kria-camera</code> on the board): a webcam's frames through the same emulator. Plumbing test, not a real event camera.</li>
         <li><b><code>event_camera</code></b> (<code>ros-events-sim</code>): real GenX320 events, from recordings or the live KV260 stream, into the simulation.</li>
-        <li><b>despot</b> on the Kria: Durance's camera client sends the real camera's frames straight to the FPGA; <code>camera_tap</code> reorders them and publishes the picture. No event windows over ROS here.</li>
+        <li><b>despot</b> on the Kria: the real camera into the FPGA; <code>camera_tap</code> reorders each frame and publishes the picture.</li>
       </ul>
       <p>Seam in code: <code>reflex/events/io.py</code>, <code>sources.py</code>.</p>`,
   },
   perception: {
-    title: "Perception → /reflex/decision",
-    body: `<p><b><code>reflex_perception</code></b> takes each window and publishes a <code>ReflexDecision</code>:
+    title: "Perception → /durance/ball_zone, /reflex/decision",
+    body: `<p><b><code>fpga_perception</code></b> <span class="badge ok">runs</span> on the Kria. It reads the spikes of the network on
+      the FPGA. With <b>ball_v3</b> it publishes the ball's zone, one of <code>upper_left … lower_right</code> or <code>none</code>,
+      on <code>/durance/ball_zone</code>, plus the column as a <code>ReflexDecision</code>. With <b>zones3</b> only the decision
+      (<code>none / left / center / right</code>), which is what the first, reflex version of the project used.</p>
+      <p>On the PC, <b><code>reflex_perception</code></b> takes each window and publishes a <code>ReflexDecision</code>:
       <code>none / left / center / right</code>, a confidence and the time spent. The detector is a parameter:</p>
       <ul>
         <li><code>detector:=snn</code>: the trained spiking network, <code>model:=out/models/snn.pt</code>, <code>device:=cpu|cuda</code>.</li>
@@ -85,8 +90,7 @@ const STAGES = {
 </li>
         <li><code>detector:=ball</code>: the teammates' ball U-Net on the PC, in the FPGA's integer arithmetic.</li>
       </ul>
-      <p><b><code>fpga_perception</code></b> <span class="badge ok">runs</span> on the Kria: reads the spikes of the network on the FPGA
-        (zones3 or ball_v3) and publishes the same <code>ReflexDecision</code>, plus the ball's zone on <code>/durance/ball_zone</code>.</p>`,
+`,
   },
   behavior: {
     title: "Behavior → /api/sport/request",
@@ -111,8 +115,8 @@ const STAGES = {
           it also launches balls and scores each shot on <code>/reflex/sim/outcome</code>.</li>
         <li>Optional walking: <code>locomotion:=rl</code> makes <code>Move</code> requests walk with a learned policy.</li>
         <li>Real Go2: Unitree's sport mode takes the bridge's place. Same message. Every <code>api_id</code> is in
-          <code>reflex/runtime/sport_api.py</code>, checked against <code>unitree_ros2</code>; the commands and their signs were tried by hand
-          on the real dog on 21 Nov. Our nodes have not driven it yet.</li>
+          <code>reflex/runtime/sport_api.py</code>, checked against <code>unitree_ros2</code>; signs and delay measured by hand on
+          21 Nov; driven by our behavior node in look mode on 22 Nov.</li>
       </ul>`,
   },
 };
@@ -299,12 +303,12 @@ function renderBuilder() {
     pc.push(["real", "reflex_behavior", s.robot === "real" ? "talks to the real dog" : "reflex state machine"]);
     if (simRobot) pc.push(["sim", "go2_sim_bridge", `robot only${s.robot === "simweb" ? ", headless" : ", MuJoCo window"}`]);
   }
-  if (s.robot === "real") go2.push(["plan", "sport mode", "listens on /api/sport/request"]);
+  if (s.robot === "real") go2.push([fpga ? "real" : "plan", "sport mode", "listens on /api/sport/request"]);
   if (s.web && !(fpga && s.robot === "real")) pc.push(["sim", "reflex_web_viewer", "dashboard :8080"]);
 
   const box = (title, list, badge) => `<div class="machine"><h4>${title}${badge || ""}</h4>${
     list.length ? list.map(([k, n, d]) => `<div class="nd ${k}"><b>${esc(n)}</b><br>${esc(d)}</div>`).join("") : '<div class="empty">not used</div>'}</div>`;
-  out.push(`<div class="machines">${box("PC / laptop", pc)}${box("Kria KV260", kria)}${box("Go2", go2, s.robot === "real" ? ' <span class="badge warn">untried</span>' : "")}</div>`);
+  out.push(`<div class="machines">${box("PC / laptop", pc)}${box("Kria KV260", kria)}${box("Go2", go2, s.robot === "real" ? (fpga ? ' <span class="badge ok">run 22 Nov</span>' : ' <span class="badge warn">untried this way</span>') : "")}</div>`);
 
   const crossing = [];
   if (fpga) {
@@ -320,9 +324,9 @@ function renderBuilder() {
   if (fpga) out.push(`<p class="net-line">The FPGA must already hold <code>${esc(s.fmodel)}</code>: <code>run.sh</code> refuses a model
     whose output count does not match the server's config. Live decisions are not measured; ${s.fmodel === "ball_v3"
     ? "ball_v3 sees only a ball close to the camera, moved fast" : "zones3 gives brief zone decisions with a ball"}.</p>`);
-  if (s.robot === "real") out.push(`<div class="warnbox"><b>Real robot: our nodes have not driven it yet.</b> Emergency stop and the
+  if (s.robot === "real") out.push(`<div class="warnbox"><b>Real robot.</b> Emergency stop and the
     Unitree remote in someone's hand, fenced area, rolled balls. Run behavior disabled first (it logs what it would send).
-    ${fpga ? "Yaw and pitch of the look gestures are not checked on the real Go2." : "Whether RoboStack's CycloneDDS talks to the Go2 is unverified; the board route above is the one prepared."}</div>`);
+    ${fpga ? "Small angles by default; ball_v3 sees only a ball close to the camera." : "Whether RoboStack's CycloneDDS talks to the Go2 is unverified; the board route above is the one prepared."}</div>`);
   if (s.robot === "simweb" && !s.web) out.push(`<div class="warnbox">Headless simulator and no dashboard: you will only see logs. Tick the browser dashboard.</div>`);
   if (s.robot === "real" && s.web && fpga) out.push(`<p class="net-line">No dashboard with the real dog on this route: the board's DDS leaves on the Go2's adapter only.</p>`);
   if (s.robot === "real" && s.web && !fpga) out.push(`<p class="net-line">With the real dog the dashboard shows events, decisions, reflex state and requests; its 3D dog stays idle (it draws the simulator).</p>`);
@@ -380,8 +384,10 @@ function renderBuilder() {
   else if (s.web && !fpga) term("PC", "browser dashboard, open http://localhost:8080", [`pixi run -e ros ros-web${park}`]);
   if (s.shell) term("PC", "look inside", ["pixi run -e ros ros-shell", "# then: ros2 node list · ros2 topic hz /reflex/decision · rqt_graph"]);
 
-  const expected = [...pc, ...kria].filter(([k]) => k !== "plan").map(([, name]) => name);
-  if (expected.length) out.push(`<p class="net-line"><code>ros2 node list</code> should show: ${expected.map((x) => `<code>${esc(x)}</code>`).join(" ")}</p>`);
+  const expected = fpga
+    ? ["reflex_camera_tap", "reflex_fpga_perception", "reflex_behavior", ...pc.map(([, name]) => name)]
+    : [...pc, ...kria].filter(([k]) => k !== "plan").map(([, name]) => name);
+  if (expected.length) out.push(`<p class="net-line"><code>ros2 node list</code>${fpga && s.robot === "real" ? " on the board" : ""} should show: ${expected.map((x) => `<code>${esc(x)}</code>`).join(" ")}${fpga ? " (despot and the FPGA server are not ROS nodes)" : ""}</p>`);
 
   $("#builder-out").innerHTML = out.join("");
 }
