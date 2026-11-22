@@ -1,0 +1,127 @@
+"""FPGA perception node: the target-zone SNN's output from SPLEAT, as reflex decisions.
+
+  reads       TCP host:port (spleat-server / backward-server on the Kria, default 127.0.0.1:3333):
+              one message per camera frame, the network's output spikes (4x1x1 for models/zones3)
+  publishes   /reflex/decision          reflex_msgs/ReflexDecision, one per FPGA message
+              /reflex/debug/fpga        std_msgs/String, JSON: values, window counts, latency
+
+It takes the place of the `perception` node when the network runs on the FPGA. The camera
+client on the board (despot_send_and_forget) feeds the server; this node only listens, like
+Durance's gesture_node. The readout (reflex/runtime/zones_readout.py) sums each neuron's
+spikes over the last `readout` frames and takes the most, ties to none: the rule the network
+was trained and validated with.
+
+confidence = the winner's spikes in the window / readout (the share of frames it fired in).
+On 22 Nov, with balls thrown past the camera, zone decisions reached 0.5-0.55; the behavior
+node's min_confidence must sit below that (the board launch file sets it). Not validated.
+
+Parameters: host, port, model_dir (meta.json + config.yaml of the deployed network),
+margin (a zone must beat none by this many spikes), reconnect_s.
+"""
+from __future__ import annotations
+
+import json
+import socket
+import threading
+import time
+from pathlib import Path
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+
+from reflex.runtime.spleat_client import ProtocolError, parse_message, read_message, server_shape
+from reflex.runtime.zones_readout import ZonesReadout
+from reflex_msgs.msg import ReflexDecision
+
+
+class FpgaPerceptionNode(Node):
+    def __init__(self):
+        super().__init__("reflex_fpga_perception")
+        p = self.declare_parameter
+        self.host = p("host", "127.0.0.1").value
+        self.port = int(p("port", 3333).value)
+        model_dir = Path(p("model_dir", "models/zones3").value)
+        self.readout = ZonesReadout.from_model_dir(model_dir, float(p("margin", 0.0).value))
+        self.shape = server_shape(model_dir / "config.yaml")
+        self.reconnect_s = float(p("reconnect_s", 1.0).value)
+        self.pub = self.create_publisher(ReflexDecision, "/reflex/decision", 10)
+        self.debug_pub = self.create_publisher(String, "/reflex/debug/fpga", 10)
+        self._stop = threading.Event()
+        self._sock = None
+        self._n = 0
+        self.get_logger().info(
+            f"SPLEAT at {self.host}:{self.port}, classes {', '.join(self.readout.names)}, "
+            f"readout {self.readout.readout} frames, margin {self.readout.margin:g}, "
+            f"expected output {self.shape}")
+        self._thread = threading.Thread(target=self.run, daemon=True)
+        self._thread.start()
+
+    def run(self) -> None:
+        while not self._stop.is_set() and rclpy.ok():
+            try:
+                with socket.create_connection((self.host, self.port), timeout=5) as sock:
+                    # Blocking reads: a timeout in the middle of a message would lose bytes and
+                    # desynchronise the stream. destroy_node() closes the socket to stop.
+                    sock.settimeout(None)
+                    self._sock = sock
+                    self.get_logger().info("connected; waiting for frames (despot must run)")
+                    self.readout.reset()
+                    while not self._stop.is_set():
+                        self.on_message(read_message(sock))
+            except (OSError, ProtocolError) as e:
+                if self._stop.is_set():
+                    return
+                self.get_logger().warn(f"SPLEAT connection: {e}; retrying in {self.reconnect_s:g} s",
+                                       throttle_duration_sec=10.0)
+                time.sleep(self.reconnect_s)
+
+    def on_message(self, body: bytes) -> None:
+        m = parse_message(body, self.shape)
+        if m.get("error") or not m["shape_ok"]:
+            self.get_logger().warn(f"message {m.get('id')}: error {m.get('error')!r}, "
+                                   f"{m['n_values']} values", throttle_duration_sec=5.0)
+            return
+        d = self.readout.push(m["values"])
+        out = ReflexDecision()
+        out.header.stamp = self.get_clock().now().to_msg()
+        out.header.frame_id = "fpga"
+        out.label = d.label
+        out.confidence = float(d.counts[d.index] / self.readout.readout)
+        out.detector = "fpga_zones"
+        latency = m.get("latency")
+        out.inference_ms = float(latency) / 1000.0 if isinstance(latency, (int, float)) else 0.0
+        self.pub.publish(out)
+        self._n += 1
+        if self.debug_pub.get_subscription_count() > 0:
+            self.debug_pub.publish(String(data=json.dumps({
+                "id": m.get("id"), "values": [float(v) for v in m["values"].reshape(-1)],
+                "counts": {n: int(c) for n, c in zip(self.readout.names, d.counts)},
+                "label": d.label, "confidence": round(out.confidence, 3),
+                "latency_us": latency, "frames": d.frames})))
+        if d.index != 0:
+            self.get_logger().info(self.readout.format(d), throttle_duration_sec=0.2)
+
+    def destroy_node(self):
+        self._stop.set()
+        if self._sock is not None:
+            try:
+                self._sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        return super().destroy_node()
+
+
+def main():
+    rclpy.init()
+    node = FpgaPerceptionNode()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+
+
+if __name__ == "__main__":
+    main()

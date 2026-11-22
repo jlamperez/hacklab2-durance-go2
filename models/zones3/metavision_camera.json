@@ -1,0 +1,12 @@
+{
+  "frequency": 100.0,
+  "downsampling": 4,
+  "biases": {
+    "bias_diff": 51,
+    "bias_diff_off": 40,
+    "bias_diff_on": 40,
+    "bias_fo": 29,
+    "bias_hpf": 0,
+    "bias_refr": 82
+  }
+}

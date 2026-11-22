@@ -54,6 +54,13 @@ Answered by our own test: `latency` is in microseconds.
 
 Answer: not yet.
 
+Our own follow-up (22 Nov, `docs/fpga-zones3-2026-11-22.md`): a Durance-shaped network
+(2x80x80 -> 5 convolutions in a chain -> 4x1x1, job #44) runs on the same board, so the hang is
+architectural. Still worth asking which of skips, upscaling, 320x320 input or a spatial output
+SPLEAT supports. Also worth telling them: riverops 0.2.0's `export_params` writes signed
+weights, while the board reads `weights.txt` as two's complement (0-255). Written signed, the
+network runs but computes something else.
+
 ## Assumptions these answers will confirm or break
 
 | Assumption in the code | Question | What the card says |

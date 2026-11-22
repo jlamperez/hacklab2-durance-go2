@@ -152,6 +152,28 @@ def fmt(m: dict) -> str:
 Q1_7_MAX = 127 / 128
 
 
+def board_weights_text(params: dict) -> str:
+    """weights.txt for spleat-server: all weights, all biases, then threshold and leak per
+    layer, one integer per line, no trailing newline.
+
+    Weights and biases (8-bit Q1.7) are written as two's complement, unsigned 0-255
+    (-16 -> 240), as in Durance's example weights.txt. riverops 0.2.0's export_params gives
+    them signed (-128..127); the board reads those wrongly. Checked on the KV260 on 22 Nov
+    (docs/fpga-zones3-2026-11-22.md): with two's complement the output spikes match the
+    fixed-point emulation neuron by neuron, signed they do not. Threshold and leak (16-bit
+    Q4.12, positive) are written as they are.
+    """
+    values = []
+    for key, v in params.items():
+        v = v if isinstance(v, list) else [v]
+        if key.startswith(("weights_", "bias_")):
+            if any(not -128 <= x <= 127 for x in v):
+                raise ValueError(f"{key}: values outside 8-bit Q1.7")
+            v = [x & 0xFF for x in v]
+        values.extend(v)
+    return "\n".join(map(str, values))
+
+
 def fold_for_board(model: TargetSNN, qcfg):
     """The network as the board runs it: BatchNorm folded, then each layer rescaled so its
     folded weights and bias fit Q1.7, then fixed-point emulation.
@@ -210,20 +232,23 @@ def export(model: TargetSNN, example: torch.Tensor, out: Path, frame: FrameConfi
         neurons[f"threshold_{i}"], neurons[f"leak_{i}"] = p["threshold"], p["leak"]
     params = {**weights, **biases, **neurons}
     (out / "parameters.json").write_text(json.dumps(params, indent=2) + "\n")
-    values = []
-    for v in params.values():
-        values.extend(v if isinstance(v, list) else [v])
-    (out / "weights.txt").write_text("\n".join(map(str, values)))   # no trailing empty line
+    (out / "weights.txt").write_text(board_weights_text(params))
 
     s = frame.size
+    # despot_send_and_forget sends the SUM of events per downsample x downsample block
+    # (integers 0, 1, 2, ...; captured on the KV260 on 22 Nov, docs/fpga-zones3-2026-11-22.md).
+    # spleat-server multiplies the input by `scaling` to make it fixed point. With norm "mean"
+    # the network was trained on sum / downsample**2, so the scaling divides by that too.
+    scaling = float(2 ** frac) / (frame.downsample ** 2 if frame.norm == "mean" else 1)
     (out / "config.yaml").write_text(
         "application:\n  host: \"0.0.0.0\"\n  port: 3333\n  weights_file: /root/weights.txt\n"
         "  max_concurrency: 40\n\n"
-        f"inputs:\n  channels: 2\n  height: {s}\n  width: {s}\n  scaling: {float(2 ** frac)}\n\n"
+        f"inputs:\n  channels: 2\n  height: {s}\n  width: {s}\n  scaling: {scaling}\n\n"
         f"outputs:\n  channels: {n_classes}\n  height: 1\n  width: 1\n")
     (out / "metavision_camera.json").write_text(json.dumps({
         "frequency": 1e6 / frame.bin_us, "downsampling": frame.downsample,
-        "noise_filtering_factor": 0.5,
+        # No noise_filtering_factor: the recordings it trains on are raw, unfiltered events
+        # (capture/), and despot's filter left about 3 events per frame (22 Nov).
         "biases": {"bias_diff": 51, "bias_diff_off": 40, "bias_diff_on": 40,
                    "bias_fo": 29, "bias_hpf": 0, "bias_refr": 82}}, indent=2) + "\n")
     return quant

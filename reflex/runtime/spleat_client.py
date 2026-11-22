@@ -3,6 +3,7 @@
     pixi run spleat-read                                  # 192.168.77.1:3333, models/ball_small
     pixi run spleat-read --host durance-kria.local --ball-dir models/ball_small --count 50
     pixi run spleat-read --save out/spleat_capture.bin   # also keep every message as received
+    pixi run spleat-read --zones-dir models/zones3       # target-zone SNN: none/left/center/right
 
 It only reads: the server pushes one message per inference to every connected client
 (Durance's gesture_node never sends anything). The camera client on the board
@@ -201,6 +202,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="export with <prefix>_readout.json, to decode (x, y, P(ball)); '' to skip")
     ap.add_argument("--config", type=Path, default=Path("out/spleat/ball_small_model/config.yaml"),
                     help="the config.yaml deployed to the board, for the expected output shape")
+    ap.add_argument("--zones-dir", type=Path,
+                    help="target-zone SNN (e.g. models/zones3): read its meta.json and config.yaml, "
+                         "print the winning zone over the last `readout` frames (no ball decoding)")
+    ap.add_argument("--margin", type=float, default=0.0,
+                    help="with --zones-dir: a zone must beat none by this many spikes (0: as trained)")
     ap.add_argument("--count", type=int, default=0, help="stop after N messages (0: until Ctrl+C)")
     ap.add_argument("--save", type=Path, help="append every raw message (4-byte length + body) to this file")
     ap.add_argument("--file", type=Path,
@@ -208,13 +214,20 @@ def main(argv: list[str] | None = None) -> int:
                          "instead of connecting")
     args = ap.parse_args(argv)
 
+    zones = None
+    if args.zones_dir:
+        from reflex.runtime.zones_readout import ZonesReadout
+        zones = ZonesReadout.from_model_dir(args.zones_dir, args.margin)
+        args.config, args.ball_dir = args.zones_dir / "config.yaml", Path("")
     shape = server_shape(args.config)
     readout, found = None, []
     if str(args.ball_dir) and args.ball_dir.is_dir():
         found = sorted(args.ball_dir.glob("*_readout.json"))
         readout = json.loads(found[0].read_text()) if len(found) == 1 else None
+    decoder = (f"zones {', '.join(zones.names)} over the last {zones.readout} frames, margin {zones.margin:g}"
+               if zones else found[0] if readout else "nothing (no readout)")
     print(f"expecting {shape and 'x'.join(map(str, shape)) or 'any'} float32 per message; "
-          f"decoding with {found[0] if readout else 'nothing (no readout)'}", flush=True)
+          f"decoding with {decoder}", flush=True)
     save = args.save.open("ab") if args.save else None
 
     from reflex.runtime.detectors import decode_ball_output
@@ -256,6 +269,9 @@ def main(argv: list[str] | None = None) -> int:
                          f"nonzero {int((v != 0).sum())}")
             if m.get("error"):
                 line += f"  error {m['error']!r}"
+            if zones and m["shape_ok"]:
+                line += f"  values {[int(a) if a == int(a) else round(float(a), 3) for a in v.reshape(-1)]}"
+                line += "  " + zones.format(zones.push(v))
             if readout and m["shape_ok"]:
                 x, y, p = decode_ball_output(v, readout)
                 line += f"  -> x {x:.0f} y {y:.0f} P(ball) {p:.2f}"

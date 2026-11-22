@@ -1,0 +1,25 @@
+device cpu  classes ['none', 'left', 'center', 'right']  input 80x80
+sessions: {'train': ['train'], 'val': ['val'], 'test': []}
+train: 5829 windows  none=3416  left=602  center=1127  right=684
+val: 1238 windows  none=690  left=159  center=274  right=115
+test: 0 windows  none=0  left=0  center=0  right=0
+data ready in 10 s
+39752 parameters, final kernel 5
+epoch  1/15    57 s | train loss 0.8147 acc 74.8%  bal 74.5%  false-trig 34.4%  miss 10.7%  wrong-zone 11.6% | val loss 1.7351 acc 58.3%  bal 75.9%  false-trig 65.8%  miss 1.8%  wrong-zone 9.5%  *saved
+epoch  2/15    60 s | train loss 0.5909 acc 79.2%  bal 79.4%  false-trig 31.2%  miss 7.2%  wrong-zone 9.9% | val loss 1.6787 acc 57.7%  bal 66.1%  false-trig 61.6%  miss 1.1%  wrong-zone 17.0%
+epoch  3/15    61 s | train loss 0.5287 acc 82.2%  bal 82.4%  false-trig 31.4%  miss 5.4%  wrong-zone 7.6% | val loss 1.0218 acc 68.9%  bal 80.4%  false-trig 46.1%  miss 3.8%  wrong-zone 8.4%  *saved
+epoch  4/15    60 s | train loss 0.4836 acc 83.7%  bal 83.8%  false-trig 25.7%  miss 5.5%  wrong-zone 7.6% | val loss 0.8295 acc 67.9%  bal 76.6%  false-trig 43.9%  miss 9.9%  wrong-zone 7.5%
+epoch  5/15    60 s | train loss 0.4644 acc 84.9%  bal 84.7%  false-trig 27.8%  miss 5.1%  wrong-zone 5.9% | val loss 0.7093 acc 74.5%  bal 76.2%  false-trig 24.2%  miss 17.9%  wrong-zone 9.3%
+epoch  6/15    60 s | train loss 0.4339 acc 86.0%  bal 86.1%  false-trig 21.6%  miss 4.6%  wrong-zone 6.8% | val loss 0.7094 acc 76.4%  bal 77.4%  false-trig 20.7%  miss 18.8%  wrong-zone 8.4%
+epoch  7/15    62 s | train loss 0.4509 acc 84.6%  bal 84.6%  false-trig 23.8%  miss 5.5%  wrong-zone 7.1% | val loss 0.7212 acc 76.7%  bal 70.7%  false-trig 8.4%  miss 35.2%  wrong-zone 6.8%
+epoch  8/15    61 s | train loss 0.4289 acc 86.1%  bal 86.1%  false-trig 23.9%  miss 4.7%  wrong-zone 5.9% | val loss 0.7053 acc 77.6%  bal 80.7%  false-trig 21.2%  miss 15.7%  wrong-zone 8.2%  *saved
+epoch  9/15    60 s | train loss 0.4231 acc 86.8%  bal 86.8%  false-trig 21.9%  miss 4.5%  wrong-zone 5.7% | val loss 0.7260 acc 76.7%  bal 82.6%  false-trig 29.3%  miss 7.7%  wrong-zone 8.0%  *saved
+epoch 10/15    59 s | train loss 0.4301 acc 85.9%  bal 86.1%  false-trig 21.9%  miss 5.0%  wrong-zone 6.3% | val loss 0.6555 acc 76.9%  bal 79.5%  false-trig 23.2%  miss 15.7%  wrong-zone 7.3%
+epoch 11/15    61 s | train loss 0.4090 acc 87.5%  bal 87.4%  false-trig 22.0%  miss 3.9%  wrong-zone 5.5% | val loss 0.7908 acc 72.6%  bal 81.2%  false-trig 36.8%  miss 7.7%  wrong-zone 7.8%
+epoch 12/15    59 s | train loss 0.4194 acc 86.3%  bal 86.5%  false-trig 20.3%  miss 5.6%  wrong-zone 5.6% | val loss 0.7109 acc 76.3%  bal 80.7%  false-trig 25.7%  miss 12.0%  wrong-zone 9.3%
+epoch 13/15    60 s | train loss 0.4015 acc 86.9%  bal 86.9%  false-trig 20.5%  miss 4.2%  wrong-zone 6.5% | val loss 0.6712 acc 78.1%  bal 79.4%  false-trig 19.9%  miss 16.4%  wrong-zone 8.0%
+epoch 14/15    58 s | train loss 0.4054 acc 87.5%  bal 87.5%  false-trig 20.5%  miss 4.9%  wrong-zone 5.0% | val loss 0.8030 acc 70.6%  bal 80.4%  false-trig 40.7%  miss 6.0%  wrong-zone 9.1%
+epoch 15/15    61 s | train loss 0.3693 acc 88.2%  bal 88.2%  false-trig 18.2%  miss 3.5%  wrong-zone 6.3% | val loss 0.8022 acc 73.9%  bal 82.0%  false-trig 35.1%  miss 5.5%  wrong-zone 9.3%
+per-layer rescale to fit Q1.7: 9.63 1.24 1.00 1.00 1.00
+fixed-point val (BN folded, as on the board): acc 72.9%  bal 81.2%  false-trig 38.0%  miss 4.2%  wrong-zone 9.3%
+exported model.json, weights.txt, config.yaml to out/river/zones3_v1

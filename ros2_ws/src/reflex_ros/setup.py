@@ -30,6 +30,8 @@ setup(
             "ball_zone_sim = reflex_ros.ball_zone_sim_node:main",
             "follow = reflex_ros.follow_node:main",
             "event_camera = reflex_ros.event_camera_node:main",
+            "fpga_perception = reflex_ros.fpga_perception_node:main",
+            "camera_tap = reflex_ros.camera_tap_node:main",
         ],
     },
 )

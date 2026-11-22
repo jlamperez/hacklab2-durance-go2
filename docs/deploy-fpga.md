@@ -55,6 +55,11 @@ Two things are independent, and that is what makes iterating cheap:
 - **The weights go separately**, as `weights.txt`. A new checkpoint of the same
   architecture only changes `weights.txt` (and `metavision_camera.json` if its event
   window changed).
+- **`weights.txt` is two's complement.** Weights and biases go as unsigned 0-255
+  (-16 -> 240), threshold and leak as they are. riverops 0.2.0's `export_params` gives signed
+  values; with those the network runs but computes something else (checked on the board,
+  `docs/fpga-zones3-2026-11-22.md`). `spleat-bundle` and `reflex.river.train` both write two's
+  complement. A network that works on the board: `models/zones3` (job #44).
 
 ## Files to the board
 
@@ -85,6 +90,16 @@ on Durance's card stays.
 `models/` is in git; `out/` is generated and can be rebuilt with the commands below.
 
 ## Steps
+
+**Before anything with the camera, after every boot of the board:**
+
+```bash
+ssh root@192.168.77.1 despot_test_camera    # must end in "Camera test successfully passed"
+```
+
+Without it the sensor's supplies are switched off about 30 s after boot (`dmesg`: `vadd:
+disabling`, `vddd1: disabling`) and despot connects to the server but sends no frames
+(22 Nov, `docs/fpga-zones3-2026-11-22.md` section 9).
 
 1. **Export the checkpoint** (needs `third_party/riverops-0.2.0-py3-none-any.whl`):
 

@@ -6,10 +6,18 @@ zone (`none / left / center / right` by default). Same riverops layers, loss, op
 and export as the notebook. What it produces goes to the Kria as described in Durance's
 "Deploy an SNN" page.
 
-Status: tested on CPU against a stand-in for riverops (the wheel was not available when
-it was written). Not yet run with the real riverops, a GPU, real GenX320 recordings or the
-board. Expect the riverops calls (`SpikingConvBN2d`, `export_for_river`, `prepare_qat`,
-`export_params`) to need small fixes on the first real run.
+Status (22 Nov): run with the real riverops 0.2.0 (CPU) on the real GenX320 recordings of
+21 Nov, with no code change except the `weights.txt` encoding. The result, `models/zones3`
+(3 zones, firmware job #44), **runs on the KV260's FPGA** and matches the fixed-point
+emulation there (`docs/fpga-zones3-2026-11-22.md`). Commands, data and validation:
+`models/zones3/PROVENANCE.md`. Fed by the real camera on the board: runs at 100 frames per second, answers `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured.
+
+Our capture sessions (`capture/`, one folder per session with `takes.csv`) are linked into
+the layout below by `tools/river_layout.py`. Its "sessions" are `train` and `val` splits,
+since the 21 Nov takes are all one room and one evening.
+
+`weights.txt`: weights and biases are written in two's complement (0-255), which is what the
+board reads. riverops' `export_params` gives them signed (`board_weights_text` in `train.py`).
 
 ## Setup on the GPU box (once)
 

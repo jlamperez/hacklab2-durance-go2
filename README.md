@@ -36,18 +36,22 @@ Two loops around that pipeline:
 
 ## Status
 
-Our nodes have not driven the real Go2. One of our networks has run once on Durance's FPGA,
-fed by the real event camera: one inference on 22 Nov, then the hardware hung
-(`docs/fpga-run-2026-11-22.md`). The real event camera has been used for recording: about 100
-labelled takes in four sessions on 21 Nov, camera on a stand, not on the robot
-(`docs/recording-real-data.md`); the team also ran Durance's own example model on the board.
-Durance's toolchain has been used off the board: riverops to export the ball detector,
-riversdk.dev to build its firmware (the full-size network failed in place-and-route, the
-small one built). The small ball detector was loaded on the board's FPGA on 21 Nov. On 22 Nov,
-with Durance's camera client and our adapter merging its two polarity channels, one
-inference came back (9x80x80), then the FPGA stopped answering (`ProxyTimeout`). Durance's
-example runs 10/10 on the same board, ours hangs on the first frame after a clean boot: the
-problem is our bitstream (job #35); asked Durance (`docs/deploy-fpga.md`).
+Our nodes have not driven the real Go2. **One of our networks runs on Durance's FPGA**: the
+target-zone SNN (`models/zones3`, 2x80x80 in, 4x1x1 out: `none / left / center / right`),
+trained on 22 Nov on our real-camera recordings, firmware job #44. Fed synthetic frames, it
+answers every frame in 1-7 ms, and its output spikes match the laptop's fixed-point emulation
+neuron by neuron (`docs/fpga-zones3-2026-11-22.md`). Fed by the real camera it runs at 100
+frames per second and answers `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured, and not
+connected to the robot. The board needs `weights.txt` in two's complement;
+riverops 0.2.0 exports signed values.
+The real event camera has been used for recording: about 100 labelled takes in four sessions
+on 21 Nov, camera on a stand, not on the robot (`docs/recording-real-data.md`); the team also
+ran Durance's own example model on the board. The earlier network, the small ball detector
+(spiking U-Net, 1x320x320 in, 9x80x80 out, job #35), hangs the FPGA: on 22 Nov, fed by the
+real camera, one inference came back, then `ProxyTimeout`; after a clean boot not even an
+empty frame comes back (`docs/fpga-run-2026-11-22.md`). With the same board and server the
+zones network works, so the hang comes from the U-Net's architecture; which part of it is
+not known.
 
 | Part | State |
 |---|---|
@@ -59,7 +63,7 @@ problem is our bitstream (job #35); asked Durance (`docs/deploy-fpga.md`).
 | Closed loop over ROS 2 in simulation | working; results below |
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
 | Recording over ROS with the webcam stand-in (`ros-record`), labelling and fine-tuning | working with webcam takes |
-| riverops training for Durance's toolchain (their notebook adapted to none/left/center/right), synthetic ball data, auto-labels for recordings (calibrated tracker, per-take overrides, review sheet), export for the Kria: `reflex/river/`, `docs/river-training.md` | written; auto-labels measured on synthetic data only (92 % of frames agree with ground truth). Training tested on CPU with a stand-in for riverops only. Not yet run with the real wheel, real recordings or the board |
+| riverops training for Durance's toolchain (their notebook adapted to none/left/center/right), synthetic ball data, auto-labels for recordings (calibrated tracker, per-take overrides, review sheet), export for the Kria: `reflex/river/`, `docs/river-training.md` | **trained on real recordings and running on the FPGA** (22 Nov): `models/zones3` from the 21 Nov `cross` and `none` takes (`tools/river_layout.py`), auto-labels per 10 ms frame; validation (same room, optimistic) 81 % balanced accuracy in fixed point, 38 % false triggers. Firmware job #44; output on the board matches the fixed-point emulation (`docs/fpga-zones3-2026-11-22.md`). Fed by the real camera on the board: 100 frames/s, `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
 | Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov; about 100 takes |
 | Real-camera takes as training data (`capture/` HDF5 -> network windows) | not started: `build-real` still expects the ROS recorder's format |
@@ -73,6 +77,8 @@ problem is our bitstream (job #35); asked Durance (`docs/deploy-fpga.md`).
 | Look mode from the FPGA's ball zone: follow node `input:=zone` on `/durance/ball_zone`; `ball_zone_sim` stands in for the Kria's `ball_node` (`tracker:=fpga-sim`, `ros-ball-zone-sim source:=keys`) | zone -> gesture mapping and the vote unit-tested (`tests/test_zone_target.py`, `tests/test_zone_vote.py`). Not yet run under ROS |
 | Simulated drone flights (UZ65-sized) with head modes, a second follow behavior (turn in place, greet when the ball stops: `reflex/runtime/follow_fsm.py`, `ball_tracker.py`), from branch `simulation` (`docs/simulation-drone.md`) | recordings generated in simulation; FSM and tracker unit-tested (`tests/test_follow_fsm.py`). Not wired into ROS. Lives beside the move-stop-look controller in `follow.py`; which one we run is not decided |
 | Camera to FPGA on the board (Durance's `despot_send_and_forget` + `tools/spleat_merge_proxy.py`) | runs: frames accepted by the server, one inference back, then the FPGA hung (`docs/fpga-run-2026-11-22.md`) |
+| Target-zone SNN on the FPGA (`models/zones3`, job #44, `despot_send_and_forget` with `downsampling: 4`, no adapter) | deployed 22 Nov; synthetic frames: 15/15 answered, spikes match the emulation (`tools/spleat_poke.py`, `tools/emulate_poke.py`). Real camera (despot, `spleat-read --zones-dir`): 100 frames/s, about 1.2 ms per frame, decision `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured. Whether despot sends the mean or the sum of each 4x4 block is unchecked |
+| Whole pipeline on the Kria (`kria.launch.py`, `scripts/kria/`): camera -> `camera_tap` -> FPGA -> `fpga_perception` -> `behavior` -> `/api/sport/request`; only the robot changes (`robot:=sim` laptop MuJoCo dog, `robot:=real` Go2). `reflex_msgs`/`reflex_ros` cross-compiled with Durance's Docker image | runs on the board (22 Nov); decisions reach the simulated dog over the cable, camera picture in `ros-web`. Input fixed: `scaling: 256` (despot sends sums), noise filter off, frames reordered CHW -> HWC by `camera_tap` (the FPGA reads HWC; found by replaying recordings into the board, `tools/replay_to_fpga.py`) (`docs/fpga-zones3-2026-11-22.md` sections 10-12). Live decisions weak with today's scene (the simulated dog reacts now and then); image orientation unchecked. Not yet run with the real Go2 |
 | Our nodes driving the real Go2 | not started |
 
 ## Commands
