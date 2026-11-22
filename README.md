@@ -252,6 +252,7 @@ python -m capture.summarize --plan-session sun_cross3
 | `docs/data-plan-follow.md` | What to record with the real event camera for following the ball |
 | `docs/durance-riversdk.md` | Notes from Durance's docs: Kria, Go2 networking, ROS 2 build, FPGA deployment, capture |
 | `docs/deploy-fpga.md` | Putting a network on the FPGA: every file, which tool makes it, where it goes on the board, the steps |
+| `docs/despot.md` | Durance's camera programs on the Kria: what `despot_send_and_forget` does, what it sends, its two fixed channels |
 | `docs/fpga-run-2026-11-22.md` | First runs of the ball detector on the FPGA with the real camera: logs, one inference, then the hang |
 | `docs/inspecting-ros.md` | Looking inside the running system: nodes, topics, message contents |
 | `docs/go2-control.md` | Sport mode versus low-level control, the walking policy, MuJoCo versus MuJoCo Warp |

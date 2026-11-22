@@ -175,7 +175,7 @@ their places and restart the two services.
   of 2 polarities with event counts. Whether `channels: 1` makes it merge polarities, and
   whether it sends counts above 1, is unknown: the biggest risk for this model. The
   binary's strings (22 Nov) show 2 channels fixed at compile time, with no config key for
-  channels (`docs/fpga-pipeline.md`, "The despot binaries"): most likely it does not merge.
+  channels (`docs/despot.md`): most likely it does not merge.
   **Seen on the board, 22 Nov**: with `despot_send_and_forget` running, `backward-server`
   receives messages every few ms and rejects each one: `level=ERROR msg="error validating
   message" service=spleat-facade err="wrong payload size"`. No inference ran. The sizes

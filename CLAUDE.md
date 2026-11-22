@@ -128,6 +128,9 @@ Putting a network on the FPGA (files, tools, board paths, steps): `docs/deploy-f
 See `docs/questions-for-durance.md`. For sport mode versus low-level control, and why
 `unitree_mujoco` is not used (yet), see `docs/go2-control.md`.
 
+Durance's camera client on the board (`despot_send_and_forget`: 2 polarity channels, fixed),
+and the adapter for one-channel networks: `docs/despot.md`.
+
 Durance's KV260 image was read from its microSD on 21 Nov, not booted:
 `docs/durance-kria-image.md`. It has ROS 2 Humble, OpenEB, Prophesee drivers (GenX320 and
 IMX636) and an FPGA inference server, SPLEAT (`backward-server`). Still unknown: which

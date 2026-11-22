@@ -139,47 +139,10 @@ Durance's launch file `bringup/launch/pipeline.launch.py` starts four nodes. **s
 - With `despot:=true` the launch file also starts the camera client itself
   (`despot_binary`, default `/usr/bin/despot_help`) and shuts everything down when it exits.
   The docs launch with `despot:=false` and start the camera client separately.
-- Our board has no `despot_help` (22 Nov, tab completion in `/root`: `despot_debug_camera`,
-  `despot_debug_camera_on_board`, `despot_send_and_forget`, `despot_test_camera`). With the
-  launch defaults, the despot process fails to start, and since its exit triggers a shutdown,
-  the whole pipeline would likely stop. Use `despot:=false`, or
-  `despot_binary:=/usr/bin/despot_send_and_forget` (path not checked). **board + source**
-- `despot_debug_camera_on_board`: seen on the board, not documented, not run yet.
-
-## The despot binaries, read from the image
-
-Static read on 22 Nov 2026 of `/usr/bin/despot_*` from `yocto-hackathon-img.gz` (root
-partition, extracted with `debugfs`; not run, no disassembly: no aarch64 disassembler on the
-laptop). Strings only, so **image + inference**. The binaries are Durance's: not in git.
-
-| Binary | Source file (from strings) | Stages it contains |
-|---|---|---|
-| `despot_test_camera` | not named | camera check |
-| `despot_debug_camera` | `app/debug_camera.cpp` | `event_serialization_stage`: raw events out (what `river-tools capture` reads) |
-| `despot_send_and_forget` | `app/send_and_forget.cpp` | `frame_generation_debug_stage`, `spleat_server_tx_bridge`, SDL/ImGui display |
-| `despot_debug_camera_on_board` | `app/debug_camera_on_board.cpp` | `frame_generation_stage`, `spleat_server_tx_bridge`, `spleat_server_rx_bridge`, `emulated_stages` (`EmulatedFrameGenerationStage`, `EmulatedSpleatStage`) |
-
-What the strings say about `despot_send_and_forget`:
-
-- **One argument**: `to_display` (argument parser strings "Unexpected argument:", "Missing
-  value for:"). No help option. The config path is fixed: `/root/metavision_camera.json`.
-- It reads `downsampling` ("Incorrect value of downsampling. Expected 1,2,4,8... Defaulting
-  to 1."), `frequency`, `noise_filtering_factor` and `biases`, with the ranges it accepts:
-  `bias_diff` 41-51, `bias_diff_on` 24-60, `bias_diff_off` 19-50, `bias_fo` 19-39,
-  `bias_hpf` 0-127, `bias_refr` 0-127.
-- The frame type is fixed at compile time: `EventCapturing<EventFrameVec, Width = 320,
-  Height = 320, ChannelsNumber = 2, DownsampleFactor = 2>` (same in all three camera
-  binaries). **Two channels (polarities) are built in**: no config key for channels. How
-  this template `DownsampleFactor = 2` relates to the runtime `downsampling` key is unknown.
-- The TX bridge connects to `127.0.0.1` (fixed string; the port is not a string, not found
-  without disassembly), encodes with CBOR and puts the frame under the key `payload`; strings
-  "PreProcess", "Reading input", "CBOR encoding", "Writing output". `send_and_forget` has no
-  RX bridge: it does not read the results back (hence the name); the ROS node does.
-- **Consequence for the small ball detector**: our server config says `channels: 1`, 320x320.
-  If the client always sends 2 channels, the input size will not match the server's. What the
-  server does then (reject, truncate) is unknown. The first run's logs will tell.
-- `despot_debug_camera_on_board` has both bridges plus emulated stages: likely a test that
-  runs the whole loop on the board, possibly without the camera or the FPGA. Not run.
+- Our board has no `despot_help`: use `despot:=false`, or
+  `despot_binary:=/usr/bin/despot_send_and_forget`. With the default, the despot process
+  fails and, since its exit triggers a shutdown, the whole launch most likely stops (not
+  tried). **board + source**
 - Also in the workspace: `debug_node` (`gesture_monitor`, prints the scores), `robot_sim` and
   `qualia_sim` (fake Go2 and fake server; `go2-kria/scripts/smoke.py` tests the pipeline
   with its own fake server and `robot_sim`), `unitree_api`,
@@ -188,6 +151,11 @@ What the strings say about `despot_send_and_forget`:
   without cross-compiling (`go2-kria/README.md`).
 - With the Go2 connected, `action_bridge` sends real motion commands as soon as the space is
   clear.
+
+## The camera client (despot)
+
+What the `despot_*` programs are, how `despot_send_and_forget` turns events into frames,
+the message it sends (captured on the board) and its two fixed channels: `docs/despot.md`.
 
 ## Durance's example does not fit together
 
