@@ -10,10 +10,13 @@ for the pitch: it reacts to anything that moves, the SNN should not.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+from reflex.data.windows import WindowConfig
 
 LABELS = ("none", "left", "center", "right")
 
@@ -70,6 +73,123 @@ class SimpleDetector:
         if score < 1.0:
             return Decision("none", 1.0 - 0.5 * score, t_us)
         return Decision(LABELS[1 + k], min(1.0, 0.5 * score), t_us)
+
+
+@dataclass
+class BallConfig:
+    model_dir: str = "models/ball"       # one export: <prefix>_model.json, _parameters.json,
+                                         # _readout.json and the checkpoint (*.pt)
+    p_ball: float | None = None          # threshold on P(ball); None = the readout's (0.5)
+    device: str = "cpu"
+
+
+def ball_model_files(model_dir: str | Path) -> dict:
+    """Files of one ball-detector export (models/ball, models/ball_small, ...).
+
+    The prefix is whatever the training script exported with ("ball", "ball_small").
+    `window_ms` is the event window the network was trained on: the checkpoint stores it
+    (Training/train_ball_size.py, `window_ms`); older checkpoints do not, and the training
+    code then assumes 1 ms, so this does too.
+    """
+    d = Path(model_dir)
+    models = sorted(d.glob("*_model.json"))
+    ckpts = sorted(d.glob("*.pt"))
+    if len(models) != 1 or len(ckpts) != 1:
+        raise FileNotFoundError(f"{d}: expected one *_model.json and one checkpoint *.pt, "
+                                f"found {[m.name for m in models]} and {[c.name for c in ckpts]}")
+    prefix = models[0].name[:-len("_model.json")]
+    import torch
+    ckpt = torch.load(ckpts[0], map_location="cpu", weights_only=True)
+    return {"model": models[0], "parameters": d / f"{prefix}_parameters.json",
+            "readout": d / f"{prefix}_readout.json", "checkpoint": ckpts[0],
+            "window_ms": float(ckpt.get("window_ms", 1.0)), "architecture": ckpt.get("architecture")}
+
+
+def window_config(detector: str, ball_dir: str | Path = "models/ball") -> WindowConfig:
+    """Window a detector needs from the camera side. The ball network takes one frame of
+    the window it was trained on (1 or 5 ms so far) at full resolution; the SNN and the
+    simple detector take the default 50 ms, 10 steps, downsampled."""
+    if detector == "ball":
+        return WindowConfig(window_ms=ball_model_files(ball_dir)["window_ms"], n_bins=1, downsample=1)
+    return WindowConfig()
+
+
+def decode_ball_output(counts: np.ndarray, readout: dict) -> tuple[float, float, float]:
+    """(x, y, P(ball)) in network-input pixels from the head's spike counts (C, grid, grid),
+    as `decode` in Training/train_ball_size.py, with the constants of <prefix>_readout.json.
+    Shared by BallDetector (network run on the PC) and the FPGA client (spleat_client)."""
+    r = readout
+    t, cell, bins = r["time_steps"], r["cell_px"], r["offset_bins"]
+    heat = counts[r["channels"]["heatmap"]].ravel() * (r["heatmap_logit_scale"] / t)
+    m = heat.max()
+    p_ball = 1.0 / (1.0 + np.exp(-(m + np.log(np.exp(heat - m).sum()) - r["no_ball_logit"])))
+    row, col = divmod(int(heat.argmax()), r["grid"])
+    centers = (np.arange(bins) + 0.5) * cell / bins
+
+    def offset(key):
+        a, b = r["channels"][key]
+        z = counts[a:b, row, col] * (r["offset_logit_scale"] / t)
+        p = np.exp(z - z.max())
+        return float((p / p.sum() * centers).sum())
+
+    return col * cell + offset("x_offset"), row * cell + offset("y_offset"), float(p_ball)
+
+
+class BallDetector:
+    """Durance-style ball detector: the riverops ball network, run as on the FPGA.
+
+    Input: the newest events (the window the network was trained on, `self.window_ms`)
+    as one binary frame, centred in the network's square input
+    (a 320x180 camera gets 70 empty rows above and below, as the training script fits
+    its own recordings). Output: the 9-channel 80x80 head decoded with ball_readout.json
+    into (x, y, P(ball)). Decision: a ball is a threat if P(ball) passes the threshold;
+    its side is the third of the image it is in (image left = dog's left).
+    It detects balls, not approaching ones: a ball rolling past also counts.
+    """
+
+    def __init__(self, cfg: BallConfig | None = None):
+        from reflex.runtime.river_net import RiverNet
+        self.cfg = cfg or BallConfig()
+        self.files = ball_model_files(self.cfg.model_dir)
+        self.window_ms = self.files["window_ms"]
+        self.net = RiverNet(self.files["model"], self.files["parameters"], self.cfg.device)
+        self.readout = json.loads(self.files["readout"].read_text())
+        r = self.readout
+        c, self.side, side_w = self.net.input_shape
+        if c != 1 or self.side != side_w:
+            raise ValueError(f"expected a 1-channel square input, got {self.net.input_shape}")
+        if tuple(self.net.output_shape[1:]) != (r["grid"], r["grid"]):
+            raise ValueError(f"output {self.net.output_shape} does not match readout grid {r['grid']}")
+        self.threshold = r["ball_probability_threshold"] if self.cfg.p_ball is None else self.cfg.p_ball
+        self.last: dict = {}
+
+    def frame(self, window: np.ndarray) -> tuple[np.ndarray, int, int]:
+        """Binary (1, S, S) frame from a (T, 2, H, W) window, and where the image sits in it."""
+        img = window.sum(axis=(0, 1)) > 0
+        h, w = img.shape
+        if h > self.side or w > self.side:
+            raise ValueError(f"window {h}x{w} is larger than the {self.side}x{self.side} input")
+        y0, x0 = (self.side - h) // 2, (self.side - w) // 2
+        out = np.zeros((1, self.side, self.side), dtype=np.float32)
+        out[0, y0:y0 + h, x0:x0 + w] = img
+        return out, x0, y0
+
+    def decode(self, counts: np.ndarray) -> tuple[float, float, float]:
+        return decode_ball_output(counts, self.readout)
+
+    def predict(self, window: np.ndarray, t_us: int = 0) -> Decision:
+        frame, x0, y0 = self.frame(window)
+        counts = self.net.run(frame, self.readout["time_steps"])
+        x, y, p = self.decode(counts)
+        w = window.shape[-1]
+        x_img, y_img = x - x0, y - y0
+        side = LABELS[1 + min(2, max(0, int(3 * x_img / w)))]
+        self.last = {"p_ball": round(p, 4), "x": round(x_img, 1), "y": round(y_img, 1),
+                     "side": side, "threshold": self.threshold,
+                     "heat_spikes": int(counts[self.readout["channels"]["heatmap"]].sum())}
+        if p < self.threshold:
+            return Decision("none", 1.0 - p, t_us)
+        return Decision(side, p, t_us)
 
 
 class SNNDetector:

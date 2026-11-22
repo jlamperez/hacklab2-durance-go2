@@ -58,7 +58,7 @@ class Tricks(Node):
 
     def send_named(self, name: str) -> None:
         cmd = BY_NAME.get(name.strip().lower())
-        if cmd is None or cmd in (api.MOVE, api.EULER):
+        if cmd is None or cmd in (api.MOVE, api.EULER, api.POSE):   # these need parameters
             self.say(f"unknown trick {name!r}")
             return
         self.send(cmd)

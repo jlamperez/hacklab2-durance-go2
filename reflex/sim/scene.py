@@ -22,9 +22,12 @@ GO2_XML = REPO_ROOT / "third_party" / "mujoco_menagerie" / "unitree_go2" / "go2.
 POSES: dict[str, np.ndarray] = {
     "stand": np.tile([0.0, 0.80, -1.50], 4),
     "crouch": np.tile([0.0, 1.25, -2.40], 4),
-    # Leaning shifts the trunk sideways by rolling all four abduction joints.
-    "lean_left": np.tile([-0.35, 0.80, -1.50], 4),
-    "lean_right": np.tile([0.35, 0.80, -1.50], 4),
+    # Leaning rolls the trunk in place, like the real Go2's Euler lean (Pose + Euler x=0.3,
+    # measured 21 Nov 2026: 8 degrees towards that side, trunk moved under 1 cm). The legs on
+    # that side bend 5 % of the way to crouch, the others extend as much, and the abduction
+    # joints hold the trunk over its feet: 8.6 degrees, no sideways shift.
+    "lean_left": np.array([0.15, 0.822, -1.545, 0.15, 0.778, -1.455, 0.15, 0.822, -1.545, 0.15, 0.778, -1.455]),
+    "lean_right": np.array([-0.15, 0.778, -1.455, -0.15, 0.822, -1.545, -0.15, 0.778, -1.455, -0.15, 0.822, -1.545]),
 }
 
 # Slow, statically stable tricks, found by trying joint angles in the simulator. They are
@@ -43,6 +46,12 @@ MOTIONS = {
 }
 
 KP, KD = 60.0, 3.0
+
+# Sidestep without the walking policy (Go2Sim.set_slide): the standing dog is moved as a
+# whole, its speed following the command as a first-order lag. Fitted to a Move y=0.3 for
+# 1 s on the real Go2 (21 Nov 2026): 0.4 / 1.4 / 3.0 / 6.9 / 20.0 cm at 0.1 / 0.2 / 0.3 /
+# 0.5 / 1.0 s, 21.6 cm in total. Speeding up takes 0.37 s, stopping 0.06 s.
+SLIDE_TAU_UP, SLIDE_TAU_DOWN = 0.37, 0.06
 
 # Eachine UZ65-like tiny whoop (approximate): motor offset per axis for a 65 mm diagonal,
 # duct radius just outside the 31 mm props.
@@ -240,6 +249,8 @@ class Go2Sim:
         self.gait = None
         self.mode = "pose"                  # "pose": fixed postures; "walk": the policy drives the legs
         self.command = np.zeros(3, dtype=np.float32)   # vx, vy (m/s), yaw rate (rad/s)
+        self.slide_cmd = np.zeros(3)        # set_slide(): commanded vx, vy, wz without the policy
+        self.slide_vel = np.zeros(3)        # and the speed it has reached
         self._passive = (m.dof_damping[self._v_adr].copy(), m.dof_frictionloss[self._v_adr].copy())
         self._contact = (int(m.opt.cone), float(m.opt.impratio))
         self._steps = 0
@@ -260,6 +271,8 @@ class Go2Sim:
         self.damped = False      # True: motors only damp, as after Unitree's Damp command
         self._set_mode("pose")
         self.command[:] = 0
+        self.slide_cmd[:] = 0
+        self.slide_vel[:] = 0
         self._motion = None
         self.park_ball()
         self.park_walker()
@@ -271,6 +284,7 @@ class Go2Sim:
     def set_pose(self, name: str) -> None:
         self._set_mode("pose")
         self.command[:] = 0
+        self.slide_cmd[:] = 0
         if name == "stand" and self.sitting:
             self.play("rise")           # getting up from sitting in one jump is violent
             return
@@ -280,6 +294,7 @@ class Go2Sim:
     def play(self, name: str) -> None:
         """Start a slow trick: sit, rise, hello. Joint targets move through its keyframes."""
         self._set_mode("pose")
+        self.slide_cmd[:] = 0
         self.command[:] = 0
         self._motion = [[float(t), q.copy(), None] for t, q in MOTIONS[name]]
 
@@ -322,6 +337,35 @@ class Go2Sim:
         self._motion = None
         self._set_mode("walk")
 
+    def set_slide(self, vx: float, vy: float, wz: float) -> None:
+        """Sidestep, walk or turn without the walking policy: the dog keeps its posture and
+        is moved as a whole with the speed profile of the real Go2 (SLIDE_TAU_*). Zero stops.
+
+        A stand-in for sport mode's walking when `enable_walking()` is not used. The legs do
+        not step; where the dog ends up and when is what matches the real robot.
+        """
+        if self.mode != "pose":
+            raise RuntimeError("set_slide() is for postures; use set_velocity() while walking")
+        self.slide_cmd[:] = (vx, vy, wz)
+
+    def _advance_slide(self) -> None:
+        if not (self.slide_cmd.any() or self.slide_vel.any()):
+            return
+        moving = self.slide_cmd != 0
+        tau = np.where(moving, SLIDE_TAU_UP, SLIDE_TAU_DOWN)
+        self.slide_vel += (self.slide_cmd - self.slide_vel) * min(1.0, self.dt) / tau
+        self.slide_vel[np.abs(self.slide_vel) < 1e-4] = 0.0
+        vx, vy, wz = self.slide_vel * self.dt
+        q = self.data.qpos
+        _, _, h = self.base_pose()
+        q[0] += vx * np.cos(h) - vy * np.sin(h)
+        q[1] += vx * np.sin(h) + vy * np.cos(h)
+        if wz:
+            turn = np.array([np.cos(wz / 2), 0.0, 0.0, np.sin(wz / 2)])
+            out = np.zeros(4)
+            mujoco.mju_mulQuat(out, turn, q[3:7])
+            q[3:7] = out
+
     def _set_mode(self, mode: str) -> None:
         if mode == self.mode:
             return
@@ -349,11 +393,18 @@ class Go2Sim:
         ex, ey = x - px, y - py
         eh = (heading - h + np.pi) % (2 * np.pi) - np.pi
         if np.hypot(ex, ey) < tol and abs(eh) < 0.06:
-            self.set_velocity(0.0, 0.0, 0.0)
+            if self.gait is None:
+                self.set_slide(0.0, 0.0, 0.0)
+            else:
+                self.set_velocity(0.0, 0.0, 0.0)
             return True
         fwd, left = ex * np.cos(h) + ey * np.sin(h), -ex * np.sin(h) + ey * np.cos(h)
-        self.set_velocity(float(np.clip(2.5 * fwd, -0.5, 0.6)), float(np.clip(4.0 * left, -0.5, 0.5)),
-                          float(np.clip(2.5 * eh, -1.0, 1.0)))
+        cmd = (float(np.clip(2.5 * fwd, -0.5, 0.6)), float(np.clip(4.0 * left, -0.5, 0.5)),
+               float(np.clip(2.5 * eh, -1.0, 1.0)))
+        if self.gait is None:
+            self.set_slide(*cmd)
+        else:
+            self.set_velocity(*cmd)
         return False
 
     def base_pose(self) -> tuple[float, float, float]:
@@ -549,6 +600,7 @@ class Go2Sim:
         tau = kp * (self.q_des - d.qpos[self._q_adr]) - KD * d.qvel[self._v_adr]
         d.ctrl[:] = np.clip(tau, self._ctrl_lo, self._ctrl_hi)
         mujoco.mj_step(self.model, d)
+        self._advance_slide()
 
     def render_eye(self) -> np.ndarray:
         """RGB uint8 (H, W, 3) from the head camera."""

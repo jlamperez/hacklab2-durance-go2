@@ -1,0 +1,55 @@
+# Durance's tools: riverops (training and export library) and river-tools (capture,
+# playback, deployment to the Kria).
+#
+# Separate from the main pixi.toml on purpose: both are proprietary wheels that are not
+# in git. If the main workspace depended on them, `pixi install` would fail for everyone
+# without the wheels. Here, only these environments need them.
+#
+# Setup, once: copy from Durance's download list (riversdk.dev/docs/hackathon/download/)
+# into third_party/ (gitignored):
+#   riverops-0.2.0-py3-none-any.whl       for the default environment (export-ball)
+#   river_tools-0.1.0-py3-none-any.whl    for the `tools` environment (river-tools)
+# Two environments because river-tools requires Python 3.10 and riverops' torch 2.14 is
+# installed here for Python 3.12. Use from the repository root:
+#   pixi run --manifest-path tools/river/pixi.toml export-ball models/ball/ball_size_best.pt
+#   pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy PROFILE.yaml root@192.168.77.1
+[workspace]
+name = "river-export"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.12.*"
+git = "*"
+
+[pypi-dependencies]
+# Pins below are the ones riverops 0.2.0 declares (torch~=2.14.0, numpy~=2.2.6, pydantic~=2.13.5).
+riverops = { path = "../../third_party/riverops-0.2.0-py3-none-any.whl" }
+torch = { version = "~=2.14.0", index = "https://download.pytorch.org/whl/cpu" }
+numpy = "~=2.2.6"
+pydantic = "~=2.13.5"
+# Imported at the top of the training scripts (not used by the export itself).
+h5py = "*"
+matplotlib = "*"
+pillow = "*"
+
+[tasks]
+# CHECKPOINT [OUT_DIR]; run from the repository root.
+export-ball = { cmd = "bash scripts/export_ball_checkpoint.sh", cwd = "../.." }
+
+# --- river-tools: river_tools 0.1.0 declares Python >=3.10,<3.11, matplotlib~=3.10.9,
+#     numpy~=2.2.6, pyyaml~=6.0.3 (installed with the wheel). Qt for `capture`'s live view.
+[feature.tools.dependencies]
+python = "3.10.*"
+pyqt = "5.*"
+openssh = "*"            # deploy and capture call ssh/scp
+
+[feature.tools.pypi-dependencies]
+river-tools = { path = "../../third_party/river_tools-0.1.0-py3-none-any.whl" }
+
+[feature.tools.tasks]
+# Arguments are passed through: capture / play / deploy. Paths relative to the repository root.
+river-tools = { cmd = "river-tools", cwd = "../.." }
+
+[environments]
+tools = { features = ["tools"], no-default-feature = true }
