@@ -1,22 +1,27 @@
-"""Camera tap: what the FPGA network sees, as a picture, without changing what it gets.
+"""Camera tap: between despot and the FPGA server; fixes the input layout and shows the picture.
 
     despot_send_and_forget --TCP 3333--> camera_tap --TCP 3334--> spleat-server (FPGA)
                                             |
                                             +--> /reflex/debug/events_image  sensor_msgs/Image (rgb8)
 
 On the Kria. despot always sends to 127.0.0.1:3333, so the server moves to 3334 (run.sh sets
-it) and this node takes 3333. Every message is forwarded unchanged, byte for byte, as soon as
-it is read; the server's replies on this connection are read and dropped (despot never reads
-them either). fpga_perception reads the results from the server directly, on 3334.
+it) and this node takes 3333. fpga_perception reads the results from the server on 3334.
 
-The picture: the frames received since the last one summed, in the repo's colours
-(reflex/events/repr.py): channel 0 red, channel 1 light blue, both white-ish (which channel is
-ON is not documented by Durance; the repo calls 1 ON), scaled up `scale` times, with the image thirds marked:
-the network's zones left / center / right, as the camera sees them. Published at `image_hz` (10), 80x80 (`scale` 1).
-The web dashboard (ros-web) shows it under "Event camera".
+Every frame is forwarded as soon as it is read, reordered from despot's channel-row-column
+(CHW) to the row-column-channel (HWC) the FPGA reads (`to_hwc`, default on; the values are
+not changed). Found on 22 Nov by replaying labelled takes into the board
+(tools/replay_to_fpga.py --layout): HWC matches the laptop's emulation, CHW does not; synthetic
+frames with both channels equal could not show it. The server's replies on this connection
+are read and dropped (despot never reads them either).
 
-Parameters: listen_port (3333), server_host (127.0.0.1), server_port (3334), image_hz (10),
-scale (1), gain (64: brightness per event).
+The picture: the frames received since the last one summed, in despot's order, in the repo's
+colours (reflex/events/repr.py): channel 0 red, channel 1 light blue (which channel is ON is
+not documented by Durance; the repo calls 1 ON), with the image thirds marked: the network's
+zones left / center / right as the camera sees them. 80x80 (`scale` 1) at `image_hz` (10);
+the web dashboard (ros-web) shows it under "Event camera".
+
+Parameters: listen_port (3333), server_host (127.0.0.1), server_port (3334), to_hwc (true),
+image_hz (10), scale (1), gain (64: brightness per event).
 """
 from __future__ import annotations
 
@@ -31,7 +36,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
-from reflex.runtime.spleat_client import cbor_decode, read_exact
+from reflex.runtime.spleat_client import cbor_decode, cbor_encode, read_exact
 
 
 class CameraTapNode(Node):
@@ -46,6 +51,10 @@ class CameraTapNode(Node):
         self.period = 1.0 / float(p("image_hz", 10.0).value)
         self.scale = int(p("scale", 1).value)
         self.gain = float(p("gain", 64.0).value)
+        # despot sends channel, row, column (CHW); the FPGA reads its input as row, column,
+        # channel (HWC). Found on 22 Nov by replaying labelled takes into the board
+        # (tools/replay_to_fpga.py --layout): HWC matches the laptop's emulation, CHW does not.
+        self.to_hwc = bool(p("to_hwc", True).value)
         self.pub = self.create_publisher(Image, "/reflex/debug/events_image", 2)
         self._acc, self._frames, self._lock = None, 0, threading.Lock()
         self._stop = threading.Event()
@@ -71,8 +80,14 @@ class CameraTapNode(Node):
                         head = read_exact(client, 4)
                         (n,) = struct.unpack(">I", head)
                         body = read_exact(client, n)
-                        up.sendall(head + body)          # unchanged, first
-                        self.add_frame(body)
+                        msg, frame = self.decode(body)
+                        if self.to_hwc and frame is not None:
+                            msg["payload"] = np.ascontiguousarray(frame.transpose(1, 2, 0)).astype("<f4").tobytes()
+                            body = cbor_encode(msg)
+                            head = struct.pack(">I", len(body))
+                        up.sendall(head + body)          # first, before the picture
+                        if frame is not None:
+                            self.add_frame(frame)
             except (OSError, ValueError) as e:
                 self.get_logger().warn(f"camera link closed: {e}")
 
@@ -84,14 +99,18 @@ class CameraTapNode(Node):
         except OSError:
             pass
 
-    def add_frame(self, body: bytes) -> None:
+    @staticmethod
+    def decode(body: bytes):
+        """(CBOR map, frame as 2 x H x W in despot's order) or (None, None) if it is not a frame."""
         try:
-            payload = cbor_decode(body).get("payload")
-            v = np.frombuffer(payload, "<f4")
+            msg = cbor_decode(body)
+            v = np.frombuffer(msg["payload"], "<f4")
             side = int(round((v.size / 2) ** 0.5))
-            frame = v.reshape(2, side, side)
-        except Exception:                          # noqa: BLE001 - the picture is best effort
-            return
+            return msg, v.reshape(2, side, side)
+        except Exception:                          # noqa: BLE001 - forwarded unchanged then
+            return None, None
+
+    def add_frame(self, frame: np.ndarray) -> None:
         with self._lock:
             self._acc = frame.copy() if self._acc is None or self._acc.shape != frame.shape else self._acc + frame
             self._frames += 1

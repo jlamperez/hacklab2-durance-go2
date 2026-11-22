@@ -21,7 +21,9 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
   fixed-point emulation; fed by the real camera it runs at 100 frames/s and answers `none` with
   no ball in view, with a ball: brief zone decisions, accuracy not measured (`docs/fpga-zones3-2026-11-22.md`).
   The whole pipeline runs on the Kria (`kria.launch.py`, `scripts/kria/`) and drives the simulated
-  dog on the laptop over the cable; not yet run with the real Go2.
+  dog on the laptop over the cable; not yet run with the real Go2. The FPGA reads its input as
+  HWC while despot sends CHW: `camera_tap` reorders (section 12 of that doc). Live decisions are
+  weak with a scene unlike the 21 Nov recordings.
   `weights.txt` for the board is two's complement, not riverops' signed export. Keep the status table in `README.md` honest.
 - **Never write a Unitree `api_id` from memory.** Each one is checked against
   `ros2_sport_client` in `unitree_ros2` and recorded with its source file and commit.
