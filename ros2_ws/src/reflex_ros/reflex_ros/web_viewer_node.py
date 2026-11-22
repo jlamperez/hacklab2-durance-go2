@@ -15,6 +15,9 @@ browser draws it in 3D (drag to orbit, scroll to zoom).
   /api/sport/request            requests going to the robot
   /reflex/debug/latency_ms      newest event -> request, measured by the simulator bridge
   /reflex/sim/outcome           score of every shot
+  /durance/ball_zone            6-zone network's zone (fpga_perception, ball_node): drawn on the
+                                event picture and shown in "Ball zone"
+  /reflex/debug/fpga            the FPGA's output spikes per class: spikes in the last second
 """
 import json
 import time
@@ -24,6 +27,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Float32, Float32MultiArray, String
 
 from reflex.runtime import sport_api
@@ -35,6 +39,9 @@ from unitree_api.msg import Request
 HISTORY = 300          # points kept in the plots
 STATE_COLOURS = {"idle": "gray", "reacting": "red", "refractory": "yellow"}
 OUTCOMES = ("correct", "wrong", "missed", "false_trigger", "quiet")
+
+
+ZONE_NAMES = ("upper_left", "upper_middle", "upper_right", "lower_left", "lower_middle", "lower_right", "none")
 
 
 class WebViewer(Node):
@@ -53,6 +60,12 @@ class WebViewer(Node):
         with gui.add_folder("Event camera"):
             self.image = gui.add_image(np.zeros((90, 160, 3), dtype=np.uint8), format="jpeg", jpeg_quality=80)
             self.activity = gui.add_markdown("waiting for `/reflex/debug/events_image`")
+        with gui.add_folder("Ball zone (6-zone network)"):
+            self.zone_md = gui.add_markdown("waiting for `/durance/ball_zone`")
+            self.zone_bars = {}
+            for z in ZONE_NAMES:
+                gui.add_markdown(z)
+                self.zone_bars[z] = gui.add_progress_bar(0.0, color="gray" if z == "none" else "green")
         with gui.add_folder("Decision"):
             self.decision = gui.add_markdown("waiting for `/reflex/decision`")
             self.bars = {}
@@ -99,6 +112,10 @@ class WebViewer(Node):
         sub(Request, sport_api.SPORT_REQUEST_TOPIC, self.on_request, 10)
         sub(Float32, "/reflex/debug/latency_ms", self.on_latency, 10)
         sub(String, "/reflex/sim/outcome", self.on_outcome, 10)
+        self._zone, self._zone_t, self._fpga = "none", 0.0, deque()
+        sub(String, "/durance/ball_zone", self.on_zone,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        sub(String, "/reflex/debug/fpga", self.on_fpga, 50)
         self.create_timer(1 / 20, self.refresh)
         actual = self.server.get_port()      # viser moves to the next free port if this one is taken
         if actual != port:
@@ -141,6 +158,32 @@ class WebViewer(Node):
         img = np.frombuffer(bytes(msg.data), dtype=np.uint8).reshape(msg.height, msg.width, 3)
         self._img = img[..., ::-1] if msg.encoding == "bgr8" else img
         self._dirty.add("image")
+
+    def on_zone(self, msg: String) -> None:
+        self._zone, self._zone_t = msg.data.strip(), time.monotonic()
+        self._dirty.update(("zone", "image"))
+
+    def on_fpga(self, msg: String) -> None:
+        values = json.loads(msg.data).get("values", [])
+        if len(values) == len(ZONE_NAMES):
+            now = time.monotonic()
+            self._fpga.append((now, np.asarray(values, dtype=np.float64)))
+            while self._fpga and now - self._fpga[0][0] > 1.0:
+                self._fpga.popleft()
+            self._dirty.add("fpga")
+
+    def _zone_picture(self, img: np.ndarray) -> np.ndarray:
+        """The event picture, 3x larger, with the 2x3 grid and the published zone outlined."""
+        img = img.repeat(3, 0).repeat(3, 1)
+        if self._zone in ZONE_NAMES[:6] and self._fpga is not None:
+            img = img.copy()
+            h, w = img.shape[:2]
+            r, c = divmod(ZONE_NAMES.index(self._zone), 3)
+            y0, y1, x0, x1 = r * h // 2, (r + 1) * h // 2 - 1, c * w // 3, (c + 1) * w // 3 - 1
+            for t in range(3):
+                img[y0 + t, x0:x1] = img[y1 - t, x0:x1] = (80, 255, 80)
+                img[y0:y1, x0 + t] = img[y0:y1, x1 - t] = (80, 255, 80)
+        return img
 
     def on_state(self, msg: Float32MultiArray) -> None:
         self._state = unpack_state(np.frombuffer(msg.data, dtype=np.float32))
@@ -203,8 +246,15 @@ class WebViewer(Node):
                 for b, handle in self.handles.items():
                     if b < len(pos):
                         handle.position, handle.wxyz = pos[b], quat[b]
-        if "image" in dirty:
-            self.image.image = self._img
+        if "image" in dirty and self._img is not None:
+            self.image.image = self._zone_picture(self._img)
+        if "zone" in dirty:
+            self.zone_md.content = (f"**{self._zone.upper()}**  ·  published {time.monotonic() - self._zone_t:.1f} s ago"
+                                    "  \nbars: FPGA spikes in the last second")
+        if "fpga" in dirty and self._fpga:
+            counts = sum(v for _, v in self._fpga)
+            for z, n in zip(ZONE_NAMES, counts):
+                self.zone_bars[z].value = float(min(100.0, 100.0 * n / 50.0))
         if "perception" in dirty:
             p = self._perception
             scores = p.get("probs") or p.get("scores") or {p["label"]: p["confidence"]}
