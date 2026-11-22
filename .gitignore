@@ -21,3 +21,8 @@ ros2_ws/src/unitree_go
 /river_tools-*/
 *.whl
 Training/data/
+
+# local clutter
+.DS_Store
+MUJOCO_LOG.TXT
+/Claude outputs/

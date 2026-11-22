@@ -134,7 +134,8 @@ pixi run -e ros ros-follow-sim follow:=true         # both in one, starts by its
 
 pixi run follow-sim --mode look --video out/look.mp4         # look mode, headless
 pixi run -e ros ros-follow-sim follow:=true mode:=look       # look mode over ROS 2
-pixi run -e ros ros-look                                     # look mode alone, keys 1-9 and f
+pixi run -e ros ros-look                                     # look mode alone, keys 1-9 and f; ball zone
+                                                             # from /durance/ball_zone (input:=target: /reflex/target)
 ```
 
 On the real robot (not tried yet):

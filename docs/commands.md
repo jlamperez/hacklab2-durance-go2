@@ -115,8 +115,9 @@ Arguments (defaults in brackets):
   plays first, for calibration), `exclude:='*take_002*'`, `flip_x:=false`, `flip_y:=false`,
   live: `port:=3333`, `kria_host:=root@durance-kria.local`; follow: `follow:=true`,
   `mode:=walk|gaze|look`, `hfov_deg:=90.0`, `vfov_deg:=90.0`, `camera_on_trunk:=false` (look
-  mode; open loop), `zone_top:=0.3`, `min_events:=0.0`, `tracker:=centroid|snn`; snn: `ball_model:=out/models/ball_small_best.pt`, `ball_min_p:=0.55`,
-  `ball_min_pixels:=20`, `fullres_ms:=20.0`; reflex:
+  mode; open loop), `zone_top:=0.3`, `min_events:=0.0`, `tracker:=centroid|snn|fpga|fpga-sim`; snn: `ball_model:=out/models/ball_zones_best.pt`, `ball_min_p:=0.55`,
+  `ball_min_pixels:=20`, `fullres_ms:=30.0`; fpga-sim (stand-in ball_node, `/durance/ball_zone`): the snn
+  arguments plus `ball_vote_window:=5`, `ball_vote_min:=3`; reflex:
   `reaction:=euler|move`, `min_confidence:=0.6`; robot: `viewer:=true`, `scene:=lab`,
   `actuation_delay_ms` [300 walking, 70 reflex]. Details: `docs/events-sim.md`.
 
@@ -139,7 +140,8 @@ are lab numbers.
 | `ros-teleop` | keyboard to `/cmd_vel`; needs `ros-drive` | its terminal: `i` forward, `,` back, `j` / `l` turn, `J` / `L` sideways, `k` stop |
 | `ros-tricks` | keyboard to built-in tricks; `allow_acrobatics:=true` | its terminal: `h` Hello, `s` Sit, `u` RiseSit, `!` Damp |
 | `ros-follow` | follow node: `/reflex/target` to Move / StopMove (or Euler with `mode:=gaze` / `mode:=look`); starts disabled. `max_vx:=0.3`, `max_wz:=0.5`, `max_travel_m:=3.0`, `dry_run:=true` | its terminal: `f` start, `SPACE` stop, `!` Damp, `q` quit |
-| `ros-look` | follow node in look mode: nine trunk gestures (Euler yaw + pitch), never walks; starts disabled. `look_yaw:=0.3`, `look_pitch:=0.2`, `camera_on_trunk:=true`, `invert_pitch:=false`, `dry_run:=true` (`docs/follow.md`) | its terminal: `f` start, `SPACE` stop, `1`-`9` a gesture (numpad layout), `!` Damp, `q` quit |
+| `ros-look` | follow node in look mode: nine trunk gestures (Euler yaw + pitch), never walks; starts disabled. Reads the FPGA ball zone from `/durance/ball_zone` (the Kria's `ball_node`; `input:=target` for `/reflex/target`). `look_yaw:=0.3`, `look_pitch:=0.2`, `camera_on_trunk:=true`, `invert_pitch:=false`, `dry_run:=true` (`docs/follow.md`) | its terminal: `f` start, `SPACE` stop, `1`-`9` a gesture (numpad layout), `!` Damp, `q` quit |
+| `ros-ball-zone-sim` | stand-in for the Kria's `ball_node` on `/durance/ball_zone`, for `ros-look` without the board. `source:=snn` (zones network on `/reflex/events_fullres`, `vote_window:=5`, `vote_min:=3`) or `source:=keys` | with `source:=keys`, its terminal: `7` `8` `9` upper row, `1` `2` `3` lower row, `0` none, `q` quit |
 | `ros-event-camera` | event camera node alone, onto `/reflex/events_window`: `source:=PATH` (replay) or `source:=live`; same arguments as `ros-events-sim` | — |
 | `ros-target` | target node alone: `/reflex/events_window` to `/reflex/target`; `zone_top:=0.0` for a drone | — |
 | `ros-record session:=NAME` | record labelled takes from the live stream | its terminal: `l` `c` `r` `n` start, `SPACE` hit, `x` cancel, `u` undo, `q` quit |

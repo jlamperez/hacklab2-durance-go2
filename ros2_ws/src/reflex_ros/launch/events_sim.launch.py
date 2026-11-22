@@ -5,13 +5,24 @@
     ros2 launch reflex_ros events_sim.launch.py source:=live kria_host:=root@durance-kria.local
     ros2 launch reflex_ros events_sim.launch.py source:=... behavior:=reflex
     ros2 launch reflex_ros events_sim.launch.py source:=data/river/sat_follow2 tracker:=snn
+    ros2 launch reflex_ros events_sim.launch.py tracker:=fpga mode:=look
+    ros2 launch reflex_ros events_sim.launch.py source:=data/river/sat_follow2 tracker:=fpga-sim mode:=look
 
   event_camera (replay or live, 320x320) -> /reflex/events_window
   behavior:=follow   target node -> /reflex/target -> follow node -> Move / StopMove -> walking dog
                      mode:=look  nine trunk gestures (Euler yaw + pitch) instead of walking
                      tracker:=centroid  the target node, no learning (default)
-                     tracker:=snn       ball_target: Theodor's SNN ball detector on /reflex/events_fullres
-                                        (needs PyTorch, riverops and Training/, see reflex/runtime/ball_snn.py)
+                     tracker:=snn       ball_target: Theodor's SNN on /reflex/events_fullres, by default the
+                                        zone classifier (ball_model:=out/models/ball_zones_best.pt: six zones
+                                        or none; the target is the zone's centre). Needs PyTorch, riverops and
+                                        Training/ from feat/training, see reflex/runtime/ball_snn.py
+                     tracker:=fpga      the follow node reads the zone the Kria's ball_node publishes
+                                        on /durance/ball_zone (input:=zone; the zones network on the
+                                        FPGA). No event_camera here: the board reads the camera itself.
+                                        Needs the Kria on the same ROS network: not from Docker on a Mac
+                     tracker:=fpga-sim  as fpga, but ball_zone_sim stands in for the Kria's ball_node: the
+                                        zones network on the CPU over the recording, majority-voted
+                                        (ball_vote_window, ball_vote_min), on /durance/ball_zone
   behavior:=reflex   perception (simple detector) -> /reflex/decision -> behavior node -> posture
 
 Open loop for recordings: the dog's motion does not change what the camera saw, so this
@@ -37,9 +48,12 @@ ARGS = {
     # mode:=look. Open loop: the recorded camera did not turn with the simulated trunk, so the
     # gesture is not added to the target's angle. live with the camera on the real dog: true.
     "vfov_deg": "90.0", "camera_on_trunk": "false",
-    # follow: where the target comes from. snn: ball_model, ball_min_p, ball_min_pixels, fullres_ms
-    "tracker": "centroid", "ball_model": "out/models/ball_small_best.pt", "ball_min_p": "0.55",
-    "ball_min_pixels": "20", "fullres_ms": "20.0",
+    # follow: where the target comes from. snn: ball_model, ball_min_p (P(ball), or P(zone) for the
+    # zones network), ball_min_pixels, fullres_ms (30 ms: zones on sat_follow2, docs/events-sim.md)
+    "tracker": "centroid", "ball_model": "out/models/ball_zones_best.pt", "ball_min_p": "0.55",
+    "ball_min_pixels": "20", "fullres_ms": "30.0",
+    # fpga-sim: the stand-in ball_node's vote, a zone needs ball_vote_min of the last ball_vote_window
+    "ball_vote_window": "5", "ball_vote_min": "3",
     # reflex
     "detector": "simple", "reaction": "euler", "min_confidence": "0.6", "consecutive": "2",
     "move_vy": "0.3", "hold_s": "0.6",
@@ -57,8 +71,10 @@ def setup(context):
     behavior = a["behavior"]
     if behavior not in ("follow", "reflex"):
         raise ValueError(f"behavior:={behavior}: use follow or reflex")
-    if a["tracker"] not in ("centroid", "snn"):
-        raise ValueError(f"tracker:={a['tracker']}: use centroid or snn")
+    if a["tracker"] not in ("centroid", "snn", "fpga", "fpga-sim"):
+        raise ValueError(f"tracker:={a['tracker']}: use centroid, snn, fpga or fpga-sim")
+    if a["tracker"] in ("fpga", "fpga-sim") and behavior != "follow":
+        raise ValueError(f"tracker:={a['tracker']} needs behavior:=follow")
     if behavior == "reflex" and a["detector"] != "simple":
         raise ValueError("behavior:=reflex works with detector:=simple only: the reflex SNN was trained "
                          "on 320x180 windows, this camera gives 320x320")
@@ -75,9 +91,18 @@ def setup(context):
         "robot_only": True, "camera": False, "locomotion": "rl" if walking else "none",
         "viewer": _bool(a["viewer"]), "scene": a["scene"], "actuation_delay_ms": delay}],
         additional_env={"MUJOCO_GL": "glfw"})
-    nodes = [camera, bridge, RegisterEventHandler(OnProcessExit(target_action=bridge, on_exit=[Shutdown()]))]
+    nodes = [bridge, RegisterEventHandler(OnProcessExit(target_action=bridge, on_exit=[Shutdown()]))]
+    if a["tracker"] != "fpga":
+        nodes.insert(0, camera)
     if walking:
-        if a["tracker"] == "snn":
+        if a["tracker"] == "fpga":
+            pass                          # the follow node subscribes to /durance/ball_zone itself
+        elif a["tracker"] == "fpga-sim":
+            nodes.append(Node(package="reflex_ros", executable="ball_zone_sim", output="screen", parameters=[{
+                "source": "snn", "checkpoint": a["ball_model"], "min_p": float(a["ball_min_p"]),
+                "min_pixels": int(a["ball_min_pixels"]), "vote_window": int(a["ball_vote_window"]),
+                "vote_min": int(a["ball_vote_min"])}]))
+        elif a["tracker"] == "snn":
             nodes.append(Node(package="reflex_ros", executable="ball_target", output="screen", parameters=[{
                 "checkpoint": a["ball_model"], "min_p": float(a["ball_min_p"]),
                 "min_pixels": int(a["ball_min_pixels"])}]))
@@ -87,7 +112,8 @@ def setup(context):
         if _bool(a["follow"]):
             nodes.append(Node(package="reflex_ros", executable="follow", output="screen", parameters=[{
                 "mode": a["mode"], "hfov_deg": float(a["hfov_deg"]), "vfov_deg": float(a["vfov_deg"]),
-                "camera_on_trunk": _bool(a["camera_on_trunk"]), "autostart": True}]))
+                "camera_on_trunk": _bool(a["camera_on_trunk"]), "autostart": True,
+                "input": "zone" if a["tracker"] in ("fpga", "fpga-sim") else "target"}]))
     else:
         nodes.append(Node(package="reflex_ros", executable="perception", output="screen", parameters=[{
             "detector": "simple"}]))

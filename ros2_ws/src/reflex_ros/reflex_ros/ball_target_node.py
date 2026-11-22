@@ -2,14 +2,17 @@
 
   subscribes  /reflex/events_fullres  reflex_msgs/EventWindow (1 bin, 320x320, no downsampling;
                                       the event camera publishes it only while someone listens)
-  publishes   /reflex/target          reflex_msgs/Target, source "snn-ball"
-              /reflex/debug/target    std_msgs/String, JSON: P(ball), pixel position, timing
+  publishes   /reflex/target          reflex_msgs/Target, source "snn-ball" or "snn-zones"
+              /reflex/debug/target    std_msgs/String, JSON: P(ball), pixel position or zone,
+                                      spikes per class, timing
 
 Drop-in replacement for the `target` node (centroid tracker): same output, so the follow
-node does not change. The network is Theodor's ball detector from feat/training,
-loaded by reflex/runtime/ball_snn.py. No calibration step.
+node does not change. The network is one of Theodor's ball detectors from feat/training,
+loaded by reflex/runtime/ball_snn.py: the zone classifier (default,
+out/models/ball_zones_best.pt; the target is the centre of one of six zones) or a
+position network. No calibration step.
 
-    ros2 run reflex_ros ball_target --ros-args -p checkpoint:=out/models/ball_small_best.pt
+    ros2 run reflex_ros ball_target --ros-args -p checkpoint:=out/models/ball_zones_best.pt
 
 Runs on the CPU (about 25 ms a frame on 4 arm64 cores; frames with fewer than
 min_pixels event pixels skip the network). The subscription keeps only the
@@ -41,11 +44,15 @@ class BallTargetNode(Node):
         self.tracker = BallSNNTracker(cfg)
         self._warned_window = False
         v = self.tracker.validation
+        self.source = "snn-zones" if self.tracker.zones else "snn-ball"
+        score = (f"; validation median error {v['median']:.0f} px" if "median" in v else
+                 f"; validation balanced accuracy {v['balanced_accuracy']:.0%}" if "balanced_accuracy" in v else "")
         self.get_logger().info(
             f"SNN ball detector {self.tracker.architecture} from {cfg.checkpoint}: trained on "
             f"{self.tracker.window_ms:g} ms windows, {self.tracker.time_steps} time steps, "
-            f"P(ball) >= {cfg.min_p}, >= {cfg.min_pixels} event pixels"
-            + (f"; validation median error {v['median']:.0f} px" if "median" in v else ""))
+            f"{self.tracker.channels} input channel(s), "
+            f"{'P(zone)' if self.tracker.zones else 'P(ball)'} >= {cfg.min_p}, "
+            f">= {cfg.min_pixels} event pixels" + score)
         self.pub = self.create_publisher(Target, "/reflex/target", 10)
         self.debug_pub = self.create_publisher(String, "/reflex/debug/target", 10)
         qos = QoSProfile(depth=1, history=HistoryPolicy.KEEP_LAST, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -61,7 +68,7 @@ class BallTargetNode(Node):
         target = self.tracker.predict(self.tracker.frame(window), t_us)
         out = Target()
         out.header = msg.header
-        out.u, out.v, out.confidence, out.source = float(target.u), float(target.v), float(target.confidence), "snn-ball"
+        out.u, out.v, out.confidence, out.source = float(target.u), float(target.v), float(target.confidence), self.source
         self.pub.publish(out)
         if self.debug_pub.get_subscription_count() > 0:
             self.debug_pub.publish(String(data=json.dumps({

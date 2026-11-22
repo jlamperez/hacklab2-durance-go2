@@ -94,7 +94,7 @@ cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 launch reflex_ros foll
 [feature.ros.tasks.ros-look]
 # Follow node in look mode: nine trunk gestures (Euler yaw + pitch), never walks. Keys 1-9: a gesture
 # by hand (numpad layout), f start, SPACE stop.  pixi run -e ros ros-look dry_run:=true look_yaw:=0.15
-cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros follow --ros-args -p mode:=look $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros follow --ros-args -p mode:=look -p input:=zone $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
 
 [feature.ros.tasks.ros-events-sim]
 # Real events drive the simulated dog: a recording (or the live KV260 camera) -> target/follow
@@ -116,6 +116,12 @@ cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros follow 
 [feature.ros.tasks.ros-target]
 # Target node alone (events -> /reflex/target), e.g. next to the camera on the Kria side.
 cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros target --ros-args $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
+
+[feature.ros.tasks.ros-ball-zone-sim]
+# Stand-in for the Kria's ball_node on /durance/ball_zone, for ros-look without the board.
+#   pixi run -e ros ros-ball-zone-sim source:=keys      (7 8 9 / 1 2 3 a zone, 0 none)
+#   pixi run -e ros ros-ball-zone-sim                   (zones network on /reflex/events_fullres)
+cmd = "bash -c 'source ros2_ws/install/setup.bash && ros2 run reflex_ros ball_zone_sim --ros-args $(for a in \"$@\"; do printf -- \"-p %s \" \"$a\"; done)' --"
 
 [feature.ros.tasks.ros-record]
 # Record labelled clips from the live event stream:  pixi run -e ros ros-record session:=sat_am

@@ -53,6 +53,7 @@ pixi run -e ros ros-follow-sim # simulated dog + camera + scripted ball + target
 pixi run -e ros ros-events-sim # recordings (source:=data/river/...) or live KV260 (source:=live) drive the
                                #   simulated dog; behavior:=follow|reflex, tracker:=centroid|snn (docs/events-sim.md)
 pixi run -e ros ros-follow     # follow node, keyboard: f start, SPACE stop, ! Damp; starts disabled
+pixi run -e ros ros-ball-zone-sim # stand-in for the Kria's ball_node on /durance/ball_zone; source:=keys|snn
 pixi run -e ros ros-tricks     # keyboard for built-in tricks (Hello, Sit, ...); acrobatics off by default
 pixi run -e ros ros-web        # dashboard in the browser (viser), http://localhost:8080; listens only
 pixi run -e ros ros-shell      # shell with the workspace sourced, for ros2 / rqt commands
@@ -103,7 +104,8 @@ Three seams let simulation be swapped for the real thing:
 - Following (`docs/follow.md`): `reflex/runtime/target.py` (the `u, v, confidence` contract and
   the centroid tracker), `reflex/runtime/follow.py` (move-stop-look controller, all safety
   limits), nodes `target` and `follow`. `reflex/runtime/ball_snn.py` + node `ball_target`: Theodor's
-  ball SNN (`Training/` from feat/training, needs riverops) as a second target source, fed by
+  ball SNNs (`Training/` from feat/training, needs riverops; default the zone classifier
+  `out/models/ball_zones_best.pt`, target = zone centre) as a second target source, fed by
   `/reflex/events_fullres` (`tracker:=snn`, docs/events-sim.md).
 - `ros2_ws/src/reflex_ros`: three nodes. `sim_bridge` (MuJoCo behind the robot's and the
   camera's topics, with a configurable actuation delay, scores every shot), `perception`

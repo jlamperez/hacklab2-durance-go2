@@ -1,12 +1,22 @@
 """Follow node: where the target is in, sport-mode requests out. Move, stop, look.
 
-  subscribes  /reflex/target        reflex_msgs/Target   (target node, or the SNN's adapter)
+  subscribes  /reflex/target        reflex_msgs/Target   (target node, or the SNN's adapter), input:=target
+              /durance/ball_zone    std_msgs/String      (the Kria's ball_node: the FPGA zones network),
+                                                         input:=zone. Default of ros-look
   publishes   /api/sport/request    unitree_api/Request  (BalanceStand, Move, StopMove, Pose, Euler, Damp)
               /reflex/debug/follow  std_msgs/String, JSON: state, last target, last command
 
     pixi run -e ros ros-follow                 # walk mode, keyboard in this terminal
     pixi run -e ros ros-follow mode:=gaze      # trunk only (Euler yaw), no walking
-    pixi run -e ros ros-look                   # = mode:=look: nine gestures, Euler yaw + pitch
+    pixi run -e ros ros-look                   # = mode:=look input:=zone: nine gestures, Euler yaw + pitch,
+                                               #   from the FPGA's ball zone on /durance/ball_zone
+    pixi run -e ros ros-look input:=target     # look mode from /reflex/target instead
+
+input:=zone. ball_node publishes upper_left ... lower_right or none, only when the zone
+changes (transient-local). The node keeps the latest and feeds it to the controller at
+zone_rate_hz as the zone's centre (reflex/runtime/zone_target.py) with confidence
+zone_confidence, because the controller counts consecutive sightings. If ball_node leaves
+the graph, the zone counts as "none" (nothing seen) rather than being repeated.
 
 Starts DISABLED. Keys:  f start following   SPACE stop (StopMove, disabled)
                         ! Damp (motors limp, the robot drops: emergency only)   q quit
@@ -27,13 +37,18 @@ import threading
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
 from reflex.runtime import sport_api as api
 from reflex.runtime.follow import FollowConfig, FollowController
 from reflex.runtime.target import Target
-from reflex_msgs.msg import Target as TargetMsg
+from reflex.runtime.zone_target import target_from_zone
+try:
+    from reflex_msgs.msg import Target as TargetMsg
+except ImportError:      # input:=zone needs no reflex_msgs: runs on a board without our build
+    TargetMsg = None
 from unitree_api.msg import Request
 
 # Hard limits: whatever the parameters say, the node never commands more than this.
@@ -83,7 +98,25 @@ class FollowNode(Node):
         self.ctrl = FollowController(cfg)
         self.pub = self.create_publisher(Request, api.SPORT_REQUEST_TOPIC, 10)
         self.debug_pub = self.create_publisher(String, "/reflex/debug/follow", 10)
-        self.create_subscription(TargetMsg, "/reflex/target", self.on_target, 10)
+        self.input = p("input", "target").value
+        if self.input == "zone":
+            self.zone_topic = p("zone_topic", "/durance/ball_zone").value
+            self.zone_confidence = float(p("zone_confidence", 1.0).value)   # ball_node sends no probability
+            self._zone = None
+            self._zone_gone_said = False
+            qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)   # as ball_node publishes
+            self.create_subscription(String, self.zone_topic, self.on_zone, qos)
+            self.create_timer(1.0 / float(p("zone_rate_hz", 20.0).value), self.on_zone_tick)
+            self.source = self.zone_topic
+        elif self.input == "target":
+            if TargetMsg is None:
+                raise RuntimeError("input:=target needs reflex_msgs (build ros2_ws); input:=zone does not")
+            self.create_subscription(TargetMsg, "/reflex/target", self.on_target, 10)
+            self.source = "/reflex/target"
+        else:
+            raise ValueError(f"input:={self.input}: use target or zone")
+        self.get_logger().info(f"targets from {self.source}")
         self.create_service(SetBool, "/reflex/follow/enable", self.on_enable)
         self.create_timer(0.02, self.on_tick)
         self._stamp_us = 0
@@ -144,15 +177,37 @@ class FollowNode(Node):
     # --- input ---------------------------------------------------------------------------
     def on_target(self, msg: TargetMsg) -> None:
         self._stamp_us = msg.header.stamp.sec * 1_000_000 + msg.header.stamp.nanosec // 1000
+        self.feed(Target(float(msg.u), float(msg.v), float(msg.confidence), self._stamp_us))
+
+    def feed(self, target: Target) -> None:
         self._last_target_t, self._silent_warned = self.now(), False
-        target = Target(float(msg.u), float(msg.v), float(msg.confidence), self._stamp_us)
         self.send_all(self.ctrl.update(target, self.now()))
+
+    def on_zone(self, msg: String) -> None:
+        try:
+            target_from_zone(msg.data)
+        except ValueError as e:
+            self.get_logger().warn(str(e))
+            return
+        if msg.data != self._zone:
+            self.get_logger().info(f"ball zone: {msg.data}")
+        self._zone = msg.data
+
+    def on_zone_tick(self) -> None:
+        if self._zone is None:
+            return                           # nothing heard yet: the controller keeps waiting
+        alive = self.count_publishers(self.zone_topic) > 0
+        if not alive and not self._zone_gone_said:
+            self.get_logger().warn(f"no publisher on {self.zone_topic} any more: treating it as 'none'")
+        self._zone_gone_said = not alive
+        self._stamp_us = self.get_clock().now().nanoseconds // 1000
+        self.feed(target_from_zone(self._zone if alive else "none", self._stamp_us, self.zone_confidence))
 
     def on_tick(self) -> None:
         t = self.now()
         if self.ctrl.enabled and self._last_target_t is not None and t - self._last_target_t > 1.0 \
                 and not self._silent_warned:
-            self.get_logger().warn("/reflex/target is silent: no new bursts until it comes back")
+            self.get_logger().warn(f"{self.source} is silent: no new bursts until it comes back")
             self._silent_warned = True
         was = self.ctrl.state
         self.send_all(self.ctrl.update(None, t))
