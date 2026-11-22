@@ -45,8 +45,9 @@ Durance's toolchain has been used off the board: riverops to export the ball det
 riversdk.dev to build its firmware (the full-size network failed in place-and-route, the
 small one built). The small ball detector was loaded on the board's FPGA on 21 Nov. On 22 Nov,
 with Durance's camera client and our adapter merging its two polarity channels, one
-inference came back (9x80x80), then the FPGA stopped answering (`ProxyTimeout`); asked
-Durance (`docs/deploy-fpga.md`).
+inference came back (9x80x80), then the FPGA stopped answering (`ProxyTimeout`). Durance's
+example runs 10/10 on the same board, ours hangs on the first frame after a clean boot: the
+problem is our bitstream (job #35); asked Durance (`docs/deploy-fpga.md`).
 
 | Part | State |
 |---|---|
@@ -62,7 +63,7 @@ Durance (`docs/deploy-fpga.md`).
 | Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov; about 100 takes |
 | Real-camera takes as training data (`capture/` HDF5 -> network windows) | not started: `build-real` still expects the ROS recorder's format |
 | Ball detector (riverops U-Net, `models/ball/`, trained by the team on the Tübingen event-camera ball dataset, branch `feat/training`) | exported from its checkpoint with `PROVENANCE.md`; runs on the PC in the board's integer arithmetic (matches riverops' fixed-point emulation); sees simulated balls when they are close, 2/400 false frames idle; in the ROS loop in simulation (`detector:=ball`, results below). Small network (`models/ball_small`, for the FPGA): trained in float it broke once quantized to int8 (BatchNorm-folded weights saturate; a ball in every empty frame); retraining with quantization-aware training (riverops `prepare_qat`) is in progress, an early checkpoint no longer breaks when quantized but is not trained enough yet |
-| Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | full-size network: failed in place-and-route twice (job #30 and a retry). Small network (`train_ball_small.py`, about 5x fewer weights): generated, job #35, in `models/firmware/kv260_ball_small_job35/`; serves any weights of that architecture. **Deployed on the Kria on 21 Nov** with an early QAT checkpoint: bitstream loaded, server running with our config, port 3333 open. 22 Nov: fed by the real camera through `tools/spleat_merge_proxy.py`, one inference came back, then the FPGA hung (`docs/fpga-run-2026-11-22.md`) |
+| Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | full-size network: failed in place-and-route twice (job #30 and a retry). Small network (`train_ball_small.py`, about 5x fewer weights): generated, job #35, in `models/firmware/kv260_ball_small_job35/`; serves any weights of that architecture. **Deployed on the Kria on 21 Nov** with an early QAT checkpoint: bitstream loaded, server running with our config, port 3333 open. 22 Nov: fed by the real camera through `tools/spleat_merge_proxy.py`, one inference came back, then the FPGA hung; Durance's example works on the same board, so it is our bitstream (`docs/fpga-run-2026-11-22.md`) |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
 | Camera to FPGA on the board (Durance's `despot_send_and_forget` + `tools/spleat_merge_proxy.py`) | runs: frames accepted by the server, one inference back, then the FPGA hung (`docs/fpga-run-2026-11-22.md`) |
 | Our nodes driving the real Go2 | not started |

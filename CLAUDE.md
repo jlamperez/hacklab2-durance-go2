@@ -14,8 +14,8 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
   for recording only (`capture/`, about 100 takes, camera on a stand), and on 22 Nov to feed the
   FPGA (the team also ran Durance's own example model on the board). The small ball detector
   was loaded on the FPGA on 21 Nov; on 22 Nov, fed by the real camera through
-  `tools/spleat_merge_proxy.py`, one inference came back, then the FPGA hung
-  (`docs/fpga-run-2026-11-22.md`). Keep the status table in `README.md` honest.
+  `tools/spleat_merge_proxy.py`, one inference came back, then the FPGA hung; Durance's example
+  runs on the same board, so it is our bitstream (`docs/fpga-run-2026-11-22.md`). Keep the status table in `README.md` honest.
 - **Never write a Unitree `api_id` from memory.** Each one is checked against
   `ros2_sport_client` in `unitree_ros2` and recorded with its source file and commit.
 - Keep the model small and in plain PyTorch. It has to be ported to Durance's RIVERLib,

@@ -191,8 +191,10 @@ their places and restart the two services.
   ProxyTimeout` (msg_id=1). With 40 frames in flight the server then refused everything
   ("pipeline is already full"). After reloading the bitstream and with one frame in flight
   (`--max-inflight 1`), the first frame got no reply in 20 s. So far: one inference out of
-  two attempts, then the hardware hangs. Suspects: the 9x80x80 spatial output or the
-  320x320 input (Durance's example is 2x80x80 in, 5x1x1 out). To ask Durance.
+  two attempts, then the hardware hangs. Control on the same board: Durance's example
+  answers 10/10, ours hangs on the first frame after a clean boot, even an empty one. So
+  it is our bitstream (job #35). Suspects: the 9x80x80 spatial output or the 320x320 input
+  (Durance's example is 2x80x80 in, 5x1x1 out). Asked Durance.
 - **What the payload holds**: spike counts summed over the time steps (what the readout
   expects), spikes of one step, or potentials. `spleat-read` assumes the first.
 - **Whether the server sends a 9x80x80 output** (230 kB per message). Durance's own client

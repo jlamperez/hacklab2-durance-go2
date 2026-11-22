@@ -35,16 +35,19 @@ Some are partly answered by reading their KV260 microSD image on 21 Nov
 
 Logs: `docs/fpga-run-2026-11-22.md`.
 
-> Our small U-Net (job #35, input 1x320x320, output 9x80x80) on SPLEAT: the server accepts
-> the frames, the first inference after loading the bitstream returned once (latency
-> 219331), then the next one fails with `error reading through dma: rx hardware status:
-> ProxyTimeout`. After reloading, the first frame never returns. Are spatial outputs
-> (9x80x80) or 320x320 inputs supported? Is there a limit on output size or a reset needed
-> between frames?
+> Your example model runs fine on our KV260: 10 frames out of 10, 0.5-30 ms each. Our
+> small U-Net (firmware job #35, input 1x320x320, output 9x80x80, weights Q1.7, potentials
+> Q4.12) hangs: after a clean boot, even an all-zero frame never comes back, and after
+> about 60 s backward-server logs `error reading through dma: rx hardware status:
+> ProxyTimeout` (kernel: `DMA timed out`). The frame goes out in 4 DMA transfers, 2 receive
+> transfers complete, then nothing. Once, on the very first run, one inference did come
+> back (latency 219331 us). Are spatial outputs (9x80x80) or 320x320 inputs supported by
+> SPLEAT? Is there a size limit, or something in the model graph that stops the
+> accelerator from ending the inference?
 
-Also worth asking: the unit of `latency`, and whether `despot_send_and_forget` can send one
-channel (it builds 2 polarities, fixed at compile time; we merge them in
-`tools/spleat_merge_proxy.py`).
+Also worth asking: whether `despot_send_and_forget` can send one channel (it builds 2
+polarities, fixed at compile time; we merge them in `tools/spleat_merge_proxy.py`).
+Answered by our own test: `latency` is in microseconds.
 
 Answer: not yet.
 
