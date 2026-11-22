@@ -91,6 +91,16 @@ on Durance's card stays.
 
 ## Steps
 
+**Before anything with the camera, after every boot of the board:**
+
+```bash
+ssh root@192.168.77.1 despot_test_camera    # must end in "Camera test successfully passed"
+```
+
+Without it the sensor's supplies are switched off about 30 s after boot (`dmesg`: `vadd:
+disabling`, `vddd1: disabling`) and despot connects to the server but sends no frames
+(22 Nov, `docs/fpga-zones3-2026-11-22.md` section 9).
+
 1. **Export the checkpoint** (needs `third_party/riverops-0.2.0-py3-none-any.whl`):
 
    ```bash

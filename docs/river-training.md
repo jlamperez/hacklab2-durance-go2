@@ -10,7 +10,7 @@ Status (22 Nov): run with the real riverops 0.2.0 (CPU) on the real GenX320 reco
 21 Nov, with no code change except the `weights.txt` encoding. The result, `models/zones3`
 (3 zones, firmware job #44), **runs on the KV260's FPGA** and matches the fixed-point
 emulation there (`docs/fpga-zones3-2026-11-22.md`). Commands, data and validation:
-`models/zones3/PROVENANCE.md`. Not yet fed by the real camera on the board.
+`models/zones3/PROVENANCE.md`. Fed by the real camera on the board: runs at 100 frames per second, answers `none` with no ball in view; not yet tried with a ball.
 
 Our capture sessions (`capture/`, one folder per session with `takes.csv`) are linked into
 the layout below by `tools/river_layout.py`. Its "sessions" are `train` and `val` splits,
