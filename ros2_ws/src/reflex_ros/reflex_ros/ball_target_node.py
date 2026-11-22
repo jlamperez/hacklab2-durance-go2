@@ -23,7 +23,7 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
-from reflex.runtime.ball_snn import BallSNNConfig, BallSNNTracker, frame_from_window
+from reflex.runtime.ball_snn import BallSNNConfig, BallSNNTracker
 from reflex_msgs.msg import EventWindow, Target
 
 
@@ -58,7 +58,7 @@ class BallTargetNode(Node):
             self._warned_window = True
         window = np.frombuffer(bytes(msg.data), dtype=np.uint8).reshape(msg.n_bins, msg.channels, msg.height, msg.width)
         t_us = msg.header.stamp.sec * 1_000_000 + msg.header.stamp.nanosec // 1000
-        target = self.tracker.predict(frame_from_window(window), t_us)
+        target = self.tracker.predict(self.tracker.frame(window), t_us)
         out = Target()
         out.header = msg.header
         out.u, out.v, out.confidence, out.source = float(target.u), float(target.v), float(target.confidence), "snn-ball"

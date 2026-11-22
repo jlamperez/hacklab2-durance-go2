@@ -90,6 +90,12 @@ pixi run -e sim-arm ros-events-sim source:=data/river/sat_follow2 tracker:=snn v
 event camera also publishes `/reflex/events_fullres` (one bin, the last `fullres_ms`,
 only while someone subscribes). Needs PyTorch, riverops (installed, or the unpacked wheel
 in `riverops-0/`) and `Training/` (`git checkout origin/feat/training -- Training`).
+
+Checkpoints and `Training/` must match. Since feat/training f2bd8bc (22 Nov) the small
+network takes two polarity channels (`unet-position-small-polarity-v1`); `ball_snn.py`
+feeds those, and still feeds one merged channel to `unet-position-small-v1`. An older
+`small-v1` checkpoint no longer loads with the current `Training/train_ball_small.py`:
+retrain it, or use that script from 58a8695. The error message says which.
 Arguments: `ball_model:=PATH`, `ball_min_p:=0.55`, `ball_min_pixels:=20`, `fullres_ms:=20.0`.
 
 The network was trained on 2 ms windows of a 1280x720 benchmark camera. Our recordings

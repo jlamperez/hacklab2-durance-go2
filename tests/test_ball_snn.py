@@ -41,6 +41,17 @@ def test_frame_is_binary_and_ignores_polarity_and_bins():
     assert f.sum() == 2 and f[10, 20] == 1 and f[100, 200] == 1
 
 
+def test_polarity_frame_keeps_one_channel_per_polarity():
+    w = np.zeros((3, 2, 320, 320), dtype=np.uint8)
+    w[0, 0, 10, 20] = 4
+    w[2, 1, 10, 20] = 1
+    w[1, 1, 100, 200] = 7
+    f = frame_from_window(w, polarity=True)
+    assert f.shape == (2, 320, 320) and f.dtype == np.uint8
+    assert f[0].sum() == 1 and f[0, 10, 20] == 1
+    assert f[1].sum() == 2 and f[1, 10, 20] == 1 and f[1, 100, 200] == 1
+
+
 def _model_available() -> bool:
     if importlib.util.find_spec("torch") is None:
         return False

@@ -7,7 +7,10 @@ with them and turns the output into a `Target`, so the two cannot drift apart.
 What the network expects (from the training scripts):
 
   input    320x320, 1 where any event fired in the last `window_ms` (stored in the
-           checkpoint, 2 ms for ball_small_best.pt), polarity ignored. The same frame
+           checkpoint, 2 ms for ball_small_best.pt). Polarity ignored by the older
+           checkpoints (`unet-position-small-v1`, one channel); kept by the newer
+           `unet-position-small-polarity-v1` (feat/training f2bd8bc): two channels,
+           indexed by the camera's raw p (0, 1), as `make_window` does. The same frame
            is fed for each of the checkpoint's `time_steps`.
   output   (x, y) in sensor pixels and P(ball), from an 80x80 heatmap with in-cell
            offsets plus a learned "no ball" class.
@@ -58,6 +61,7 @@ REPO = Path(__file__).resolve().parents[2]
 # Architecture name stored in the checkpoint -> the training script that defines it.
 SCRIPTS = {
     "unet-position-small-v1": "train_ball_small",
+    "unet-position-small-polarity-v1": "train_ball_small",
     "unet-position-v2": "train_ball_size",
 }
 
@@ -88,8 +92,13 @@ def _add_to_path(directory: Path) -> None:
         sys.path.insert(0, str(directory))
 
 
-def frame_from_window(window: np.ndarray) -> np.ndarray:
-    """(T, C, H, W) event counts -> (H, W) uint8, 1 where any event fired: the network input."""
+def frame_from_window(window: np.ndarray, polarity: bool = False) -> np.ndarray:
+    """(T, 2, H, W) event counts -> the network input, 1 where any event fired.
+
+    polarity=False: (H, W), both polarities merged. polarity=True: (2, H, W), one channel
+    per polarity value. Time bins are always merged."""
+    if polarity:
+        return (window.sum(axis=0) > 0).astype(np.uint8)
     return (window.reshape(-1, *window.shape[-2:]).sum(axis=0) > 0).astype(np.uint8)
 
 
@@ -123,29 +132,41 @@ class BallSNNTracker:
         _add_to_path(training)
         importlib.import_module(SCRIPTS[arch])     # the small script patches train_ball_size on import
         self._size = importlib.import_module("train_ball_size")
+        if self._size.ARCHITECTURE != arch:
+            raise ValueError(
+                f"{path} is a {arch!r} checkpoint, but {training / SCRIPTS[arch]}.py now builds "
+                f"{self._size.ARCHITECTURE!r}. Retrain it with that script, or load it with the "
+                f"Training/ it was made with (before feat/training f2bd8bc: "
+                f"git show 58a8695:Training/train_ball_small.py).")
         self.model, self.time_steps = self._size.load_model(path, cfg.device)
         self.model.eval()
         self.sensor = int(info["sensor"])
         self.window_ms = float(info.get("window_ms", 1.0))
         self.architecture = arch
+        self.channels = 2 if "polarity" in arch else 1
         self.validation = info.get("validation_metrics", {})
         self._torch = torch
         self.last: dict = {}     # details of the last prediction, for the debug topic
 
+    def frame(self, window: np.ndarray) -> np.ndarray:
+        """(T, 2, H, W) window -> the input this checkpoint wants."""
+        return frame_from_window(window, polarity=self.channels == 2)
+
     def predict(self, frame: np.ndarray, t_us: int = 0) -> Target:
-        torch, s = self._torch, self.sensor
-        if frame.shape != (s, s):
-            raise ValueError(f"frame is {frame.shape}, the network wants ({s}, {s})")
+        torch, s, c = self._torch, self.sensor, self.channels
+        want = (s, s) if c == 1 else (c, s, s)
+        if frame.shape != want:
+            raise ValueError(f"frame is {frame.shape}, the network wants {want}")
         if self.cfg.zone_top > 0:
             frame = frame.copy()
-            frame[:int(self.cfg.zone_top * s)] = 0
-        pixels = int(np.count_nonzero(frame))
+            frame[..., :int(self.cfg.zone_top * s), :] = 0
+        pixels = int(np.count_nonzero(frame.reshape(-1, s, s).any(axis=0)))
         if pixels < self.cfg.min_pixels:
             self.last = {"pixels": pixels, "p_ball": None, "ms": 0.0}
             return no_target(t_us)
         start = time.perf_counter()
         x = torch.from_numpy(np.ascontiguousarray(frame > 0, dtype=np.float32)).to(self.cfg.device)
-        x = x.view(1, 1, 1, s, s).expand(1, self.time_steps, 1, s, s)
+        x = x.view(1, 1, c, s, s).expand(1, self.time_steps, c, s, s)
         with torch.no_grad():
             counts = self.model(x)
             px, py, p = self._size.decode(counts, self.time_steps, self.model.logit_scales(),
@@ -185,7 +206,7 @@ def main() -> None:
         ends = np.arange(int(ev["t"][0] + window_ms * 1000), int(ev["t"][-1]), int(a.step_ms * 1000))
         found, us, vs, ms = 0, [], [], []
         for i, t_end in enumerate(ends):
-            target = tracker.predict(frame_from_window(make_window(ev, int(t_end), wcfg)), int(t_end))
+            target = tracker.predict(tracker.frame(make_window(ev, int(t_end), wcfg)), int(t_end))
             if tracker.last["p_ball"] is not None:
                 ms.append(tracker.last["ms"])
             if target.found:
