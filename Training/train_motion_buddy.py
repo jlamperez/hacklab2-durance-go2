@@ -46,7 +46,7 @@ X_BINS = CAMERA_WIDTH
 Y_BINS = CAMERA_HEIGHT
 INPUT_SIZE = CAMERA_WIDTH
 ACC_TIME = 1000
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 REPO_URL = "https://github.com/cogsys-tuebingen/snn-edge-benchmark.git"
 DATASET_ROOT = Path(os.environ.get("SNN_EDGE_ROOT", "data/snn-edge-benchmark"))
@@ -102,25 +102,32 @@ def _column(handle, key):
     return np.squeeze(np.asarray(handle[key]))
 
 
-def _window_pixels(xs, ys):
-    """Unique sensor pixels hit by one 1 ms event window, as (y, x)."""
-    xi = np.floor(xs).astype(np.int32)
-    yi = np.floor(ys).astype(np.int32)
+def _window_pixels(xs, ys, ps):
+    """Unique (pixel, polarity) pairs hit by one event window, as (y, x, p).
+
+    p is 1 for ON events (polarity > 0) and 0 for OFF events, whether the
+    recording stores polarity as 0/1 or -1/1.
+    """
+    xi = np.floor(xs).astype(np.int64)
+    yi = np.floor(ys).astype(np.int64)
     selected = (
         (xi >= 0) & (xi < CAMERA_WIDTH) & (yi >= 0) & (yi < CAMERA_HEIGHT)
     )
     if not np.any(selected):
-        return np.zeros((0, 2), dtype=np.uint16)
-    packed = yi[selected] * CAMERA_WIDTH + xi[selected]
-    packed = np.unique(packed)
-    return np.stack((packed // CAMERA_WIDTH, packed % CAMERA_WIDTH), axis=1).astype(np.uint16)
+        return np.zeros((0, 3), dtype=np.uint16)
+    on = (np.asarray(ps)[selected] > 0).astype(np.int64)
+    packed = np.unique((yi[selected] * CAMERA_WIDTH + xi[selected]) * 2 + on)
+    pixel = packed // 2
+    return np.stack(
+        (pixel // CAMERA_WIDTH, pixel % CAMERA_WIDTH, packed % 2), axis=1,
+    ).astype(np.uint16)
 
 
 def recording_to_samples(path):
     """Build full-sensor event lists and camera-pixel (x, y) labels for one file.
 
-    Every event in the 1 ms before a label is kept. Nothing is cropped.
-    Polarity is ignored.
+    Every event in the ACC_TIME before a label is kept. Nothing is cropped.
+    Events are (y, x, p) with p = 1 for ON and 0 for OFF.
     """
     with h5py.File(path, "r") as handle:
         gt_x = _column(handle, "gt_x").astype(np.float64)
@@ -129,8 +136,9 @@ def recording_to_samples(path):
         ev_x = _column(handle, "event_x").astype(np.float64)
         ev_y = _column(handle, "event_y").astype(np.float64)
         ev_t = _column(handle, "event_t").astype(np.float64)
+        ev_p = _column(handle, "event_p")
 
-    empty_events = np.zeros((0, 2), dtype=np.uint16)
+    empty_events = np.zeros((0, 3), dtype=np.uint16)
     empty_offsets = np.zeros(1, dtype=np.int64)
     empty_xy = np.zeros((0, 2), dtype=np.float32)
     if gt_t.size == 0:
@@ -149,11 +157,12 @@ def recording_to_samples(path):
     if ev_t.size:
         event_order = np.argsort(ev_t, kind="mergesort")
         ev_x, ev_y, ev_t = ev_x[event_order], ev_y[event_order], ev_t[event_order]
+        ev_p = ev_p[event_order]
     starts = np.searchsorted(ev_t, gt_t - ACC_TIME, side="left")
     ends = np.searchsorted(ev_t, gt_t, side="right")
 
     pixels = [
-        _window_pixels(ev_x[start:end], ev_y[start:end])
+        _window_pixels(ev_x[start:end], ev_y[start:end], ev_p[start:end])
         for start, end in zip(starts, ends)
     ]
     offsets = np.zeros(len(pixels) + 1, dtype=np.int64)
@@ -192,7 +201,7 @@ def _merge_chunks(chunks):
         positions.append(file_xy)
     merged_events = (
         np.concatenate(events, axis=0)
-        if cursor else np.zeros((0, 2), dtype=np.uint16)
+        if cursor else np.zeros((0, 3), dtype=np.uint16)
     )
     return (
         merged_events,
@@ -394,7 +403,7 @@ def run_epoch(model, loader, device, optimizer=None, log_prefix=""):
 
 def save_sample_figure(dataset, path):
     sequence, position = dataset[0]
-    frame = sequence[0, 0, :CAMERA_HEIGHT, :CAMERA_WIDTH].numpy()
+    frame = sequence[0].amax(dim=0)[:CAMERA_HEIGHT, :CAMERA_WIDTH].numpy()
     xy = position.numpy()
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.imshow(frame, cmap="gray", vmin=0, vmax=1, aspect="equal")

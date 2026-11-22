@@ -105,10 +105,14 @@ TRAIN_INT8 = False
 
 
 def window_radius(pixels, xy):
-    """Event-blob radius around ``xy`` for (y, x) ``pixels``, in their units; NaN if too few."""
+    """Event-blob radius around ``xy`` for (y, x[, p]) ``pixels``, in their units; NaN if too few.
+
+    Each pixel counts once, whatever its polarities.
+    """
     if not len(pixels):
         return np.nan
-    distance = np.hypot(pixels[:, 1] - xy[0], pixels[:, 0] - xy[1])
+    packed = np.unique(pixels[:, 0].astype(np.int64) * 65536 + pixels[:, 1].astype(np.int64))
+    distance = np.hypot(packed % 65536 - xy[0], packed // 65536 - xy[1])
     ring = np.count_nonzero((distance >= RADIUS_SEARCH) & (distance < 2 * RADIUS_SEARCH))
     density = ring / (3 * np.pi * RADIUS_SEARCH ** 2)
     radii = np.arange(1, RADIUS_SEARCH + 1, dtype=np.float64)
@@ -276,7 +280,7 @@ def load_no_ball(folders, step_ms, window_ms):
     for path in paths:
         fast.check_hdf5(path)
         windows = fast.recording_dataset(path, step_ms * 1000.0, window_ms * 1000.0, False)
-        width, height = fast.read_recording(path)[3:5]
+        width, height = fast.read_recording(path)[4:6]
         nonempty = np.flatnonzero(np.diff(windows.offsets) > 0)
         split = int(round(len(nonempty) * (1.0 - NO_BALL_VALIDATION)))
         index = len(recordings)
@@ -842,7 +846,7 @@ def export_checkpoint(checkpoint_path):
         f"Exporting {checkpoint_path}: epoch {checkpoint['epoch']}, "
         f"validation median error {checkpoint['validation_error']:.2f} px"
     )
-    export_model(model, torch.zeros(time_steps, 1, SENSOR, SENSOR), device)
+    export_model(model, torch.zeros(time_steps, fast.INPUT_CHANNELS, SENSOR, SENSOR), device)
 
 
 def measured_radii(dataset, predicted):
@@ -856,7 +860,7 @@ def measured_radii(dataset, predicted):
         return np.array([float(dataset[i][1][2]) for i in range(len(dataset))])
     raw = []
     for index in range(len(dataset)):
-        flat = dataset[index][0].numpy()
+        flat = dataset[index][0].numpy() % (SENSOR * SENSOR)
         pixels = np.stack((flat // SENSOR, flat % SENSOR), axis=1)
         raw.append(window_radius(pixels, predicted[index, :2]))
     return smooth_radii(np.array(raw, dtype=np.float64), [len(raw)])
