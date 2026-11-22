@@ -1,0 +1,20 @@
+{
+  "time_steps": 4,
+  "classes": [
+    "upper_left",
+    "upper_middle",
+    "upper_right",
+    "lower_left",
+    "lower_middle",
+    "lower_right",
+    "none"
+  ],
+  "zones": {
+    "rows": 2,
+    "columns": 3,
+    "sensor": 320
+  },
+  "logit_scale": 8.227745056152344,
+  "logits": "spike count / time_steps * logit_scale",
+  "decision": "argmax of the logits; no spikes at all -> none"
+}

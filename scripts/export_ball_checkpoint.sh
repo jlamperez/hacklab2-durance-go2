@@ -89,10 +89,21 @@ window = ck.get("window_ms")
 print(f"- architecture: `{ck.get('architecture')}`, epoch {ck.get('epoch')}, time steps {ck.get('time_steps')}")
 print(f"- event window per frame: {window:g} ms" if window is not None else
       "- event window per frame: not stored in the checkpoint; the training code then assumes 1 ms")
-print(f"- validation: median error {ck.get('validation_error', float('nan')):.2f} px, "
-      f"score {ck.get('validation_score', float('nan')):.3f}, found {m.get('found', float('nan')):.3f}, "
-      f"false alarms {m.get('false_alarms', float('nan')):.3f} "
-      f"({m.get('ball_frames')} ball / {m.get('no_ball_frames')} no-ball frames)")
+if "classes" in ck:      # zone classifier (train_ball_zones.py)
+    recall = ", ".join(f"{k} {v:.3f}" for k, v in m.get("recall", {}).items())
+    frames = ", ".join(f"{k} {v}" for k, v in m.get("frames", {}).items())
+    print(f"- classes: {', '.join(ck['classes'])}")
+    print(f"- validation: balanced accuracy {m.get('balanced_accuracy', float('nan')):.3f}, "
+          f"accuracy {m.get('accuracy', float('nan')):.3f}, loss {m.get('loss', float('nan')):.3f}")
+    print(f"- recall per class: {recall}")
+    print(f"- validation frames per class: {frames}")
+else:                   # position heatmap (train_ball_size.py, train_ball_small.py)
+    print(f"- validation: median error {ck.get('validation_error', float('nan')):.2f} px, "
+          f"score {ck.get('validation_score', float('nan')):.3f}, found {m.get('found', float('nan')):.3f}, "
+          f"false alarms {m.get('false_alarms', float('nan')):.3f} "
+          f"({m.get('ball_frames')} ball / {m.get('no_ball_frames')} no-ball frames)")
+if "train_int8" in ck:
+    print(f"- int8 fake-quantized training (QAT): {ck['train_int8']}")
 EOF
 )
 VERSIONS=$(python -c "
@@ -138,8 +149,8 @@ $CKPT_INFO
 | \`$CKPT_NAME\` | the trained model (float weights, BatchNorm, readout parameters, metrics, event window) | stays here; source of everything else |
 | \`${PREFIX}_model.json\` | River Model Graph (\`export_for_river\`) | riversdk.dev firmware job -> bitstream; input of \`spleat-bundle\` |
 | \`${PREFIX}_parameters.json\` | BatchNorm folded, fixed point (\`export_params\`) | input of \`spleat-bundle\` |
-| \`${PREFIX}_parameters.txt\` | the same values, one per line | is \`/root/weights.txt\` on the board |
-| \`${PREFIX}_readout.json\` | logit scales, no-ball logit, channel layout | off-chip decoding of the network output |
+| \`${PREFIX}_parameters.txt\` | the same values, one per line, signed as riverops writes them | not for the board: \`spleat-bundle\` writes \`weights.txt\` in two's complement (\`docs/fpga-zones3-2026-11-22.md\`) |
+| \`${PREFIX}_readout.json\` | readout constants (scales, classes or channel layout) | off-chip decoding of the network output |
 | \`export.log\` | output of the export command | stays here |
 
 Board files (\`weights.txt\`, \`config.yaml\`, \`metavision_camera.json\`):

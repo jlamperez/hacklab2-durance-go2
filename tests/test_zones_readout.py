@@ -58,3 +58,30 @@ def test_spleat_read_decodes_saved_board_messages(tmp_path, capsys):
     # after 10 frames: none 5, left 3, center 3, right 1 -> none
     assert "[none 5 left 3 center 3 right 1] (window 10/20)" in lines[-1]
     assert "-> NONE" in lines[-1]
+
+
+BALL_NAMES = ["upper_left", "upper_middle", "upper_right", "lower_left", "lower_middle",
+              "lower_right", "none"]
+
+
+def test_none_last_ties_and_empty_frames_go_to_none():
+    r = ZonesReadout(BALL_NAMES, readout=4)
+    assert r.none_index == 6
+    assert r.push([0] * 7).label == "none"                            # no spikes at all
+    assert r.push([0, 0, 0, 1, 0, 0, 1]).label == "none"              # tie with none
+    assert r.push([0, 0, 0, 1, 0, 0, 0]).label == "lower_left"        # 2 > 1
+
+
+def test_from_model_dir_reads_a_riverops_readout_json(tmp_path):
+    (tmp_path / "ball_zones_readout.json").write_text(json.dumps(
+        {"time_steps": 4, "classes": BALL_NAMES, "zones": {"rows": 2, "columns": 3}}))
+    r = ZonesReadout.from_model_dir(tmp_path)
+    assert r.names == BALL_NAMES and r.readout == 4 and r.none_index == 6
+    assert ZonesReadout.from_model_dir(tmp_path, readout=12).readout == 12
+
+
+def test_reflex_label_maps_columns():
+    from reflex.runtime.zones_readout import reflex_label
+    assert [reflex_label(n) for n in BALL_NAMES] == ["left", "center", "right", "left", "center",
+                                                     "right", "none"]
+    assert [reflex_label(n) for n in NAMES] == NAMES
