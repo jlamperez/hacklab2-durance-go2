@@ -4,6 +4,7 @@
     pixi run spleat-read --host durance-kria.local --ball-dir models/ball_small --count 50
     pixi run spleat-read --save out/spleat_capture.bin   # also keep every message as received
     pixi run spleat-read --zones-dir models/zones3       # target-zone SNN: none/left/center/right
+    pixi run spleat-read --zones-dir models/ball_v3      # ball zones: 2 rows x 3 columns + none
 
 It only reads: the server pushes one message per inference to every connected client
 (Durance's gesture_node never sends anything). The camera client on the board
@@ -205,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--zones-dir", type=Path,
                     help="target-zone SNN (e.g. models/zones3): read its meta.json and config.yaml, "
                          "print the winning zone over the last `readout` frames (no ball decoding)")
+    ap.add_argument("--readout", type=int, default=0,
+                    help="with --zones-dir: frames summed per decision (0: the model folder's value)")
     ap.add_argument("--margin", type=float, default=0.0,
                     help="with --zones-dir: a zone must beat none by this many spikes (0: as trained)")
     ap.add_argument("--count", type=int, default=0, help="stop after N messages (0: until Ctrl+C)")
@@ -217,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     zones = None
     if args.zones_dir:
         from reflex.runtime.zones_readout import ZonesReadout
-        zones = ZonesReadout.from_model_dir(args.zones_dir, args.margin)
+        zones = ZonesReadout.from_model_dir(args.zones_dir, args.margin, args.readout)
         args.config, args.ball_dir = args.zones_dir / "config.yaml", Path("")
     shape = server_shape(args.config)
     readout, found = None, []

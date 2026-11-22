@@ -1,7 +1,8 @@
 """FPGA perception node: the target-zone SNN's output from SPLEAT, as reflex decisions.
 
   reads       TCP host:port (spleat-server / backward-server on the Kria, default 127.0.0.1:3333):
-              one message per camera frame, the network's output spikes (4x1x1 for models/zones3)
+              one message per camera frame, the network's output spikes (4x1x1 for models/zones3,
+              7x1x1 for models/ball_v3)
   publishes   /reflex/decision          reflex_msgs/ReflexDecision, one per FPGA message
               /reflex/debug/fpga        std_msgs/String, JSON: values, window counts, latency
 
@@ -11,12 +12,17 @@ Durance's gesture_node. The readout (reflex/runtime/zones_readout.py) sums each 
 spikes over the last `readout` frames and takes the most, ties to none: the rule the network
 was trained and validated with.
 
+The winning class is mapped to the behavior node's labels by column (`reflex_label`):
+upper_left / lower_left -> left, *_middle -> center, *_right -> right. zones3's names pass
+unchanged. The class name itself is in /reflex/debug/fpga.
+
 confidence = the winner's spikes in the window / readout (the share of frames it fired in).
 On 22 Nov, with balls thrown past the camera, zone decisions reached 0.5-0.55; the behavior
 node's min_confidence must sit below that (the board launch file sets it). Not validated.
 
-Parameters: host, port, model_dir (meta.json + config.yaml of the deployed network),
-margin (a zone must beat none by this many spikes), reconnect_s.
+Parameters: host, port, model_dir (meta.json or *_readout.json, + config.yaml of the deployed
+network), readout (frames per decision, 0: the model folder's value), margin (a zone must beat
+none by this many spikes), reconnect_s.
 """
 from __future__ import annotations
 
@@ -31,7 +37,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 from reflex.runtime.spleat_client import ProtocolError, parse_message, read_message, server_shape
-from reflex.runtime.zones_readout import ZonesReadout
+from reflex.runtime.zones_readout import ZonesReadout, reflex_label
 from reflex_msgs.msg import ReflexDecision
 
 
@@ -42,7 +48,8 @@ class FpgaPerceptionNode(Node):
         self.host = p("host", "127.0.0.1").value
         self.port = int(p("port", 3333).value)
         model_dir = Path(p("model_dir", "models/zones3").value)
-        self.readout = ZonesReadout.from_model_dir(model_dir, float(p("margin", 0.0).value))
+        self.readout = ZonesReadout.from_model_dir(model_dir, float(p("margin", 0.0).value),
+                                                   int(p("readout", 0).value))
         self.shape = server_shape(model_dir / "config.yaml")
         self.reconnect_s = float(p("reconnect_s", 1.0).value)
         self.pub = self.create_publisher(ReflexDecision, "/reflex/decision", 10)
@@ -86,7 +93,7 @@ class FpgaPerceptionNode(Node):
         out = ReflexDecision()
         out.header.stamp = self.get_clock().now().to_msg()
         out.header.frame_id = "fpga"
-        out.label = d.label
+        out.label = reflex_label(d.label)
         out.confidence = float(d.counts[d.index] / self.readout.readout)
         out.detector = "fpga_zones"
         latency = m.get("latency")
@@ -97,9 +104,9 @@ class FpgaPerceptionNode(Node):
             self.debug_pub.publish(String(data=json.dumps({
                 "id": m.get("id"), "values": [float(v) for v in m["values"].reshape(-1)],
                 "counts": {n: int(c) for n, c in zip(self.readout.names, d.counts)},
-                "label": d.label, "confidence": round(out.confidence, 3),
+                "class": d.label, "label": out.label, "confidence": round(out.confidence, 3),
                 "latency_us": latency, "frames": d.frames})))
-        if d.index != 0:
+        if d.index != self.readout.none_index:
             self.get_logger().info(self.readout.format(d), throttle_duration_sec=0.2)
 
     def destroy_node(self):

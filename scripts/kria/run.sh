@@ -4,6 +4,8 @@
 #   /opt/reflex/run.sh robot:=sim                   # the MuJoCo dog on the laptop is the robot
 #   /opt/reflex/run.sh robot:=real                  # the real Go2, behavior DISABLED (logs only)
 #   /opt/reflex/run.sh robot:=real enabled:=true    # the real Go2, moving
+#   /opt/reflex/run.sh robot:=sim model:=ball_v3    # network: zones3 (default) or ball_v3; it must
+#                                                   # be the one deployed on the FPGA
 #
 # Arguments go to `ros2 launch reflex_ros kria.launch.py` (see that file).
 # Installed by scripts/kria/deploy.sh. Needs Durance's runtime in /opt/go2-* for unitree_api.
@@ -46,4 +48,18 @@ source "$root/install/local_setup.bash"
 export PYTHONPATH="$root:$PYTHONPATH"
 echo "unitree_api from $go2, reflex from $root"
 
-exec ros2 launch reflex_ros kria.launch.py model_dir:="$root/models/zones3" "$@"
+# 4. Which network's readout: model:=NAME -> $root/models/NAME (zones3 by default).
+model=zones3 args=()
+for a in "$@"; do
+    case "$a" in model:=*) model=${a#model:=} ;; *) args+=("$a") ;; esac
+done
+[ -d "$root/models/$model" ] || { echo "no $root/models/$model" >&2; exit 1; }
+want_out=$(sed -n '/^outputs:/,/^[a-z]/s/^ *channels: *//p' "$root/models/$model/config.yaml")
+have_out=$(sed -n '/^outputs:/,/^[a-z]/s/^ *channels: *//p' "$cfg")
+if [ "$want_out" != "$have_out" ]; then
+    echo "model:=$model has $want_out outputs, the FPGA's config.yaml has $have_out: deploy that model first" >&2
+    exit 1
+fi
+echo "network: $model ($have_out outputs)"
+
+exec ros2 launch reflex_ros kria.launch.py model_dir:="$root/models/$model" "${args[@]}"
