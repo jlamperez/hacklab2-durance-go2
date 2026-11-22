@@ -1,0 +1,7 @@
+# Defaults for scripts/kria/run.sh model:=ball_v3 (docs/fpga-ball-zones-v3-2026-11-22.md, section 6).
+# The network fires short bursts and its none neuron fires every frame: any zone spike wins
+# (margin -10), no vote, a zone stays published 0.5 s.
+margin:=-10
+vote_window:=1
+vote_min:=1
+zone_hold_s:=0.5

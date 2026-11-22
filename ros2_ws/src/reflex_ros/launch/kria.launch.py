@@ -38,6 +38,9 @@ ARGS = {
     "model_dir": "/opt/reflex/models/zones3",
     "host": "127.0.0.1", "port": "auto", "margin": "0.0",   # port auto: 3334 with tap, else 3333
     "readout": "0",                 # frames per decision, 0: from model_dir
+    "vote_window": "5", "vote_min": "3",   # 6-zone networks: a zone needs vote_min of the last vote_window decisions
+    "zone_hold_s": "1.0",           # 6-zone networks: seconds a zone stays published before none
+    "max_inflight": "4",            # camera_tap: frames on the FPGA at once; more are dropped (4: all of 50/s)
     "zone_rows": "auto",            # rows of the zone grid in the tap's picture; auto: from model_dir
     "mode": "keeper", "reaction": "euler", "min_confidence": "0.45", "consecutive": "2",
     "move_vy": "0.3", "hold_s": "0.6",
@@ -76,7 +79,8 @@ def _setup(context):
         rows = LC("zone_rows").perform(context)
         rows = _zone_rows(LC("model_dir").perform(context)) if rows == "auto" else int(rows)
         actions.append(Node(package="reflex_ros", executable="camera_tap", output="screen",
-                            parameters=[{"listen_port": 3333, "server_port": port, "zone_rows": rows}]))
+                            parameters=[{"listen_port": 3333, "server_port": port, "zone_rows": rows,
+                                         "max_inflight": int(LC("max_inflight").perform(context))}]))
     if LC("despot").perform(context).lower() in ("1", "true", "yes"):
         despot = ExecuteProcess(cmd=["despot_send_and_forget", "--to_display", "0"], output="screen", name="despot")
         actions.append(TimerAction(period=3.0, actions=[despot]) if tap else despot)   # tap listens first
@@ -84,7 +88,10 @@ def _setup(context):
         Node(package="reflex_ros", executable="fpga_perception", output="screen", parameters=[{
             "host": LC("host"), "port": port,
             "model_dir": LC("model_dir"), "margin": float(LC("margin").perform(context)),
-            "readout": int(LC("readout").perform(context))}]),
+            "readout": int(LC("readout").perform(context)),
+            "vote_window": int(LC("vote_window").perform(context)),
+            "vote_min": int(LC("vote_min").perform(context)),
+            "zone_hold_s": float(LC("zone_hold_s").perform(context))}]),
         Node(package="reflex_ros", executable="behavior", output="screen", parameters=[{
             "mode": LC("mode"), "reaction": LC("reaction"), "enabled": enabled,
             "min_confidence": float(LC("min_confidence").perform(context)),

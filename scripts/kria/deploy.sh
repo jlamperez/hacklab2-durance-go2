@@ -29,7 +29,7 @@ mkdir -p "$stage/reflex-kria/models/zones3" "$stage/reflex-kria/models/ball_v3"
 cp -r ros2_ws/install-yocto "$stage/reflex-kria/install"
 rsync -a --include='*/' --include='*.py' --exclude='*' --prune-empty-dirs reflex "$stage/reflex-kria/"
 cp models/zones3/meta.json models/zones3/config.yaml "$stage/reflex-kria/models/zones3/"
-cp models/ball_v3/ball_zones_readout.json models/ball_v3/config.yaml "$stage/reflex-kria/models/ball_v3/"
+cp models/ball_v3/ball_zones_readout.json models/ball_v3/config.yaml models/ball_v3/run_args "$stage/reflex-kria/models/ball_v3/"
 cp scripts/kria/run.sh "$stage/reflex-kria/run.sh"
 git rev-parse HEAD > "$stage/reflex-kria/COMMIT" 2>/dev/null || true
 tar -czf "$stage/reflex-kria.tar.gz" -C "$stage" reflex-kria

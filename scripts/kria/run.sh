@@ -62,4 +62,15 @@ if [ "$want_out" != "$have_out" ]; then
 fi
 echo "network: $model ($have_out outputs)"
 
+# 5. The model's own defaults (models/NAME/run_args, one name:=value per line); an argument
+#    given on the command line wins.
+if [ -f "$root/models/$model/run_args" ]; then
+    while read -r line; do
+        case "$line" in ""|\#*) continue ;; esac
+        key=${line%%:=*}
+        case " ${args[*]} " in *" $key:="*) ;; *) args+=("$line") ;; esac
+    done < "$root/models/$model/run_args"
+fi
+echo "launch arguments: ${args[*]}"
+
 exec ros2 launch reflex_ros kria.launch.py model_dir:="$root/models/$model" "${args[@]}"

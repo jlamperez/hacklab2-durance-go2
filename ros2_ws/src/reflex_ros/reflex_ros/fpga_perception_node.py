@@ -4,6 +4,10 @@
               one message per camera frame, the network's output spikes (4x1x1 for models/zones3,
               7x1x1 for models/ball_v3)
   publishes   /reflex/decision          reflex_msgs/ReflexDecision, one per FPGA message
+              /durance/ball_zone        std_msgs/String, for 6-zone networks (models/ball_v3): the
+                                        zone (upper_left ... lower_right, none), majority-voted,
+                                        only when it changes, reliable + transient-local: what the
+                                        follow node reads with mode:=look input:=zone
               /reflex/debug/fpga        std_msgs/String, JSON: values, window counts, latency
 
 It takes the place of the `perception` node when the network runs on the FPGA. The camera
@@ -20,7 +24,10 @@ confidence = the winner's spikes in the window / readout (the share of frames it
 On 22 Nov, with balls thrown past the camera, zone decisions reached 0.5-0.55; the behavior
 node's min_confidence must sit below that (the board launch file sets it). Not validated.
 
-Parameters: host, port, model_dir (meta.json or *_readout.json, + config.yaml of the deployed
+Parameters: zone_topic (/durance/ball_zone, '' to skip), vote_window (5), vote_min (3),
+zone_hold_s (1.0: a zone stays published this long after its last vote before `none` is sent;
+the network fires in short bursts, 0.1-0.2 s, too short for the follow node's gestures);
+host, port, model_dir (meta.json or *_readout.json, + config.yaml of the deployed
 network), readout (frames per decision, 0: the model folder's value), margin (a zone must beat
 none by this many spikes), reconnect_s.
 """
@@ -34,9 +41,12 @@ from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 from reflex.runtime.spleat_client import ProtocolError, parse_message, read_message, server_shape
+from reflex.runtime.zone_target import ZONES
+from reflex.runtime.zone_vote import ZoneVoteConfig, ZoneVoter
 from reflex.runtime.zones_readout import ZonesReadout, reflex_label
 from reflex_msgs.msg import ReflexDecision
 
@@ -54,6 +64,18 @@ class FpgaPerceptionNode(Node):
         self.reconnect_s = float(p("reconnect_s", 1.0).value)
         self.pub = self.create_publisher(ReflexDecision, "/reflex/decision", 10)
         self.debug_pub = self.create_publisher(String, "/reflex/debug/fpga", 10)
+        zone_topic = p("zone_topic", "/durance/ball_zone").value
+        self.zone_pub, self.voter = None, None
+        if zone_topic and set(self.readout.names) == set(ZONES) | {"none"}:
+            qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            self.zone_pub = self.create_publisher(String, zone_topic, qos)
+            self.voter = ZoneVoter(ZoneVoteConfig(int(p("vote_window", 5).value), int(p("vote_min", 3).value)))
+            self.zone_pub.publish(String(data="none"))
+            self.zone_hold_s = float(p("zone_hold_s", 1.0).value)
+            self._zone, self._zone_t = "none", 0.0
+            self.get_logger().info(f"6-zone network: zones on {zone_topic} "
+                                   f"(vote {self.voter.cfg.min_votes} of {self.voter.cfg.window})")
         self._stop = threading.Event()
         self._sock = None
         self._n = 0
@@ -90,6 +112,8 @@ class FpgaPerceptionNode(Node):
                                    f"{m['n_values']} values", throttle_duration_sec=5.0)
             return
         d = self.readout.push(m["values"])
+        if self.voter is not None:
+            self.publish_zone(self.voter.update(d.label))
         out = ReflexDecision()
         out.header.stamp = self.get_clock().now().to_msg()
         out.header.frame_id = "fpga"
@@ -108,6 +132,20 @@ class FpgaPerceptionNode(Node):
                 "latency_us": latency, "frames": d.frames})))
         if d.index != self.readout.none_index:
             self.get_logger().info(self.readout.format(d), throttle_duration_sec=0.2)
+
+    def publish_zone(self, changed: str | None) -> None:
+        """A new zone at once; `none` only after zone_hold_s without a zone."""
+        now = time.monotonic()
+        if self.voter.current != "none":
+            self._zone_t = now                           # the vote still holds a zone
+        if changed is not None and changed != "none" and changed != self._zone:
+            self._zone = changed
+        elif self._zone != "none" and self.voter.current == "none" and now - self._zone_t >= self.zone_hold_s:
+            self._zone = "none"
+        else:
+            return
+        self.zone_pub.publish(String(data=self._zone))
+        self.get_logger().info(f"zone -> {self._zone}")
 
     def destroy_node(self):
         self._stop.set()

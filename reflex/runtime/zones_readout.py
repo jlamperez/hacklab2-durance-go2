@@ -80,7 +80,10 @@ class ZonesReadout:
         zones = [i for i in range(len(counts)) if i != self.none_index]
         zone = max(zones, key=lambda i: counts[i]) if zones else self.none_index   # first of equals
         none = self.none_index
-        index = zone if counts[zone] >= counts[none] + max(self.margin, 1e-9) else none
+        # margin 0: strictly more spikes than none (ties to none). Negative: a zone can win with
+        # fewer spikes than none (ball_v3: none fires every frame), but it must have fired.
+        need = counts[none] + (self.margin if self.margin != 0 else 1e-9)
+        index = zone if counts[zone] > 0 and counts[zone] >= need else none
         return ZoneDecision(self.names[index], index, counts, len(self.window))
 
     def format(self, d: ZoneDecision) -> str:

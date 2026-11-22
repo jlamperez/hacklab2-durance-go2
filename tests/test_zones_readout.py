@@ -85,3 +85,10 @@ def test_reflex_label_maps_columns():
     assert [reflex_label(n) for n in BALL_NAMES] == ["left", "center", "right", "left", "center",
                                                      "right", "none"]
     assert [reflex_label(n) for n in NAMES] == NAMES
+
+
+def test_negative_margin_lets_a_zone_win_against_none_but_only_if_it_fired():
+    r = ZonesReadout(BALL_NAMES, readout=4, margin=-10)
+    for _ in range(3):
+        assert r.push([0, 0, 0, 0, 0, 0, 1]).label == "none"       # no zone spike: none
+    assert r.push([0, 1, 0, 0, 0, 0, 1]).label == "upper_middle"   # 1 spike beats none's 4
