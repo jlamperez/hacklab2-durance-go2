@@ -41,7 +41,7 @@ target-zone SNN (`models/zones3`, 2x80x80 in, 4x1x1 out: `none / left / center /
 trained on 22 Nov on our real-camera recordings, firmware job #44. Fed synthetic frames, it
 answers every frame in 1-7 ms, and its output spikes match the laptop's fixed-point emulation
 neuron by neuron (`docs/fpga-zones3-2026-11-22.md`). Fed by the real camera it runs at 100
-frames per second and answers `none` with no ball in view; not yet tried with a ball, and not
+frames per second and answers `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured, and not
 connected to the robot. The board needs `weights.txt` in two's complement;
 riverops 0.2.0 exports signed values.
 The real event camera has been used for recording: about 100 labelled takes in four sessions
@@ -63,7 +63,7 @@ not known.
 | Closed loop over ROS 2 in simulation | working; results below |
 | Camera side on a Kria KV260 (Docker), webcam as stand-in event camera, PC as robot | working: 30 Hz, 6-13 ms to the PC |
 | Recording over ROS with the webcam stand-in (`ros-record`), labelling and fine-tuning | working with webcam takes |
-| riverops training for Durance's toolchain (their notebook adapted to none/left/center/right), synthetic ball data, auto-labels for recordings (calibrated tracker, per-take overrides, review sheet), export for the Kria: `reflex/river/`, `docs/river-training.md` | **trained on real recordings and running on the FPGA** (22 Nov): `models/zones3` from the 21 Nov `cross` and `none` takes (`tools/river_layout.py`), auto-labels per 10 ms frame; validation (same room, optimistic) 81 % balanced accuracy in fixed point, 38 % false triggers. Firmware job #44; output on the board matches the fixed-point emulation (`docs/fpga-zones3-2026-11-22.md`). Fed by the real camera on the board: 100 frames/s, `none` with no ball in view; not yet tried with a ball |
+| riverops training for Durance's toolchain (their notebook adapted to none/left/center/right), synthetic ball data, auto-labels for recordings (calibrated tracker, per-take overrides, review sheet), export for the Kria: `reflex/river/`, `docs/river-training.md` | **trained on real recordings and running on the FPGA** (22 Nov): `models/zones3` from the 21 Nov `cross` and `none` takes (`tools/river_layout.py`), auto-labels per 10 ms frame; validation (same room, optimistic) 81 % balanced accuracy in fixed point, 38 % false triggers. Firmware job #44; output on the board matches the fixed-point emulation (`docs/fpga-zones3-2026-11-22.md`). Fed by the real camera on the board: 100 frames/s, `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured |
 | Optional walking (learned policy), keyboard and `/cmd_vel` driving | working in simulation |
 | Real-camera recording: guided capture with labels, replay, HDF5 format (`capture/`) | working, tested live on 21 Nov; about 100 takes |
 | Real-camera takes as training data (`capture/` HDF5 -> network windows) | not started: `build-real` still expects the ROS recorder's format |
@@ -76,7 +76,7 @@ not known.
 | Ball SNN from `feat/training` (spiking U-Net, position + P(ball)) as a target source: `ball_target` node, `ros-events-sim tracker:=snn` (`docs/events-sim.md`) | checkpoint loads and runs on CPU (arm64); run over sat_follow2 without ROS: reacts to moving blobs, not only the ball, see `docs/events-sim.md`. Node and launch not yet run under ROS |
 | Simulated drone flights (UZ65-sized) with head modes, a second follow behavior (turn in place, greet when the ball stops: `reflex/runtime/follow_fsm.py`, `ball_tracker.py`), from branch `simulation` (`docs/simulation-drone.md`) | recordings generated in simulation; FSM and tracker unit-tested (`tests/test_follow_fsm.py`). Not wired into ROS. Lives beside the move-stop-look controller in `follow.py`; which one we run is not decided |
 | Camera to FPGA on the board (Durance's `despot_send_and_forget` + `tools/spleat_merge_proxy.py`) | runs: frames accepted by the server, one inference back, then the FPGA hung (`docs/fpga-run-2026-11-22.md`) |
-| Target-zone SNN on the FPGA (`models/zones3`, job #44, `despot_send_and_forget` with `downsampling: 4`, no adapter) | deployed 22 Nov; synthetic frames: 15/15 answered, spikes match the emulation (`tools/spleat_poke.py`, `tools/emulate_poke.py`). Real camera (despot, `spleat-read --zones-dir`): 100 frames/s, about 1.2 ms per frame, decision `none` with no ball in view; not yet tried with a ball. Whether despot sends the mean or the sum of each 4x4 block is unchecked |
+| Target-zone SNN on the FPGA (`models/zones3`, job #44, `despot_send_and_forget` with `downsampling: 4`, no adapter) | deployed 22 Nov; synthetic frames: 15/15 answered, spikes match the emulation (`tools/spleat_poke.py`, `tools/emulate_poke.py`). Real camera (despot, `spleat-read --zones-dir`): 100 frames/s, about 1.2 ms per frame, decision `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured. Whether despot sends the mean or the sum of each 4x4 block is unchecked |
 | Our nodes driving the real Go2 | not started |
 
 ## Commands

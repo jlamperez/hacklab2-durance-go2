@@ -19,7 +19,7 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
   target-zone SNN (`models/zones3`, firmware job #44, Durance-shaped: 2x80x80 -> conv chain ->
   4x1x1) runs on the FPGA: fed synthetic frames it answers every frame and matches the
   fixed-point emulation; fed by the real camera it runs at 100 frames/s and answers `none` with
-  no ball in view, not yet tried with a ball (`docs/fpga-zones3-2026-11-22.md`).
+  no ball in view, with a ball: brief zone decisions, accuracy not measured (`docs/fpga-zones3-2026-11-22.md`).
   `weights.txt` for the board is two's complement, not riverops' signed export. Keep the status table in `README.md` honest.
 - **Never write a Unitree `api_id` from memory.** Each one is checked against
   `ros2_sport_client` in `unitree_ros2` and recorded with its source file and commit.
