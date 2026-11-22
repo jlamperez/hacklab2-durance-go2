@@ -3,9 +3,10 @@
 Reflexes for a Unitree Go2 driven by an event camera and a spiking neural network (SNN).
 Built for the Durance AI track of HackLab #2 (Berlin, 21–22 November 2026).
 
-**Project guide in the browser: https://jlamperez.github.io/hacklab2-durance-go2/**: the
-final presentation, videos of the simulated and the real Go2, the pipeline, every command and
-the results.
+### 📖 [Reflex: the project guide](https://jlamperez.github.io/hacklab2-durance-go2/)
+
+The final presentation, videos of the simulated and the real Go2, the pipeline, every
+command and the results, in the browser.
 
 Pipeline: **events → SNN → reflex decision → Go2 sport-mode command over ROS 2**.
 
