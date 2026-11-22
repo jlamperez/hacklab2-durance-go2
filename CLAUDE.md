@@ -20,6 +20,8 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
   4x1x1) runs on the FPGA: fed synthetic frames it answers every frame and matches the
   fixed-point emulation; fed by the real camera it runs at 100 frames/s and answers `none` with
   no ball in view, with a ball: brief zone decisions, accuracy not measured (`docs/fpga-zones3-2026-11-22.md`).
+  The whole pipeline runs on the Kria (`kria.launch.py`, `scripts/kria/`) and drives the simulated
+  dog on the laptop over the cable; not yet run with the real Go2.
   `weights.txt` for the board is two's complement, not riverops' signed export. Keep the status table in `README.md` honest.
 - **Never write a Unitree `api_id` from memory.** Each one is checked against
   `ros2_sport_client` in `unitree_ros2` and recorded with its source file and commit.
@@ -41,6 +43,9 @@ pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt [OUT_DIR] [--
 pixi run spleat-bundle MODEL.json PARAMS.json [--firmware DIR --checkpoint PT]  # -> out/spleat/<model>/ + deploy.yaml for river-tools
 pixi run spleat-read [--host H --save F | --file F]  # read the FPGA results from the Kria (port 3333), or decode saved ones
 pixi run spleat-read --zones-dir models/zones3     # same, for the target-zone SNN: winning zone over the last 20 frames
+scripts/kria/deploy.sh                             # cross-compile reflex_msgs/reflex_ros (Durance's Docker image) -> /opt/reflex on the Kria
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim|real   # whole pipeline on the Kria (camera, FPGA, decision, behavior)
+pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0   # laptop: MuJoCo dog as the robot for robot:=sim
 pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy out/spleat/<model>/deploy.yaml root@192.168.77.1  # Durance's tool, Python 3.10
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
