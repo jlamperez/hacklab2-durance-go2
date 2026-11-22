@@ -31,6 +31,29 @@ Some are partly answered by reading their KV260 microSD image on 21 Nov
 10. Do you have data already recorded with the event camera?
 11. How is the board's power consumption measured?
 
+## SPLEAT hangs on our model (asked on 22 Nov)
+
+Logs: `docs/fpga-run-2026-11-22.md`.
+
+> Your example model runs fine on our KV260: 10 frames out of 10, 0.5-30 ms each. Our
+> small U-Net (firmware job #35, input 1x320x320, output 9x80x80, weights Q1.7, potentials
+> Q4.12) hangs: after a clean boot, even an all-zero frame never comes back, and after
+> about 60 s backward-server logs `error reading through dma: rx hardware status:
+> ProxyTimeout` (kernel: `DMA timed out`). The frame goes out in 4 DMA transfers, 2 receive
+> transfers complete, then nothing. Once, on the very first run, one inference did come
+> back (latency 219331 us). Are spatial outputs (9x80x80) or 320x320 inputs supported by
+> SPLEAT? Is there a size limit, or something in the model graph that stops the
+> accelerator from ending the inference? Our graph has 3 skip connections and 3 layers with
+> `upscaling: 2` (a U-Net); your example is a plain chain. Are skips and upscaling supported
+> on the FPGA? (Weights encoding ruled out: signed, two's complement and 16-bit biases all
+> hang the same way.)
+
+Also worth asking: whether `despot_send_and_forget` can send one channel (it builds 2
+polarities, fixed at compile time; we merge them in `tools/spleat_merge_proxy.py`).
+Answered by our own test: `latency` is in microseconds.
+
+Answer: not yet.
+
 ## Assumptions these answers will confirm or break
 
 | Assumption in the code | Question | What the card says |

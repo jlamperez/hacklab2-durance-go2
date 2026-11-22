@@ -139,6 +139,10 @@ Durance's launch file `bringup/launch/pipeline.launch.py` starts four nodes. **s
 - With `despot:=true` the launch file also starts the camera client itself
   (`despot_binary`, default `/usr/bin/despot_help`) and shuts everything down when it exits.
   The docs launch with `despot:=false` and start the camera client separately.
+- Our board has no `despot_help`: use `despot:=false`, or
+  `despot_binary:=/usr/bin/despot_send_and_forget`. With the default, the despot process
+  fails and, since its exit triggers a shutdown, the whole launch most likely stops (not
+  tried). **board + source**
 - Also in the workspace: `debug_node` (`gesture_monitor`, prints the scores), `robot_sim` and
   `qualia_sim` (fake Go2 and fake server; `go2-kria/scripts/smoke.py` tests the pipeline
   with its own fake server and `robot_sim`), `unitree_api`,
@@ -147,6 +151,11 @@ Durance's launch file `bringup/launch/pipeline.launch.py` starts four nodes. **s
   without cross-compiling (`go2-kria/README.md`).
 - With the Go2 connected, `action_bridge` sends real motion commands as soon as the space is
   clear.
+
+## The camera client (despot)
+
+What the `despot_*` programs are, how `despot_send_and_forget` turns events into frames,
+the message it sends (captured on the board) and its two fixed channels: `docs/despot.md`.
 
 ## Durance's example does not fit together
 

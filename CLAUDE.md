@@ -11,10 +11,11 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
 - **Everything in English**: code, comments, docs, commit messages.
 - **Say what is simulated.** On 21 Nov 2026 sport-mode commands sent by hand moved the real
   Go2 (`docs/real-robot.md`); our nodes have not driven it. The real event camera has been used
-  for recording only (`capture/`, about 100 takes, camera on a stand); none of our networks has
-  run on the real event camera or Durance's FPGA (the team ran Durance's own example model on
-  the board). The small ball detector was loaded on the FPGA on 21 Nov (bitstream, weights,
-  server config), but no inference has been seen yet. Keep the status table in `README.md` honest.
+  for recording only (`capture/`, about 100 takes, camera on a stand), and on 22 Nov to feed the
+  FPGA (the team also ran Durance's own example model on the board). The small ball detector
+  was loaded on the FPGA on 21 Nov; on 22 Nov, fed by the real camera through
+  `tools/spleat_merge_proxy.py`, one inference came back, then the FPGA hung; Durance's example
+  runs on the same board, so it is our bitstream (`docs/fpga-run-2026-11-22.md`). Keep the status table in `README.md` honest.
 - **Never write a Unitree `api_id` from memory.** Each one is checked against
   `ros2_sport_client` in `unitree_ros2` and recorded with its source file and commit.
 - Keep the model small and in plain PyTorch. It has to be ported to Durance's RIVERLib,
@@ -33,7 +34,7 @@ pixi run finetune-real  # build + fine-tune the SNN on recorded data -> out/mode
 pixi run view-data PATH # look inside a dataset folder or an event recording; --sheet/--video save files
 pixi run --manifest-path tools/river/pixi.toml export-ball CKPT.pt [OUT_DIR] [--script S --commit C]  # checkpoint -> models/ball*/ + PROVENANCE.md
 pixi run spleat-bundle MODEL.json PARAMS.json [--firmware DIR --checkpoint PT]  # -> out/spleat/<model>/ + deploy.yaml for river-tools
-pixi run spleat-read [--host H --save F]  # read the FPGA results from the Kria (port 3333)
+pixi run spleat-read [--host H --save F | --file F]  # read the FPGA results from the Kria (port 3333), or decode saved ones
 pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy out/spleat/<model>/deploy.yaml root@192.168.77.1  # Durance's tool, Python 3.10
 pixi run sim            # record out/demo.mp4 (RGB + emulated events)
 pixi run view           # interactive 3D viewer, needs a display
@@ -136,6 +137,9 @@ Every command, where it runs and recipes: `docs/commands.md` (keep it in sync wi
 Putting a network on the FPGA (files, tools, board paths, steps): `docs/deploy-fpga.md`.
 See `docs/questions-for-durance.md`. For sport mode versus low-level control, and why
 `unitree_mujoco` is not used (yet), see `docs/go2-control.md`.
+
+Durance's camera client on the board (`despot_send_and_forget`: 2 polarity channels, fixed),
+and the adapter for one-channel networks: `docs/despot.md`.
 
 Durance's KV260 image was read from its microSD on 21 Nov, not booted:
 `docs/durance-kria-image.md`. It has ROS 2 Humble, OpenEB, Prophesee drivers (GenX320 and
