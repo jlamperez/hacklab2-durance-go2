@@ -1,0 +1,278 @@
+{
+  "input": {
+    "channels": 1,
+    "height": 320,
+    "width": 320
+  },
+  "nodes": [
+    {
+      "node_index": "conv_lif",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 8,
+      "kernel_size": 8,
+      "stride": 4,
+      "padding": [
+        2,
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "node_index": "conv_lif_1",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 16,
+      "kernel_size": 4,
+      "stride": 2,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_2",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 16,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_3",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 24,
+      "kernel_size": 4,
+      "stride": 2,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_4",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 24,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_5",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 32,
+      "kernel_size": 4,
+      "stride": 2,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_6",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 32,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_7",
+      "node_type": "ConvLIF2d",
+      "upscaling": 2,
+      "channels": 24,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_8",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 24,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_9",
+      "node_type": "ConvLIF2d",
+      "upscaling": 2,
+      "channels": 16,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_10",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 16,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_11",
+      "node_type": "ConvLIF2d",
+      "upscaling": 2,
+      "channels": 8,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_12",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 8,
+      "kernel_size": 3,
+      "stride": 1,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "node_index": "conv_lif_13",
+      "node_type": "ConvLIF2d",
+      "upscaling": 1,
+      "channels": 9,
+      "kernel_size": 1,
+      "stride": 1,
+      "padding": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "input",
+      "target": "conv_lif"
+    },
+    {
+      "source": "conv_lif",
+      "target": "conv_lif_1"
+    },
+    {
+      "source": "conv_lif_1",
+      "target": "conv_lif_2"
+    },
+    {
+      "source": "conv_lif_2",
+      "target": "conv_lif_3"
+    },
+    {
+      "source": "conv_lif_3",
+      "target": "conv_lif_4"
+    },
+    {
+      "source": "conv_lif_4",
+      "target": "conv_lif_5"
+    },
+    {
+      "source": "conv_lif_5",
+      "target": "conv_lif_6"
+    },
+    {
+      "source": "conv_lif_6",
+      "target": "conv_lif_7"
+    },
+    {
+      "source": "conv_lif_7",
+      "target": "conv_lif_8"
+    },
+    {
+      "source": "conv_lif_4",
+      "target": "conv_lif_8"
+    },
+    {
+      "source": "conv_lif_8",
+      "target": "conv_lif_9"
+    },
+    {
+      "source": "conv_lif_9",
+      "target": "conv_lif_10"
+    },
+    {
+      "source": "conv_lif_2",
+      "target": "conv_lif_10"
+    },
+    {
+      "source": "conv_lif_10",
+      "target": "conv_lif_11"
+    },
+    {
+      "source": "conv_lif_11",
+      "target": "conv_lif_12"
+    },
+    {
+      "source": "conv_lif",
+      "target": "conv_lif_12"
+    },
+    {
+      "source": "conv_lif_12",
+      "target": "conv_lif_13"
+    }
+  ],
+  "outputs": [
+    "conv_lif_13"
+  ]
+}

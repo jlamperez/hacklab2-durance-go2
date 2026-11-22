@@ -1,0 +1,6 @@
+CUDA available: False
+Loaded ball_zones_best.pt: epoch 87, time steps 4, window 5 ms
+Saved architecture to: ball_zones_model.json
+Parameter order: 0=merge, 1=enc1, 2=enc2, 3=enc3, 4=enc4, 5=enc5, 6=enc6, 7=enc7, 8=reduce, 9=classify
+Saved parameters to: ball_zones_parameters.json and ball_zones_parameters.txt
+Saved off-chip readout constants to: ball_zones_readout.json

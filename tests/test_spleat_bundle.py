@@ -139,3 +139,11 @@ def test_camera_frequency_follows_the_checkpoint_window(tmp_path):
     torch.save({"window_ms": 5.0}, tmp_path / "c.pt")
     build(mp, pp, tmp_path / "out", 4096.0, checkpoint=tmp_path / "c.pt")
     assert json.loads((tmp_path / "out" / "metavision_camera.json").read_text())["frequency"] == 200.0
+
+
+def test_noise_filter_can_be_removed():
+    from reflex.deploy.spleat_bundle import camera_config
+    model = {"input": {"channels": 2, "height": 320, "width": 320}}
+    assert camera_config(model)["noise_filtering_factor"] == 0.5
+    cam = camera_config(model, 200.0, noise_filter=False)
+    assert "noise_filtering_factor" not in cam and cam["frequency"] == 200.0 and cam["downsampling"] == 1

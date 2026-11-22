@@ -233,7 +233,12 @@ def config_yaml(cfg: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def camera_config(model: dict, frequency: float | None = None) -> dict:
+def camera_config(model: dict, frequency: float | None = None, noise_filter: bool = True) -> dict:
+    """Despot's config. `noise_filter=False` removes `noise_filtering_factor`, which turns the
+    filter off (Durance's docs). For networks trained on raw recordings: on 22 Nov the 0.5
+    default left a median of 3 events per 10 ms frame with a ball moving, and despot skipped
+    empty frames (15-30 frames/s instead of 100; models/zones3/PROVENANCE.md, "Input scale").
+    """
     h, w = model["input"]["height"], model["input"]["width"]
     if h != w or SENSOR_SIDE % h or SENSOR_SIDE // h not in DOWNSAMPLING_ALLOWED:
         raise BundleError(f"input {h}x{w} is not the {SENSOR_SIDE}x{SENSOR_SIDE} sensor "
@@ -242,7 +247,8 @@ def camera_config(model: dict, frequency: float | None = None) -> dict:
     cfg["downsampling"] = SENSOR_SIDE // h
     if frequency is not None:
         cfg["frequency"] = float(frequency)
-    return {k: cfg[k] for k in ("frequency", "downsampling", "noise_filtering_factor", "biases")}
+    keys = ("frequency", "downsampling", "noise_filtering_factor", "biases")
+    return {k: cfg[k] for k in keys if noise_filter or k != "noise_filtering_factor"}
 
 
 def _sha256(path: Path) -> str:
@@ -320,7 +326,8 @@ def _git_state() -> str:
 
 
 def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float,
-          firmware: Path | None = None, checkpoint: Path | None = None) -> dict:
+          firmware: Path | None = None, checkpoint: Path | None = None,
+          noise_filter: bool = True) -> dict:
     model = json.loads(model_path.read_text())
     params = json.loads(params_path.read_text())
     if scaling != float(1 << POTENTIAL_FRAC):
@@ -335,7 +342,7 @@ def build(model_path: Path, params_path: Path, out_dir: Path, scaling: float,
 
     server = server_config(model, shapes, scaling)
     window = checkpoint_window(checkpoint) if checkpoint is not None else None
-    camera = camera_config(model, window["frequency"] if window else None)
+    camera = camera_config(model, window["frequency"] if window else None, noise_filter)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in (*FIRMWARE_FILES, "deploy.yaml"):          # never leave a previous run's firmware
@@ -456,7 +463,7 @@ the board before replacing it.
 |---|---|---|
 | `downsampling` | {cam['downsampling']} | computed: {SENSOR_SIDE} (native sensor side, deploy page) / {srv['inputs']['width']} (model input) |
 | `frequency` | {cam['frequency']:g} | {_frequency_source(win)} |
-| `noise_filtering_factor` | {cam['noise_filtering_factor']} | deploy page default |
+| `noise_filtering_factor` | {cam.get('noise_filtering_factor', 'removed (no filter)')} | {'deploy page default' if 'noise_filtering_factor' in cam else '`--no-noise-filter`: removed, which turns the filter off (deploy page); the network was trained on raw events'} |
 | `biases` | {cam['biases']} | deploy page default (sensor biases) |
 
 ## Checks that passed
@@ -546,10 +553,14 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"folder with riversdk.dev's {FIRMWARE_ARCHIVE} and its PROVENANCE.md")
     ap.add_argument("--checkpoint", type=Path, help="checkpoint (*.pt): sets the camera frequency "
                                                      "from the event window it was trained on")
+    ap.add_argument("--no-noise-filter", action="store_true",
+                    help="leave noise_filtering_factor out of metavision_camera.json (filter off), "
+                         "for networks trained on raw recordings")
     args = ap.parse_args(argv)
     out = args.out or Path("out/spleat") / args.model.stem
     try:
-        m = build(args.model, args.parameters, out, args.scaling, args.firmware, args.checkpoint)
+        m = build(args.model, args.parameters, out, args.scaling, args.firmware, args.checkpoint,
+                  noise_filter=not args.no_noise_filter)
     except BundleError as e:
         ap.exit(1, f"error: {e}\n")
     net = m["network"]
