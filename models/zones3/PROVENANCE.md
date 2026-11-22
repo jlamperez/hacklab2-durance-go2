@@ -1,9 +1,10 @@
 # Provenance of the target-zone SNN (3 zones)
 
 Trained on 22 Nov 2026, 09:11-09:27 CET, on CPU, with `reflex.river.train` (Philipp's port of
-Durance's Motion Buddy notebook). Every file comes from that one run. The one exception is
-`weights.txt`: it was re-encoded from `parameters.json` after the board test (see "weights.txt
-encoding" below). The run's original output is kept as `weights_signed.txt`.
+Durance's Motion Buddy notebook). Every file comes from that one run, with two exceptions found on the
+board: `weights.txt` was re-encoded from `parameters.json` (see "weights.txt encoding"; the
+run's original is `weights_signed.txt`), `config.yaml`'s input scaling was set to 256 and
+`metavision_camera.json`'s noise filter removed (see "Input scale").
 
 **Runs on the KV260's FPGA** (firmware job #44, `models/firmware/kv260_zones3_job44/`). On
 synthetic frames its output spikes match the fixed-point emulation neuron by neuron. Not yet
@@ -148,12 +149,27 @@ Both are 39,613 values in this order: weights of layers 0-4 (800, 4608, 9216, 18
 biases of layers 0-4 (16, 32, 32, 64, 4), then threshold and leak per layer (425 287,
 3293 287, 4096 287, 4096 287, 4096 287). One per line, no trailing newline.
 
-## Assumption not checked
+## Input scale: `config.yaml` scaling 256, not 4096
 
-Input values: trained with `norm mean` (event count / 16 per 4x4 block, as in Durance's
-notebook). What `despot_send_and_forget` writes with `downsampling: 4` (mean or sum) has not
-been captured yet (`tools/spleat_sniff.py`). If it is the sum, retrain with `--norm sum`: new
-weights only, same `model.json`, same firmware.
+Trained with `norm mean` (event count / 16 per 4x4 block, as in Durance's notebook).
+`despot_send_and_forget` with `downsampling: 4` sends the **sum** (integers 0-17 in a 15 s
+capture with `tools/spleat_sniff.py`, 22 Nov). spleat-server multiplies its input by `scaling`
+to make it fixed point, so `scaling: 256` (4096 / 16) gives the network the values it was
+trained on, with no retraining. With 4096 it saw 16 times too much (and values above 8
+saturate Q4.12). Checked with `spleat_poke.py` against the emulation: at 256 the board follows
+the 1/16-scaled emulation (same silent first frames, `none`-dominated), not the unscaled one;
+spike for spike it matches for 2-3 frames, then drifts (not explained).
+`docs/fpga-zones3-2026-11-22.md` section 10.
+
+**Noise filter off.** The recordings it was trained on are raw, unfiltered events. despot's
+`noise_filtering_factor: 0.5` left a median of 3 events per 10 ms frame with a ball moving, and
+despot skipped frames with no events (15-30 frames per second instead of 100). With the scaling
+right, the network then hardly fired. `metavision_camera.json` here has the key removed
+(Durance's docs: remove it for no filtering); with it removed despot sends 100 frames per second.
+
+`config.yaml` was edited by hand for this (the training run wrote 4096). `reflex/river/train.py`
+now writes 4096 / downsample² for `norm mean`. `spleat-bundle` still insists on 4096; do not use
+it to regenerate this config.
 
 ## Files
 
@@ -164,8 +180,8 @@ weights only, same `model.json`, same firmware.
 | `weights.txt` | fixed-point parameters, two's complement | `/root/weights.txt` on the board |
 | `weights_signed.txt` | the same, signed, as riverops exported it | do not deploy |
 | `parameters.json` | the same values per layer, signed | |
-| `config.yaml` | spleat-server config (2x80x80 in, 4x1x1 out, scaling 4096, port 3333) | `/root/.config/spleat-server/config.yaml` |
-| `metavision_camera.json` | camera config (`frequency` 100, `downsampling` 4) | `/root/metavision_camera.json` |
+| `config.yaml` | spleat-server config (2x80x80 in, 4x1x1 out, **scaling 256**, port 3333) | `/root/.config/spleat-server/config.yaml` |
+| `metavision_camera.json` | camera config (`frequency` 100, `downsampling` 4, **no noise filter**) | `/root/metavision_camera.json` |
 | `meta.json`, `metrics.json` | run configuration, validation metrics | stays here |
 | `train.log` | training output | stays here |
 
@@ -174,9 +190,9 @@ weights only, same `model.json`, same firmware.
 | File | sha256 |
 |---|---|
 | `best.pt` | `b89d73e631dfed9e3fcf12d944a405fa42d96964fd89b71b85d7fb4b3a8ec577` |
-| `config.yaml` | `012ba3bf7cb04c914301830f39e3cfbbdaf0b03a23e19dfe0338eba94094e75f` |
+| `config.yaml` | `70a5826c292f09a2cb6a2acb96f7e7e444f2006f95e059420ebc289cd16f397f` (scaling 256; as trained, 4096: `012ba3bf…`) |
 | `meta.json` | `2f8d3fa73751c9077cde9810cca761c60907c89208868505dafb80adb397fd1e` |
-| `metavision_camera.json` | `5a73142074b1ac5d17856942a374e54e7bef8db016e572e4ab388b67eeec7920` |
+| `metavision_camera.json` | `1c0aa3bf86aa100f730b4c499a1730fc7a95d41aa9f7fa1ec28f1634edbc4789` (no noise filter; as trained, with `noise_filtering_factor` 0.5: `5a731420…`) |
 | `metrics.json` | `b7d187d2b5ca0036d2ad84f78a30306a21d0bcc0811a2f3575fd29d31de966f0` |
 | `model.json` | `ad7b79badf1df9345e3fcdd505e58fc7fa8ebbf07fcf2d5e1426f9e0fd24a2ca` |
 | `parameters.json` | `32b33f82bb2c42777f352e23bfde1303f41bfb0a6eeaf18e099c930153c87f7e` |

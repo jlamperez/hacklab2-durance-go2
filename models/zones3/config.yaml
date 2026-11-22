@@ -8,7 +8,7 @@ inputs:
   channels: 2
   height: 80
   width: 80
-  scaling: 4096.0
+  scaling: 256.0
 
 outputs:
   channels: 4

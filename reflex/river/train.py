@@ -235,14 +235,20 @@ def export(model: TargetSNN, example: torch.Tensor, out: Path, frame: FrameConfi
     (out / "weights.txt").write_text(board_weights_text(params))
 
     s = frame.size
+    # despot_send_and_forget sends the SUM of events per downsample x downsample block
+    # (integers 0, 1, 2, ...; captured on the KV260 on 22 Nov, docs/fpga-zones3-2026-11-22.md).
+    # spleat-server multiplies the input by `scaling` to make it fixed point. With norm "mean"
+    # the network was trained on sum / downsample**2, so the scaling divides by that too.
+    scaling = float(2 ** frac) / (frame.downsample ** 2 if frame.norm == "mean" else 1)
     (out / "config.yaml").write_text(
         "application:\n  host: \"0.0.0.0\"\n  port: 3333\n  weights_file: /root/weights.txt\n"
         "  max_concurrency: 40\n\n"
-        f"inputs:\n  channels: 2\n  height: {s}\n  width: {s}\n  scaling: {float(2 ** frac)}\n\n"
+        f"inputs:\n  channels: 2\n  height: {s}\n  width: {s}\n  scaling: {scaling}\n\n"
         f"outputs:\n  channels: {n_classes}\n  height: 1\n  width: 1\n")
     (out / "metavision_camera.json").write_text(json.dumps({
         "frequency": 1e6 / frame.bin_us, "downsampling": frame.downsample,
-        "noise_filtering_factor": 0.5,
+        # No noise_filtering_factor: the recordings it trains on are raw, unfiltered events
+        # (capture/), and despot's filter left about 3 events per frame (22 Nov).
         "biases": {"bias_diff": 51, "bias_diff_off": 40, "bias_diff_on": 40,
                    "bias_fo": 29, "bias_hpf": 0, "bias_refr": 82}}, indent=2) + "\n")
     return quant

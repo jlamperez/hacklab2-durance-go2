@@ -1,7 +1,6 @@
 {
   "frequency": 100.0,
   "downsampling": 4,
-  "noise_filtering_factor": 0.5,
   "biases": {
     "bias_diff": 51,
     "bias_diff_off": 40,
