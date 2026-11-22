@@ -39,8 +39,11 @@ class SmallBallUNet(nn.Module):
     merge turns [B, T, 2, 320, 320] into [B, T, 1, 320, 320]; enc1 does the 4x
     downsampling from there. Decoder outputs match the encoder widths at the
     same grid so the additive skips line up. Modules are registered in forward
-    order, which is the export order.
+    order, which is the export order. ``unet_forward`` is the original
+    ``BallUNet.forward``, taken before ``size.BallUNet`` is replaced below.
     """
+
+    unet_forward = size.BallUNet.forward
 
     def __init__(self, widths=WIDTHS):
         super().__init__()
@@ -66,7 +69,7 @@ class SmallBallUNet(nn.Module):
         self.head = conv(c1, size.HEAD_CHANNELS, 1, padding=0)
 
     def forward(self, x):
-        return size.BallUNet.forward(self, self.merge(x))
+        return self.unet_forward(self.merge(x))
 
 
 # train_ball_size looks these up when it runs, so its training, export,
