@@ -191,10 +191,20 @@ def check_parameters(model: dict, params: dict, shapes: dict) -> list[dict]:
 
 
 def flatten(params: dict) -> list[int]:
-    """weights.txt values: exactly the loop of DOC_NOTEBOOK (dict order, lists expanded)."""
+    """weights.txt values: the loop of DOC_NOTEBOOK (dict order, lists expanded), with weights
+    and biases as two's complement, unsigned 0-255 (-16 -> 240).
+
+    That is the encoding of Durance's example weights.txt and what spleat-server reads:
+    checked on the KV260 on 22 Nov (docs/fpga-zones3-2026-11-22.md), where the signed values
+    riverops 0.2.0's export_params gives made the network compute something else. Threshold
+    and leak stay as they are. check_parameters has already checked the 8-bit range.
+    """
     values: list[int] = []
-    for value in params.values():
-        values.extend(value if isinstance(value, list) else [value])
+    for key, value in params.items():
+        value = value if isinstance(value, list) else [value]
+        if key.startswith(("weights_", "bias_")):
+            value = [v & 0xFF for v in value]
+        values.extend(value)
     return values
 
 

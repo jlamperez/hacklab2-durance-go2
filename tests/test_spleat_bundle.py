@@ -51,8 +51,9 @@ def test_bundle_matches_notebook_flattening_and_graph_shapes(tmp_path):
     params = tiny_params(model)
     m, out = run(tmp_path, model, params)
     expected = []
-    for v in params.values():
-        expected.extend(v if isinstance(v, list) else [v])
+    for k, v in params.items():
+        v = v if isinstance(v, list) else [v]
+        expected.extend([x & 0xFF for x in v] if k.startswith(("weights_", "bias_")) else v)
     text = (out / "weights.txt").read_text()
     assert not text.endswith("\n")
     assert list(map(int, text.split("\n"))) == expected

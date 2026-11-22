@@ -159,3 +159,15 @@ def test_fold_for_board_rescale_keeps_spikes_and_fits_q1_7():
         layer.lif.v_threshold /= s
     with torch.no_grad():
         assert torch.equal(fuse_model(model)(x), float_rescaled(x))
+
+
+def test_board_weights_are_twos_complement():
+    """weights.txt: weights and biases as unsigned two's complement, neurons as they are."""
+    from reflex.river.train import board_weights_text
+
+    params = {"weights_0": [-128, -16, -1, 0, 1, 127], "bias_0": [-2, 3],
+              "threshold_0": 4096, "leak_0": 287}
+    text = board_weights_text(params)
+    assert text == "\n".join(["128", "240", "255", "0", "1", "127", "254", "3", "4096", "287"])
+    with pytest.raises(ValueError):
+        board_weights_text({"weights_0": [200]})
