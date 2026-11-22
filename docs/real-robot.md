@@ -5,7 +5,9 @@ Kria KV260 with a webcam standing in for the event camera. Nothing has touched t
 Go2, the real event camera or Durance's toolchain.
 
 21 Nov 2026: sport-mode commands sent by hand from the Kria moved the real Go2; results
-below. Our nodes have not driven the robot yet. Durance's KV260 microSD image has been read. It ships ROS 2
+below.
+
+22 Nov 2026: our pipeline drove the real Go2: look mode with ball_v3, section below. Durance's KV260 microSD image has been read. It ships ROS 2
 Humble, OpenEB, Prophesee drivers and an FPGA inference server called SPLEAT. Details and
 what they change: `docs/durance-kria-image.md`.
 
@@ -27,7 +29,7 @@ camera -> [camera adapter] -> /reflex/events_window
 | Perception node | Works with `snn` (PyTorch) and `simple` | Third detector backend: a client for Durance's SPLEAT server (`backward-server`) | SPLEAT protocol, port, input shape |
 | Network | Trained on simulated events only | Fine-tune on real recordings (`pixi run finetune-real`); export to SPLEAT's `weights_file` | Real data, supported layers, weights format |
 | Recording and labelling tool | `ros-record`, `build-real`, `finetune-real` written and tested on the simulator stream (`docs/recording.md`) | Try with real takes; it records the windows the adapter publishes, not raw events | Camera adapter |
-| Behavior node | Done; signs and the Pose requirement checked by hand on the real Go2 (21 Nov). Runs on the Kria (`run.sh`); `mode:=look` (ball_v3's default) points the trunk at the six FPGA zones | Run the node itself against the robot: look mode below | - |
+| Behavior node | Done; signs and the Pose requirement checked by hand on the real Go2 (21 Nov). Runs on the Kria (`run.sh`); `mode:=look` (ball_v3's default) points the trunk at the six FPGA zones | Done 22 Nov in look mode (below). The reflex modes (keeper / dodge) not tried on the robot | - |
 | Default reaction | `behavior` still defaults to `reaction: euler` (a lean) | For a dodge, run with `reaction:=move` or change the default: on the real Go2 a lean moved the trunk 0.6 cm, a 1 s sidestep about 22 cm | Team decision |
 | Simulated lean and sidestep | Fitted to the real Go2: lean rolls 8° in place, sidestep follows the measured profile, posture mode modelled, 70 ms delay | Confirm the sideways shift with a ruler on video (the state estimator said 0.6 cm for a lean, 22 cm for a 1 s sidestep) | Robot |
 | Launch for the real setup | `camera.launch.py` (camera side) exists; behavior runs alone with `ros2 run reflex_ros behavior` | A `real.launch.py` once the camera adapter exists | - |
@@ -49,7 +51,19 @@ camera -> [camera adapter] -> /reflex/events_window
 5. Measure command-to-motion delay and put it in `actuation_delay_ms` of the simulator.
    **Done 21 Nov 2026**: see the table below; default now 70 ms.
 
-## Look mode on the real Go2 (ball_v3), not run yet
+## Look mode on the real Go2 (ball_v3), run on 22 Nov 2026
+
+What ran, with the Kria and the GenX320 on the dog's back:
+
+```bash
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2
+```
+
+The trunk turns towards a ball held and moved close to the camera (videos: `site/media/real-go2-highlights.mp4`,
+on the project guide). Yaw goes the right way as seen on the video; the pitch sign was not checked on its own,
+and no accuracy has been measured. The angles are twice the defaults (`0.15`, `0.1`).
+
+The checklist used before it:
 
 Everything runs on the Kria: camera, FPGA, `fpga_perception`, and `behavior` in `mode:=look`
 (`models/ball_v3/run_args`), which turns the six zones into trunk gestures (column -> Euler
@@ -57,7 +71,7 @@ yaw, row -> Euler pitch, `reflex/runtime/zone_look.py`). It has to run on the bo
 `robot:=real` the board's DDS leaves on the Go2's adapter only, and the laptop (on `eth0`,
 `192.168.77.x`) cannot reach the robot, so `ros-look` and `ros-web` are out.
 
-Roll was checked on 21 Nov; yaw and pitch, which look mode uses, were not.
+Roll was checked on 21 Nov; yaw and pitch were first used on 22 Nov through look mode.
 
 1. `scripts/kria/deploy.sh` from the laptop (current commit to `/opt/reflex`).
 2. Emergency stop and the Unitree remote in someone's hand. Robot standing in sport mode.

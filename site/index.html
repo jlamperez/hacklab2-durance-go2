@@ -99,7 +99,8 @@ pixi run -e ros ros-web</pre></div>
         node starts disabled and only logs what it would send; <code>enabled:=true</code> is passed on purpose, with
         someone holding the Unitree remote.</p>
       <div class="code"><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3                <span class="comment"># logs only</span>
-ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true  <span class="comment"># moves</span></pre></div>
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true \
+    look_yaw:=0.3 look_pitch:=0.2                                                    <span class="comment"># what ran on 22 Nov</span></pre></div>
       <p class="note">What it is and is not: the dog turns its trunk towards a ball held and moved close to the camera.
         ball_v3 was trained on big, close, fast balls; no accuracy has been measured on the robot.</p></div>
   </div>
@@ -435,8 +436,10 @@ pixi run -e ros ros-web     <span class="comment"># http://localhost:8080</span>
     Go2's adapter only, so the laptop sees nothing; only the board's behavior node can drive the dog. It starts disabled
     and logs what it would send. Emergency stop and the Unitree remote in someone's hand first.
     <div class="code"><pre>ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3                 <span class="comment"># logs only</span>
-ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true   <span class="comment"># moves, small angles</span></pre></div>
-    Small angles by default (<code>look_yaw:=0.15 look_pitch:=0.1</code>); <code>invert_pitch:=true</code> if the upper row tilts the nose down.</div>
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true \
+    look_yaw:=0.3 look_pitch:=0.2                                                     <span class="comment"># what ran on 22 Nov</span></pre></div>
+    Defaults are <code>look_yaw:=0.15 look_pitch:=0.1</code> rad; on 22 Nov twice that made the turn easy to see.
+    <code>invert_pitch:=true</code> if the upper row tilts the nose down.</div>
 
   <h3>What <code>run.sh</code> does</h3>
   <ol>
@@ -687,7 +690,7 @@ pixi run finetune-real --val-session sat_pm  <span class="comment"># → out/mod
     <tr><td>Follow / look controller, target contract, centroid tracker</td><td><span class="badge sim">simulation</span> unit-tested; look mode in the loop with ball_v3; yaw and pitch not checked on the real Go2</td></tr>
     <tr><td>Recordings or the live camera driving the simulated dog (<code>ros-events-sim</code>)</td><td><span class="badge sim">simulation</span> sources tested without ROS; launch not yet run under ROS</td></tr>
     <tr><td>Optional walking, keyboard and <code>/cmd_vel</code> driving, simulated drone flights</td><td><span class="badge sim">simulation</span></td></tr>
-    <tr><td>Our nodes driving the real Go2</td><td><span class="badge ok">done, 22 Nov</span> look mode with ball_v3: the trunk follows a ball held close to the camera (videos on the overview). Not measured</td></tr>
+    <tr><td>Our nodes driving the real Go2</td><td><span class="badge ok">done, 22 Nov</span> <code>run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2</code>: the trunk follows a ball held close to the camera (videos on the overview). Yaw goes the right way; pitch sign not checked on its own; not measured</td></tr>
   </table></div>
 
   <h3>The real Go2, by hand, 21 Nov 2026</h3>

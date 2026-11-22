@@ -10,7 +10,9 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
 
 - **Everything in English**: code, comments, docs, commit messages.
 - **Say what is simulated.** On 21 Nov 2026 sport-mode commands sent by hand moved the real
-  Go2 (`docs/real-robot.md`); our nodes have not driven it. The real event camera has been used
+  Go2 (`docs/real-robot.md`). On 22 Nov our pipeline drove it: `run.sh robot:=real model:=ball_v3
+  enabled:=true look_yaw:=0.3 look_pitch:=0.2`, Kria and camera on the dog, look mode turns the trunk
+  towards the ball (filmed, `site/media/`; accuracy not measured). The real event camera has been used
   for recording only (`capture/`, about 100 takes, camera on a stand), and on 22 Nov to feed the
   FPGA (the team also ran Durance's own example model on the board). The small ball detector
   was loaded on the FPGA on 21 Nov; on 22 Nov, fed by the real camera through
@@ -21,7 +23,7 @@ deploy it on a Kria KV260, and make the Go2 react through ROS 2.
   fixed-point emulation; fed by the real camera it runs at 100 frames/s and answers `none` with
   no ball in view, with a ball: brief zone decisions, accuracy not measured (`docs/fpga-zones3-2026-11-22.md`).
   The whole pipeline runs on the Kria (`kria.launch.py`, `scripts/kria/`) and drives the simulated
-  dog on the laptop over the cable; not yet run with the real Go2. The FPGA reads its input as
+  dog on the laptop over the cable, or the real Go2 (`robot:=real`, 22 Nov). The FPGA reads its input as
   HWC while despot sends CHW: `camera_tap` reorders (section 12 of that doc). Live decisions are
   weak with a scene unlike the 21 Nov recordings.
   `weights.txt` for the board is two's complement, not riverops' signed export. Keep the status table in `README.md` honest.

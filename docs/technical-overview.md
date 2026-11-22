@@ -6,8 +6,9 @@ recipes. This file explains how the parts connect: data flow, ROS 2 interfaces, 
 pipeline, the networks, and how a network gets onto the FPGA. Details and measurements stay
 in the per-topic docs; each section points to them.
 
-What is real and what is simulated, in one paragraph: our nodes have never driven the real
-Go2 (sport-mode commands were sent to it by hand on 21 Nov, `docs/real-robot.md`). The real
+What is real and what is simulated, in one paragraph: sport-mode commands were sent to the
+real Go2 by hand on 21 Nov (`docs/real-robot.md`); on 22 Nov, after this file was first written,
+the whole pipeline on the Kria drove it in look mode with ball_v3 (`run.sh robot:=real`). The real
 GenX320 event camera has recorded about 100 labelled takes and, on 22 Nov, fed two of our
 networks running on the Kria's FPGA. The whole pipeline runs on the Kria and drives the
 **simulated** dog on the laptop over the cable. No accuracy figure for the live decisions
@@ -59,7 +60,7 @@ same way as the raw events' x has not been checked on the board.
 | All on the laptop | MuJoCo camera | reflex SNN, no-learning or ball detector on CPU | MuJoCo | `pixi run -e ros ros-sim` | working; 12-shot smoke tests in `README.md` |
 | Real events, simulated dog | recordings or live KV260 stream into `event_camera` | centroid tracker or ball SNN on CPU | MuJoCo, walking | `ros-events-sim` (`docs/events-sim.md`) | sources tested without ROS; launch not yet run under ROS |
 | Whole pipeline on the Kria | live GenX320 via despot | zones3 or ball_v3 on the FPGA | MuJoCo on the laptop over Ethernet | `/opt/reflex/run.sh robot:=sim` + `ros-robot-sim` or `ros-look` on the laptop | runs (22 Nov); live decisions weak and unmeasured |
-| Hackathon goal | live GenX320 via despot | network on the FPGA | real Go2 | `/opt/reflex/run.sh robot:=real enabled:=true` | not run |
+| Real dog | live GenX320 via despot | ball_v3 on the FPGA | real Go2 | `/opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2` | ran 22 Nov: the trunk follows the ball; not measured |
 
 ## 4. ROS 2 interface
 
@@ -326,10 +327,10 @@ pixi project for Durance's river-tools.
 
 ## 12. Open
 
-- Our nodes have not driven the real Go2. Next step: `run.sh robot:=real` with the behavior
+- Look mode drove the real Go2 on 22 Nov; the reflex modes have not. Before any new mode: `run.sh robot:=real` with the behavior
   disabled, read what it would send, then `enabled:=true` with someone on the remote; for
-  look mode, `ros-look dry_run:=true` first. Yaw and pitch signs and reach of the look
-  gestures are not checked on the real robot.
+  look mode, `ros-look dry_run:=true` first. On the robot yaw went the right way; the pitch
+  sign and the reach of the gestures were not checked on their own.
 - No accuracy figure for live decisions from either FPGA network.
 - ball_v3 only sees big, close, fast balls; it needs fine-tuning on our camera's data (small
   balls at the real distance, one step per frame with state kept). Same architecture, so only

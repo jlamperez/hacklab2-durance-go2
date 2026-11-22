@@ -31,7 +31,7 @@ on a PC:
 
 Four boxes joined by three ROS 2 topics. Each box can be swapped without touching the
 others: that is how the same code runs fully simulated on one PC, with the camera side on
-a Kria board, and (the plan for the hackathon) with the real camera and the real dog.
+a Kria board, and with the real camera and the real dog (22 Nov).
 
 Two loops around that pipeline:
 
@@ -41,7 +41,11 @@ Two loops around that pipeline:
 
 ## Status
 
-Our nodes have not driven the real Go2. **One of our networks runs on Durance's FPGA**: the
+**On 22 Nov the whole pipeline drove the real Go2**: with the Kria and the event camera on its
+back, ball_v3 on the FPGA names the ball's zone and the board's behavior node turns the dog's
+trunk towards it (`ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2`;
+videos on the project guide). Filmed, not measured: no accuracy figure on the robot.
+**Two of our networks run on Durance's FPGA**. The first, the
 target-zone SNN (`models/zones3`, 2x80x80 in, 4x1x1 out: `none / left / center / right`),
 trained on 22 Nov on our real-camera recordings, firmware job #44. Fed synthetic frames, it
 answers every frame in 1-7 ms, and its output spikes match the laptop's fixed-point emulation
@@ -49,6 +53,9 @@ neuron by neuron (`docs/fpga-zones3-2026-11-22.md`). Fed by the real camera it r
 frames per second and answers `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured, and not
 connected to the robot. The board needs `weights.txt` in two's complement;
 riverops 0.2.0 exports signed values.
+The second, the teammates' ball zone classifier (`models/ball_v3`, 2x320x320 in, six zones
++ none), is the one that drives the dog; its board output matches the integer emulation
+(`docs/fpga-ball-zones-v3-2026-11-22.md`).
 The real event camera has been used for recording: about 100 labelled takes in four sessions
 on 21 Nov, camera on a stand, not on the robot (`docs/recording-real-data.md`); the team also
 ran Durance's own example model on the board. The earlier network, the small ball detector
@@ -76,16 +83,16 @@ not known.
 | Firmware for the ball detector (riversdk.dev, KV260 + GenX320) | full-size network: failed in place-and-route twice (job #30 and a retry). Small network (`train_ball_small.py`, about 5x fewer weights): generated, job #35, in `models/firmware/kv260_ball_small_job35/`; serves any weights of that architecture. **Deployed on the Kria on 21 Nov** with an early QAT checkpoint: bitstream loaded, server running with our config, port 3333 open. 22 Nov: fed by the real camera through `tools/spleat_merge_proxy.py`, one inference came back, then the FPGA hung; Durance's example works on the same board, so it is our bitstream (`docs/fpga-run-2026-11-22.md`) |
 | Durance's KV260 image (ROS 2 Humble, OpenEB, SPLEAT inference server) | read from the microSD, not booted (`docs/durance-kria-image.md`) |
 | Follow a ball: target contract (`u, v, confidence`), no-learning centroid tracker, move-stop-look controller with safety limits, follow and target nodes, scripted ball in the simulator (`docs/follow.md`) | controller and tracker unit-tested; closed loop run headless without ROS (results in `docs/follow.md`). ROS nodes written, not yet built or run. Not tried on the real Go2 |
-| Look mode: nine trunk gestures (left/centre/right x up/level/down, `Euler` yaw + pitch), feet planted, camera-on-trunk correction, hysteresis, keys 1-9 (`docs/follow.md`) | controller unit-tested; trunk yaw and pitch simulated with our own IK (`Go2Sim.set_trunk`), closed loop run headless without ROS. ROS changes not built or run. Yaw and pitch signs and reach NOT checked on the real Go2 |
+| Look mode: nine trunk gestures (left/centre/right x up/level/down, `Euler` yaw + pitch), feet planted, camera-on-trunk correction, hysteresis, keys 1-9 (`docs/follow.md`) | controller unit-tested; trunk yaw and pitch simulated with our own IK (`Go2Sim.set_trunk`), closed loop run headless without ROS. ROS changes not built or run. The board's behavior node uses the same gestures on the real Go2 (22 Nov, row below); the follow node itself not tried on the robot |
 | Event camera node: GenX320 recordings or the live KV260 stream into the simulation (`docs/events-sim.md`) | sources tested, recordings played through tracker and follow controller without ROS; node and launch file not yet run under ROS; live path not tried with the real camera |
 | Ball SNN from `feat/training` as a target source: `ball_target` node, `ros-events-sim tracker:=snn` (`docs/events-sim.md`). Default: the zone classifier (six zones or none, `out/models/ball_zones_best.pt`); the position U-Net still supported | zones checkpoint loads and runs on CPU (x86); over sat_follow2 without ROS the zone it names matches the events' position in 94 % of frames (30 ms windows), but it also fires on people and the drone. Node and launch not yet run under ROS |
 | Look mode from the FPGA's ball zone: follow node `input:=zone` on `/durance/ball_zone`; `ball_zone_sim` stands in for the Kria's `ball_node` (`tracker:=fpga-sim`, `ros-ball-zone-sim source:=keys`) | zone -> gesture mapping and the vote unit-tested (`tests/test_zone_target.py`, `tests/test_zone_vote.py`). Not yet run under ROS |
 | Simulated drone flights (UZ65-sized) with head modes, a second follow behavior (turn in place, greet when the ball stops: `reflex/runtime/follow_fsm.py`, `ball_tracker.py`), from branch `simulation` (`docs/simulation-drone.md`) | recordings generated in simulation; FSM and tracker unit-tested (`tests/test_follow_fsm.py`). Not wired into ROS. Lives beside the move-stop-look controller in `follow.py`; which one we run is not decided |
 | Camera to FPGA on the board (Durance's `despot_send_and_forget` + `tools/spleat_merge_proxy.py`) | runs: frames accepted by the server, one inference back, then the FPGA hung (`docs/fpga-run-2026-11-22.md`) |
 | Target-zone SNN on the FPGA (`models/zones3`, job #44, `despot_send_and_forget` with `downsampling: 4`, no adapter) | deployed 22 Nov; synthetic frames: 15/15 answered, spikes match the emulation (`tools/spleat_poke.py`, `tools/emulate_poke.py`). Real camera (despot, `spleat-read --zones-dir`): 100 frames/s, about 1.2 ms per frame, decision `none` with no ball in view; with a ball: brief zone decisions, accuracy not measured. Whether despot sends the mean or the sum of each 4x4 block is unchecked |
-| Ball zone classifier on the FPGA (`models/ball_v3`, teammates' `train_ball_zones.py`, 2x320x320 in, 6 zones + none, firmware in `models/firmware/ball_zones_v3/`) | deployed 22 Nov; output identical to the integer emulation on synthetic and on recorded live camera frames (input read as HWC). **In the loop with the real camera**: `run.sh model:=ball_v3` publishes `/durance/ball_zone`, the follow node's look mode turns the **simulated** dog towards it, `ros-web` shows the zone. The board's behavior node now has the same look mode on the six zones (`mode:=look`, ball_v3's default; unit-tested, run on the laptop with a hand-published zone, not yet on the board). Needs every frame on the FPGA (camera at 50 Hz) and a readout where any zone spike wins. Detects only a ball close to the camera and moved fast (trained on big balls); accuracy not measured (`docs/fpga-ball-zones-v3-2026-11-22.md`). Not run with the real Go2 |
-| Whole pipeline on the Kria (`kria.launch.py`, `scripts/kria/`): camera -> `camera_tap` -> FPGA -> `fpga_perception` -> `behavior` -> `/api/sport/request`; only the robot changes (`robot:=sim` laptop MuJoCo dog, `robot:=real` Go2). `reflex_msgs`/`reflex_ros` cross-compiled with Durance's Docker image | runs on the board (22 Nov); decisions reach the simulated dog over the cable, camera picture in `ros-web`. Input fixed: `scaling: 256` (despot sends sums), noise filter off, frames reordered CHW -> HWC by `camera_tap` (the FPGA reads HWC; found by replaying recordings into the board, `tools/replay_to_fpga.py`) (`docs/fpga-zones3-2026-11-22.md` sections 10-12). Live decisions weak with today's scene (the simulated dog reacts now and then); image orientation unchecked. Not yet run with the real Go2 |
-| Our nodes driving the real Go2 | not started |
+| Ball zone classifier on the FPGA (`models/ball_v3`, teammates' `train_ball_zones.py`, 2x320x320 in, 6 zones + none, firmware in `models/firmware/ball_zones_v3/`) | deployed 22 Nov; output identical to the integer emulation on synthetic and on recorded live camera frames (input read as HWC). **In the loop with the real camera**: `run.sh model:=ball_v3` publishes `/durance/ball_zone`, the follow node's look mode turns the **simulated** dog towards it, `ros-web` shows the zone. The board's behavior node now has the same look mode on the six zones (`mode:=look`, ball_v3's default; unit-tested, and **run on the real Go2 on 22 Nov** with `look_yaw:=0.3 look_pitch:=0.2`: the trunk turns towards the ball). Needs every frame on the FPGA (camera at 50 Hz) and a readout where any zone spike wins. Detects only a ball close to the camera and moved fast (trained on big balls); accuracy not measured (`docs/fpga-ball-zones-v3-2026-11-22.md`) |
+| Whole pipeline on the Kria (`kria.launch.py`, `scripts/kria/`): camera -> `camera_tap` -> FPGA -> `fpga_perception` -> `behavior` -> `/api/sport/request`; only the robot changes (`robot:=sim` laptop MuJoCo dog, `robot:=real` Go2). `reflex_msgs`/`reflex_ros` cross-compiled with Durance's Docker image | runs on the board (22 Nov); decisions reach the simulated dog over the cable, camera picture in `ros-web`. Input fixed: `scaling: 256` (despot sends sums), noise filter off, frames reordered CHW -> HWC by `camera_tap` (the FPGA reads HWC; found by replaying recordings into the board, `tools/replay_to_fpga.py`) (`docs/fpga-zones3-2026-11-22.md` sections 10-12). Live decisions weak with today's scene (the simulated dog reacts now and then); image orientation unchecked. **Run with the real Go2 on 22 Nov** (`robot:=real`, board on the dog's back): look mode with ball_v3 turns the trunk towards a ball held close to the camera; not measured |
+| Our nodes driving the real Go2 | **done, 22 Nov**: `ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2`. The trunk follows a ball held and moved close to the camera (videos in `site/media/`, on the project guide). Yaw direction right as seen on video; pitch sign not checked on its own; accuracy not measured |
 
 ## Commands
 
@@ -172,7 +179,7 @@ or the robot only:
 | Kria camera + `ros-robot-sim` | webcam on the Kria | simulator | no, the Kria does |
 | `ros-events-sim` | GenX320 recordings, or the live KV260 camera | simulator, walking | no, the `event_camera` node does |
 | `ros-drive` + `ros-teleop` | none (keyboard driving) | simulator, walking | no |
-| at the hackathon | real event camera on the Kria | real Go2 | no simulator |
+| `run.sh robot:=real` on the Kria (22 Nov) | real event camera on the Kria, network on the FPGA | real Go2 | no simulator |
 
 The whole pipeline on one page, in the browser (`pixi run -e ros ros-web`, simulation only so far):
 

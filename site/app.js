@@ -364,7 +364,8 @@ function renderBuilder() {
       term("PC", "the simulated dog, robot only", [`pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0${s.robot === "simweb" ? " viewer:=false" : ""}${park}`]);
     } else {
       term("PC → Kria", "dry run: behavior logs what it would send", [`ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=${s.fmodel}`]);
-      term("PC → Kria", "then for real, someone on the remote", [`ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=${s.fmodel} enabled:=true`]);
+      term("PC → Kria", "then for real, someone on the remote", [`ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=${s.fmodel} enabled:=true${s.fmodel === "ball_v3" ? " look_yaw:=0.3 look_pitch:=0.2" : ""}`,
+        ...(s.fmodel === "ball_v3" ? ["# what ran on 22 Nov; defaults are look_yaw:=0.15 look_pitch:=0.1"] : [])]);
     }
   }
 
@@ -436,6 +437,7 @@ const CMDS = [
   ["FPGA", "PC", "pixi run --manifest-path tools/river/pixi.toml -e tools river-tools deploy out/spleat/MODEL/deploy.yaml root@192.168.77.1", "Durance's tool: copy firmware and weights to the board"],
   ["FPGA", "PC", "pixi run spleat-read --zones-dir models/zones3", "Read the FPGA's output from the board: winning zone over the last 20 frames"],
   ["Kria", "PC", "scripts/kria/deploy.sh", "Cross-compile reflex_msgs / reflex_ros in Durance's Docker image → /opt/reflex on the board"],
+  ["Kria", "PC", "ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2", "The real Go2 looks at the ball: what ran on 22 Nov. Without enabled:=true it only logs"],
   ["Kria", "PC", "ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim model:=ball_v3", "Whole pipeline on the board, simulated dog on the laptop. robot:=real for the Go2 (starts disabled; enabled:=true)"],
   ["Kria", "PC", "scripts/sync_kria.sh ubuntu@kria.local", "Webcam rehearsal board: copy the code and build its Docker image"],
   ["Kria", "PC", "NO_DOCKER=1 scripts/sync_kria.sh ubuntu@kria.local", "Copy only, for the pixi route"],

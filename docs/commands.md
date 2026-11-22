@@ -263,12 +263,13 @@ pixi run -e ros ros-web             # http://localhost:8080: camera, 2x3 grid, z
 The ball must be close to the camera and moved fast. To drive it from the laptop instead
 (keyboard, gestures by hand): `run.sh ... enabled:=false` and `pixi run -e ros ros-look`, `f` to start.
 
-**Same on the real Go2** (not run yet; `docs/real-robot.md`). With `robot:=real` the board's
+**Same on the real Go2** (run on 22 Nov with the last line; `docs/real-robot.md`). With `robot:=real` the board's
 DDS leaves on the Go2's adapter only: the laptop sees nothing, `ros-look` and `ros-web` cannot
 be used. Only the board's behavior node can drive the dog.
 ```bash
 ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3                  # logs what it would send
 ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true    # moves; small angles by default
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=real model:=ball_v3 enabled:=true look_yaw:=0.3 look_pitch:=0.2   # what ran on 22 Nov
 ```
 
 **Compare the network with the simple detector**
