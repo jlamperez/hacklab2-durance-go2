@@ -2,7 +2,7 @@
 import pytest
 
 from reflex.runtime.follow import FollowConfig, FollowController
-from reflex.runtime.zone_target import ZONES, target_from_zone, zone_center
+from reflex.runtime.zone_target import ZONES, target_from_decision, target_from_zone, zone_center
 
 
 def test_none_is_nothing_seen():
@@ -32,4 +32,23 @@ def test_look_mode_points_at_each_zone(zone, gesture):
     ctrl.enable(0.0)
     for i in range(20):                       # 20 Hz, as zone_target republishes
         ctrl.update(target_from_zone(zone, i * 50_000), i * 0.05)
+    assert ctrl.gesture == gesture
+
+
+def test_decision_is_a_column_at_the_middle_row():
+    t = target_from_decision("left", 0.55, 9)
+    assert (t.u, t.v, t.confidence, t.t_us) == pytest.approx((-2 / 3, 0.0, 0.55, 9))
+    assert target_from_decision("right", 0.5).u == pytest.approx(2 / 3)
+    assert not target_from_decision("none", 0.9).found
+    with pytest.raises(ValueError):
+        target_from_decision("upper_left", 1.0)
+
+
+@pytest.mark.parametrize("label, gesture", [("left", "left"), ("center", "center"), ("right", "right")])
+def test_look_mode_follows_fpga_decisions(label, gesture):
+    # fpga_perception: one decision per 10 ms frame, confidence around 0.5-0.55 on 22 Nov
+    ctrl = FollowController(FollowConfig(mode="look", camera_on_trunk=False, min_confidence=0.45))
+    ctrl.enable(0.0)
+    for i in range(50):
+        ctrl.update(target_from_decision(label, 0.5, i * 10_000), i * 0.01)
     assert ctrl.gesture == gesture

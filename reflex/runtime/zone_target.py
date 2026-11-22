@@ -9,6 +9,9 @@ node keeps the latest zone and republishes it at a fixed rate through `target_fr
 
 The zone becomes its centre, as in reflex/runtime/ball_snn.py: u in {-2/3, 0, +2/3},
 v in {-1/2, +1/2}. The board sends no probability, so a zone gets a fixed confidence.
+
+`target_from_decision` does the same for the three-zone network on the FPGA (models/zones3,
+fpga_perception on /reflex/decision): left / center / right become u = -2/3, 0, +2/3.
 """
 from __future__ import annotations
 
@@ -33,3 +36,19 @@ def target_from_zone(name: str, t_us: int = 0, confidence: float = 1.0) -> Targe
         raise ValueError(f"unknown zone {name!r}, expected none or one of {', '.join(ZONES)}")
     u, v = zone_center(ZONES.index(name))
     return Target(u, v, confidence, t_us)
+
+
+# Reflex decisions (reflex_msgs/ReflexDecision.label) name a third of the image, no row.
+DECISION_U = {"left": -2.0 / 3.0, "center": 0.0, "right": 2.0 / 3.0}
+
+
+def target_from_decision(label: str, confidence: float, t_us: int = 0, v: float = 0.0) -> Target:
+    """A reflex decision (`none / left / center / right`, e.g. fpga_perception's zones3 readout)
+    as a Target: the third's centre column, at image row `v` (0 = the middle, so look mode
+    picks the level gestures left / center / right). `none` -> nothing seen. Unknown labels raise."""
+    label = label.strip().lower()
+    if label in ("", "none"):
+        return no_target(t_us)
+    if label not in DECISION_U:
+        raise ValueError(f"unknown decision {label!r}, expected none, left, center or right")
+    return Target(DECISION_U[label], v, confidence, t_us)

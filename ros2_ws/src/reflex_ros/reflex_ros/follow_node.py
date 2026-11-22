@@ -1,6 +1,7 @@
 """Follow node: where the target is in, sport-mode requests out. Move, stop, look.
 
   subscribes  /reflex/target        reflex_msgs/Target   (target node, or the SNN's adapter), input:=target
+              /reflex/decision      reflex_msgs/ReflexDecision (fpga_perception, perception), input:=decision
               /durance/ball_zone    std_msgs/String      (the Kria's ball_node: the FPGA zones network),
                                                          input:=zone. Default of ros-look
   publishes   /api/sport/request    unitree_api/Request  (BalanceStand, Move, StopMove, Pose, Euler, Damp)
@@ -11,6 +12,8 @@
     pixi run -e ros ros-look                   # = mode:=look input:=zone: nine gestures, Euler yaw + pitch,
                                                #   from the FPGA's ball zone on /durance/ball_zone
     pixi run -e ros ros-look input:=target     # look mode from /reflex/target instead
+    pixi run -e ros ros-look input:=decision   # look mode from /reflex/decision (left / center / right,
+                                               #   e.g. fpga_perception: zones3 on the FPGA)
 
 input:=zone. ball_node publishes upper_left ... lower_right or none, only when the zone
 changes (transient-local). The node keeps the latest and feeds it to the controller at
@@ -44,11 +47,12 @@ from std_srvs.srv import SetBool
 from reflex.runtime import sport_api as api
 from reflex.runtime.follow import FollowConfig, FollowController
 from reflex.runtime.target import Target
-from reflex.runtime.zone_target import target_from_zone
+from reflex.runtime.zone_target import target_from_decision, target_from_zone
 try:
+    from reflex_msgs.msg import ReflexDecision
     from reflex_msgs.msg import Target as TargetMsg
 except ImportError:      # input:=zone needs no reflex_msgs: runs on a board without our build
-    TargetMsg = None
+    ReflexDecision = TargetMsg = None
 from unitree_api.msg import Request
 
 # Hard limits: whatever the parameters say, the node never commands more than this.
@@ -114,8 +118,14 @@ class FollowNode(Node):
                 raise RuntimeError("input:=target needs reflex_msgs (build ros2_ws); input:=zone does not")
             self.create_subscription(TargetMsg, "/reflex/target", self.on_target, 10)
             self.source = "/reflex/target"
+        elif self.input == "decision":
+            if ReflexDecision is None:
+                raise RuntimeError("input:=decision needs reflex_msgs (build ros2_ws)")
+            self.decision_v = float(p("decision_v", 0.0).value)     # image row for the decisions: level
+            self.create_subscription(ReflexDecision, "/reflex/decision", self.on_decision, 10)
+            self.source = "/reflex/decision"
         else:
-            raise ValueError(f"input:={self.input}: use target or zone")
+            raise ValueError(f"input:={self.input}: use target, zone or decision")
         self.get_logger().info(f"targets from {self.source}")
         self.create_service(SetBool, "/reflex/follow/enable", self.on_enable)
         self.create_timer(0.02, self.on_tick)
@@ -178,6 +188,15 @@ class FollowNode(Node):
     def on_target(self, msg: TargetMsg) -> None:
         self._stamp_us = msg.header.stamp.sec * 1_000_000 + msg.header.stamp.nanosec // 1000
         self.feed(Target(float(msg.u), float(msg.v), float(msg.confidence), self._stamp_us))
+
+    def on_decision(self, msg) -> None:
+        self._stamp_us = msg.header.stamp.sec * 1_000_000 + msg.header.stamp.nanosec // 1000
+        try:
+            target = target_from_decision(msg.label, float(msg.confidence), self._stamp_us, self.decision_v)
+        except ValueError as e:
+            self.get_logger().warn(str(e))
+            return
+        self.feed(target)
 
     def feed(self, target: Target) -> None:
         self._last_target_t, self._silent_warned = self.now(), False

@@ -94,6 +94,32 @@ top 30 % of the image.
 Keys 1 to 9 take a gesture by hand, numpad layout (7 = left_up, 5 = centre, 3 =
 right_down), whether following or not. That is how to check the signs on the real robot.
 
+### Live, from the FPGA: `input:=decision`
+
+The three-zone network on the Kria's FPGA (`models/zones3`, `fpga_perception`,
+`docs/fpga-zones3-2026-11-22.md`) publishes `none / left / center / right` on `/reflex/decision`.
+`input:=decision` feeds those to look mode as u = -2/3, 0, +2/3 at the middle row
+(`decision_v:=0.0`), so the dog turns its trunk to the level gestures left, center or right.
+The decisions carry confidence 0.5-0.55, so set `min_confidence:=0.45` (default 0.5).
+
+Live camera -> FPGA -> simulated dog in look mode, board on the laptop's `enp8s0`
+(192.168.77.x). Three terminals on the laptop:
+
+```bash
+export CYCLONEDDS_URI='<CycloneDDS><Domain Id="any"><General><Interfaces><NetworkInterface name="enp8s0"/></Interfaces></General></Domain></CycloneDDS>'
+pixi run -e ros ros-build                                            # once, after pulling
+pixi run -e ros ros-robot-sim behavior:=false dds_interface:=enp8s0  # 1: the MuJoCo dog, robot only
+ssh -t root@192.168.77.1 /opt/reflex/run.sh robot:=sim enabled:=false   # 2: camera + FPGA; the board's
+                                                                     #    behavior node only logs
+pixi run -e ros ros-look input:=decision camera_on_trunk:=false min_confidence:=0.45   # 3: f to start
+pixi run -e ros ros-web                                              # optional, same CYCLONEDDS_URI
+```
+
+`camera_on_trunk:=false`: the camera stands on the table, it does not turn with the simulated
+trunk. `enabled:=false` on the board matters: otherwise its behavior node sends lean and
+sidestep requests to the same dog. The mapping is unit-tested (tests/test_zone_target.py);
+this chain has not run yet (22 Nov).
+
 ## Safety
 
 All in `FollowController`, plus hard caps in the node that no parameter can exceed:
