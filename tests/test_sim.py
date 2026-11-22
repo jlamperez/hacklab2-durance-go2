@@ -234,3 +234,25 @@ def test_slide_follows_the_real_go2_sidestep(sim):
     for mark, cm in real.items():
         assert abs(at[mark] - cm) < 1.0, (mark, at[mark])
     assert sim.upright() > 0.99 and np.abs(sim.data.qvel[:6]).max() < 0.05
+
+
+def test_drone_is_opt_in():
+    plain = Go2Sim(seed=0)
+    with pytest.raises(KeyError):
+        plain.model.body("drone")
+    plain.park_drone()                        # harmless without a drone
+    with pytest.raises(RuntimeError):
+        plain.set_drone([1.0, 0.0, 0.5])
+    sim = Go2Sim(seed=0, drone=True)
+    sim.set_drone([1.0, 0.0, 0.5])
+    mujoco.mj_forward(sim.model, sim.data)
+    assert np.allclose(sim.data.xpos[sim.model.body("drone").id], [1.0, 0.0, 0.5])
+
+
+def test_drone_dataset_plan_is_fixed_and_unique():
+    from reflex.sim.drone_dataset import plan
+    jobs = plan()
+    assert jobs == plan()                                   # the same on every machine
+    assert len({seed for _, _, seed, _ in jobs}) == len(jobs)
+    assert {s for *_, s in jobs} == {"train", "validation", "test"}
+    assert any(b == "none" for b, *_ in jobs)

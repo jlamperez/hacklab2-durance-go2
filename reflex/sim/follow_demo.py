@@ -200,7 +200,7 @@ def panel(img, title, hw=(320, 320)):
 
 def run_episode(name: str, seed: int, args, writer=None, live=None) -> tuple[Result, np.ndarray]:
     rng = np.random.default_rng(seed)
-    sim = Go2Sim(seed=seed, eye_hw=(320, 320), third_hw=(320, 480), fast_eye=True)
+    sim = Go2Sim(seed=seed, eye_hw=(320, 320), third_hw=(320, 480), fast_eye=True, drone=True)
     sim.set_camera_mount(**MAST)
     sim.enable_walking()
     sim.reset()

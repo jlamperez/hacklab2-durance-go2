@@ -18,7 +18,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
-SCENES = ("lab", "park")
+SCENES = ("lab", "park", "hall")
 TEX = 256      # texture side in pixels
 
 
@@ -155,3 +155,122 @@ def add_park(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
                    contype=0, conaffinity=0)
     w.add_geom(name="goal_bar", type=G.mjGEOM_CAPSULE, pos=[-0.7, 0, 1.0], size=[0.04, 1.2, 0],
                quat=[0.7071068, 0.7071068, 0, 0], rgba=[0.95, 0.95, 0.95, 1], contype=0, conaffinity=0)
+
+
+# ---------------------------------------------------------------------------- hall
+# An indoor room like the one the team tests in: a dark concrete floor, plain walls, a few
+# things on and against the walls. Built for the drone simulations (scene="hall"). Every
+# seed draws its own room: wall colours and positions, what hangs on the walls, the floor's
+# brightness, and in half of the rooms a rug in front of the dog.
+
+WALL_COLOURS = ([0.82, 0.81, 0.78], [0.70, 0.70, 0.69], [0.78, 0.74, 0.64], [0.62, 0.68, 0.72],
+                [0.66, 0.72, 0.64], [0.50, 0.50, 0.49])
+RUG_COLOURS = ([0.45, 0.12, 0.12], [0.20, 0.27, 0.42], [0.62, 0.55, 0.42], [0.22, 0.36, 0.25],
+               [0.30, 0.30, 0.32])
+
+
+def hall_textures(rng: np.random.Generator) -> dict[str, np.ndarray]:
+    n = TEX
+    fine, mid, coarse = _noise(rng, n, 1.0), _noise(rng, n, 5), _noise(rng, n, 40)
+    out = {}
+    # Dark concrete: speckle and cloudy patches, a darker saw-cut joint along two edges.
+    grey = 0.27 * rng.uniform(0.8, 1.2)
+    concrete = _rgb([grey, grey, grey * 0.97], 0.45 * fine + 0.25 * mid + 0.30 * coarse, 0.35)
+    concrete[:2, :] = (concrete[:2, :] * 0.6).astype(np.uint8)
+    concrete[:, :2] = (concrete[:, :2] * 0.6).astype(np.uint8)
+    out["hall_floor"] = concrete
+    # Rug: a border and an inner pattern (stripes or a diamond grid), woven noise.
+    y, x = np.mgrid[0:n, 0:n] / n
+    base = np.asarray(RUG_COLOURS[rng.integers(len(RUG_COLOURS))], float)
+    accent = np.clip(base * rng.uniform(1.4, 2.0) + 0.08, 0, 1)
+    border = np.minimum(np.minimum(x, 1 - x), np.minimum(y, 1 - y)) < 0.08
+    if rng.random() < 0.5:
+        pattern = (np.floor(x * rng.integers(6, 14)) % 2) == 0
+    else:
+        k = rng.integers(4, 9)
+        pattern = (np.abs((x * k) % 1 - 0.5) + np.abs((y * k) % 1 - 0.5)) < 0.2
+    rug = _rgb(base, 0.7 * fine + 0.3 * mid, 0.3)
+    inner = pattern & ~border
+    rug[inner] = _rgb(accent, fine, 0.2)[inner]
+    rug[border] = _rgb(accent * 0.8, fine, 0.2)[border]
+    out["hall_rug"] = rug
+    for i, c in enumerate(rng.permutation(len(WALL_COLOURS))[:4]):      # plaster, one colour per wall
+        out[f"hall_wall{i}"] = _rgb(WALL_COLOURS[c], 0.5 * coarse + 0.5 * fine, 0.08)
+    return out
+
+
+def add_hall(spec: mujoco.MjSpec, rng: np.random.Generator) -> None:
+    """Add a room (floor, walls, ceiling, lights, wall items, maybe a rug) drawn from `rng`."""
+    G = mujoco.mjtGeom
+    w = spec.worldbody
+    tex = hall_textures(np.random.default_rng(int(rng.integers(1 << 31))))
+    repeat = {"hall_floor": ([0.35, 0.35], True), "hall_rug": ([1, 1], False)}
+    for name, img in tex.items():
+        spec.add_texture(name=name, type=mujoco.mjtTexture.mjTEXTURE_2D, width=TEX, height=TEX,
+                         nchannel=3, data=img.ravel().tolist())
+        rep, uniform = repeat.get(name, ([0.5, 0.5], True))
+        mat = spec.add_material(name=name, texrepeat=rep, texuniform=uniform)
+        mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = name
+    spec.add_texture(name="sky", type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+                     builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
+                     rgb1=[0.55, 0.55, 0.55], rgb2=[0.35, 0.35, 0.35], width=256, height=1536)
+    for k, (x, y) in enumerate(((1.0, -1.5), (3.5, 1.5), (-1.0, 1.0))):    # ceiling lights
+        w.add_light(name=f"hall_light{k}", pos=[x, y, 3.2], dir=[0, 0, -1], diffuse=[0.28, 0.28, 0.27])
+
+    w.add_geom(name="floor", type=G.mjGEOM_PLANE, size=[0, 0, 0.05], material="hall_floor")
+    front, side, back, height = rng.uniform(5.5, 8.0), rng.uniform(3.2, 5.0), rng.uniform(2.5, 4.0), 3.4
+    walls = (("front", [front, 0, height / 2], [0.05, side, height / 2]),
+             ("left", [(front - back) / 2, side, height / 2], [(front + back) / 2, 0.05, height / 2]),
+             ("right", [(front - back) / 2, -side, height / 2], [(front + back) / 2, 0.05, height / 2]),
+             ("rear", [-back, 0, height / 2], [0.05, side, height / 2]))
+    for i, (name, pos, size) in enumerate(walls):
+        w.add_geom(name=f"wall_{name}", type=G.mjGEOM_BOX, pos=pos, size=size, material=f"hall_wall{i}")
+    w.add_geom(name="ceiling", type=G.mjGEOM_BOX, pos=[(front - back) / 2, 0, height + 0.05],
+               size=[(front + back) / 2, side, 0.05], rgba=[0.75, 0.75, 0.74, 1], contype=0, conaffinity=0)
+
+    # Things on the walls the camera sees: doors, posters, a whiteboard, a radiator, shelves.
+    def on_wall(i: int, wall: str, u: float, z: float, half_w: float, half_h: float, depth: float, rgb) -> None:
+        if wall == "front":
+            pos, size = [front - 0.05 - depth, u, z], [depth, half_w, half_h]
+        else:
+            sgn = 1 if wall == "left" else -1
+            pos, size = [u, sgn * (side - 0.05 - depth), z], [half_w, depth, half_h]
+        w.add_geom(name=f"hall_item{i}", type=G.mjGEOM_BOX, pos=pos, size=size, rgba=[*rgb, 1.0],
+                   contype=0, conaffinity=0)
+
+    items = 0
+    for wall in ("front", "left", "right"):
+        lo, hi = (-(side - 0.8), side - 0.8) if wall == "front" else (0.5, front - 0.8)
+        for _ in range(int(rng.integers(1, 4))):
+            u = float(rng.uniform(lo, hi))
+            kind = rng.choice(["door", "poster", "whiteboard", "radiator", "shelf"])
+            if kind == "door":
+                colours = ([0.35, 0.25, 0.18], [0.55, 0.56, 0.58], [0.20, 0.30, 0.45])
+                on_wall(items, wall, u, 1.02, 0.45, 1.02, 0.02, colours[rng.integers(3)])
+            elif kind == "poster":
+                on_wall(items, wall, u, rng.uniform(1.3, 1.7), rng.uniform(0.25, 0.45), rng.uniform(0.3, 0.5),
+                        0.005, rng.uniform(0.1, 0.9, 3))
+            elif kind == "whiteboard":
+                on_wall(items, wall, u, 1.4, 0.8, 0.55, 0.015, [0.93, 0.93, 0.92])
+            elif kind == "radiator":
+                on_wall(items, wall, u, 0.45, 0.6, 0.3, 0.05, [0.88, 0.88, 0.86])
+            else:
+                colours = ([0.45, 0.33, 0.22], [0.30, 0.31, 0.33])
+                on_wall(items, wall, u, 0.9, 0.45, 0.9, 0.2, colours[rng.integers(2)])
+            items += 1
+    # A few boxes along the side walls, out of the flying space in front of the dog.
+    for k in range(int(rng.integers(2, 5))):
+        sgn = 1 if rng.random() < 0.5 else -1
+        h = rng.uniform(0.2, 0.8)
+        w.add_geom(name=f"hall_box{k}", type=G.mjGEOM_BOX,
+                   pos=[rng.uniform(0.5, front - 0.6), sgn * (side - rng.uniform(0.4, 0.8)), h / 2],
+                   size=[rng.uniform(0.15, 0.4), rng.uniform(0.15, 0.3), h / 2],
+                   rgba=[*rng.uniform(0.15, 0.7, 3), 1.0])
+
+    # Half of the rooms: a rug in front of the dog (paint-thin, no collisions).
+    if rng.random() < 0.5:
+        yaw = rng.uniform(-0.35, 0.35)
+        w.add_geom(name="hall_rug", type=G.mjGEOM_BOX, material="hall_rug", contype=0, conaffinity=0,
+                   pos=[rng.uniform(1.6, 2.8), rng.uniform(-1.0, 1.0), 0.003],
+                   size=[rng.uniform(0.8, 1.3), rng.uniform(1.0, 1.6), 0.003],
+                   quat=[np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)])

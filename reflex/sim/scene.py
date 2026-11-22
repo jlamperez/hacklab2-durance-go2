@@ -148,8 +148,11 @@ def _look_at(pos, target) -> list[float]:
     return [*right, *up]
 
 
-def build_model(rng: np.random.Generator | None = None, scene: str = "lab") -> mujoco.MjModel:
-    """`scene`: "lab" (default: checkered floor, wall, boxes) or "park" (reflex/sim/scenery.py)."""
+def build_model(rng: np.random.Generator | None = None, scene: str = "lab",
+                drone: bool = False) -> mujoco.MjModel:
+    """`scene`: "lab" (default: checkered floor, wall, boxes), "park" or "hall" (indoor room
+    with a dark concrete floor, drawn per seed; both in reflex/sim/scenery.py).
+    `drone`: add the UZ65 drone (off by default, so ball scenes stay as they were)."""
     from reflex.sim import scenery
     if scene not in scenery.SCENES:
         raise ValueError(f"unknown scene {scene!r}; choose one of {scenery.SCENES}")
@@ -179,6 +182,8 @@ def build_model(rng: np.random.Generator | None = None, scene: str = "lab") -> m
     w = spec.worldbody
     if scene == "park":
         scenery.add_park(spec, rng)
+    elif scene == "hall":
+        scenery.add_hall(spec, rng)
     else:
         checker("floor", [0.55, 0.55, 0.52], [0.42, 0.43, 0.42], [2, 2])
         checker("wall", [0.75, 0.72, 0.66], [0.55, 0.56, 0.60], [1.5, 1.5])
@@ -210,32 +215,33 @@ def build_model(rng: np.random.Generator | None = None, scene: str = "lab") -> m
         walker.add_geom(name=f"walker_{name}", type=gtype, pos=pos, size=size,
                         rgba=[0.2, 0.25, 0.5, 1.0], contype=0, conaffinity=0)
 
-    # Tiny-whoop drone sized like an Eachine UZ65 (approximate public specs, not measured):
-    # 65 mm motor-to-motor diagonal, 31 mm two-blade props inside ducts, about 85 mm across
-    # and 30 mm high. Moved kinematically. The frame (pod + ducts) and the four props are
-    # separate mocap bodies so the props can spin.
-    drone = w.add_body(name="drone", mocap=True, pos=[40, 0, 1])
-    frame_rgb, duct_rgb = [0.10, 0.10, 0.11, 1.0], [0.85, 0.20, 0.15, 1.0]
-    drone.add_geom(name="drone_body", type=G.mjGEOM_BOX, size=[0.018, 0.013, 0.010], pos=[0, 0, 0.004],
-                   rgba=frame_rgb, contype=0, conaffinity=0)
-    drone.add_geom(name="drone_cam", type=G.mjGEOM_BOX, size=[0.005, 0.006, 0.005], pos=[0.020, 0, 0.010],
-                   rgba=[0.05, 0.05, 0.05, 1.0], contype=0, conaffinity=0)
-    for i, (dx, dy) in enumerate(WHOOP_MOTORS):
-        cx, cy = WHOOP_ARM * dx, WHOOP_ARM * dy
-        yaw = np.arctan2(cy, cx)
-        drone.add_geom(name=f"drone_arm{i}", type=G.mjGEOM_BOX, size=[0.012, 0.003, 0.002],
-                       pos=[cx / 2, cy / 2, 0], quat=[np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)],
+    if drone:
+        # Tiny-whoop drone sized like an Eachine UZ65 (approximate public specs, not measured):
+        # 65 mm motor-to-motor diagonal, 31 mm two-blade props inside ducts, about 85 mm across
+        # and 30 mm high. Moved kinematically. The frame (pod + ducts) and the four props are
+        # separate mocap bodies so the props can spin.
+        drone = w.add_body(name="drone", mocap=True, pos=[-40, 0, 1])
+        frame_rgb, duct_rgb = [0.10, 0.10, 0.11, 1.0], [0.85, 0.20, 0.15, 1.0]
+        drone.add_geom(name="drone_body", type=G.mjGEOM_BOX, size=[0.018, 0.013, 0.010], pos=[0, 0, 0.004],
                        rgba=frame_rgb, contype=0, conaffinity=0)
-        for k in range(8):                       # duct wall: a ring of 8 thin panels
-            a = 2 * np.pi * k / 8
-            drone.add_geom(name=f"drone_duct{i}_{k}", type=G.mjGEOM_BOX, size=[0.0072, 0.0008, 0.006],
-                           pos=[cx + WHOOP_DUCT_R * np.cos(a), cy + WHOOP_DUCT_R * np.sin(a), 0.002],
-                           quat=[np.cos((a + np.pi / 2) / 2), 0, 0, np.sin((a + np.pi / 2) / 2)],
-                           rgba=duct_rgb, contype=0, conaffinity=0)
-    for i in range(4):
-        rotor = w.add_body(name=f"drone_rotor{i}", mocap=True, pos=[40, 0, 1])
-        rotor.add_geom(name=f"drone_rotor{i}", type=G.mjGEOM_BOX, size=[0.0155, 0.0028, 0.0005],
-                       rgba=[0.9, 0.9, 0.92, 1.0], contype=0, conaffinity=0)
+        drone.add_geom(name="drone_cam", type=G.mjGEOM_BOX, size=[0.005, 0.006, 0.005], pos=[0.020, 0, 0.010],
+                       rgba=[0.05, 0.05, 0.05, 1.0], contype=0, conaffinity=0)
+        for i, (dx, dy) in enumerate(WHOOP_MOTORS):
+            cx, cy = WHOOP_ARM * dx, WHOOP_ARM * dy
+            yaw = np.arctan2(cy, cx)
+            drone.add_geom(name=f"drone_arm{i}", type=G.mjGEOM_BOX, size=[0.012, 0.003, 0.002],
+                           pos=[cx / 2, cy / 2, 0], quat=[np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)],
+                           rgba=frame_rgb, contype=0, conaffinity=0)
+            for k in range(8):                       # duct wall: a ring of 8 thin panels
+                a = 2 * np.pi * k / 8
+                drone.add_geom(name=f"drone_duct{i}_{k}", type=G.mjGEOM_BOX, size=[0.0072, 0.0008, 0.006],
+                               pos=[cx + WHOOP_DUCT_R * np.cos(a), cy + WHOOP_DUCT_R * np.sin(a), 0.002],
+                               quat=[np.cos((a + np.pi / 2) / 2), 0, 0, np.sin((a + np.pi / 2) / 2)],
+                               rgba=duct_rgb, contype=0, conaffinity=0)
+        for i in range(4):
+            rotor = w.add_body(name=f"drone_rotor{i}", mocap=True, pos=[-40, 0, 1])
+            rotor.add_geom(name=f"drone_rotor{i}", type=G.mjGEOM_BOX, size=[0.0155, 0.0028, 0.0005],
+                           rgba=[0.9, 0.9, 0.92, 1.0], contype=0, conaffinity=0)
 
     # Event camera on the head: looks along +x.
     spec.body("base").add_camera(name="eye", pos=[0.33, 0.0, 0.05],
@@ -249,14 +255,16 @@ class Go2Sim:
     """Standing Go2 with a PD pose controller and a ball launcher."""
 
     def __init__(self, seed: int = 0, eye_hw: tuple[int, int] = (180, 320),
-                 third_hw: tuple[int, int] = (360, 640), scene: str = "lab", fast_eye: bool = False):
+                 third_hw: tuple[int, int] = (360, 640), scene: str = "lab", fast_eye: bool = False,
+                 drone: bool = False):
         """`fast_eye`: render the head camera without the robot's own meshes and without
         shadows. About 20x faster on integrated graphics (Intel Iris: 7 ms instead of 140 ms
         per image); the forward-looking camera hardly sees the robot anyway. Off by default so
-        existing datasets stay reproducible."""
+        existing datasets stay reproducible.
+        `drone`: add the drone to the scene (`set_drone`); off by default."""
         self.rng = np.random.default_rng(seed)
         self.scene = scene
-        self.model = build_model(self.rng, scene)
+        self.model = build_model(self.rng, scene, drone=drone)
         self.data = mujoco.MjData(self.model)
         m = self.model
         self.dt = m.opt.timestep
@@ -283,8 +291,10 @@ class Go2Sim:
         self._shake: tuple | None = None             # (amplitudes, frequencies, phases)
         self._walker_mocap = m.body("walker").mocapid[0]
         self._walker_geoms = [m.geom(f"walker_{n}").id for n in ("torso", "leg_a", "leg_b")]
-        self._drone_mocap = m.body("drone").mocapid[0]
-        self._rotor_mocap = [m.body(f"drone_rotor{i}").mocapid[0] for i in range(4)]
+        self.has_drone = drone
+        if drone:
+            self._drone_mocap = m.body("drone").mocapid[0]
+            self._rotor_mocap = [m.body(f"drone_rotor{i}").mocapid[0] for i in range(4)]
         self.fast_eye = fast_eye
         self._eye_opt = mujoco.MjvOption()
         if fast_eye:
@@ -510,23 +520,33 @@ class Go2Sim:
             self.model.geom_rgba[self._walker_geoms, :3] = rgb
 
     def park_drone(self) -> None:
-        self.set_drone([40.0, 0.0, 1.0])
+        if self.has_drone:
+            self.set_drone([-40.0, 0.0, 1.0])   # behind the robot: never in view
 
-    def set_drone(self, pos, yaw: float = 0.0, rotor_rev_s: float = 250.0) -> None:
+    def set_drone(self, pos, yaw: float = 0.0, rotor_rev_s: float = 250.0, quat=None) -> None:
         """Place the drone (kinematic) and spin its props. Call every step to move it.
+        `quat` (w, x, y, z): full attitude, e.g. tilted into an acceleration
+        (drone_behaviors.Flight); without it the drone is level, turned by `yaw`.
 
         Tiny-whoop props turn at roughly 20,000 rpm and more; rendered at a few hundred Hz
         that aliases, which still gives the flickering prop discs an event camera sees."""
+        if not self.has_drone:
+            raise RuntimeError("this scene has no drone: create Go2Sim(..., drone=True)")
         d = self.data
         pos = np.asarray(pos, float)
-        c, s = np.cos(yaw), np.sin(yaw)
+        q = np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]) if quat is None else np.asarray(quat, float)
+        rot = np.zeros(9)
+        mujoco.mju_quat2Mat(rot, q)
+        rot = rot.reshape(3, 3)
         d.mocap_pos[self._drone_mocap] = pos
-        d.mocap_quat[self._drone_mocap] = [np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]
+        d.mocap_quat[self._drone_mocap] = q
         for i, (dx, dy) in enumerate(WHOOP_MOTORS):
-            off = WHOOP_ARM * np.array([dx, dy])
-            d.mocap_pos[self._rotor_mocap[i]] = pos + [c * off[0] - s * off[1], s * off[0] + c * off[1], 0.006]
-            spin = yaw + (1 if i in (0, 3) else -1) * 2 * np.pi * rotor_rev_s * d.time
-            d.mocap_quat[self._rotor_mocap[i]] = [np.cos(spin / 2), 0, 0, np.sin(spin / 2)]
+            off = np.array([WHOOP_ARM * dx, WHOOP_ARM * dy, 0.006])
+            d.mocap_pos[self._rotor_mocap[i]] = pos + rot @ off
+            spin = (1 if i in (0, 3) else -1) * 2 * np.pi * rotor_rev_s * d.time
+            rq = np.zeros(4)
+            mujoco.mju_mulQuat(rq, q, np.array([np.cos(spin / 2), 0, 0, np.sin(spin / 2)]))
+            d.mocap_quat[self._rotor_mocap[i]] = rq
 
     def set_ball_kinematic(self, xy, quat, radius: float | None = None, rgb=None) -> None:
         """Put the ball at `xy` with orientation `quat`, at rest on the floor.
