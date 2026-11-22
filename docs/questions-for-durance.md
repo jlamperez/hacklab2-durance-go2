@@ -43,7 +43,10 @@ Logs: `docs/fpga-run-2026-11-22.md`.
 > transfers complete, then nothing. Once, on the very first run, one inference did come
 > back (latency 219331 us). Are spatial outputs (9x80x80) or 320x320 inputs supported by
 > SPLEAT? Is there a size limit, or something in the model graph that stops the
-> accelerator from ending the inference?
+> accelerator from ending the inference? Our graph has 3 skip connections and 3 layers with
+> `upscaling: 2` (a U-Net); your example is a plain chain. Are skips and upscaling supported
+> on the FPGA? (Weights encoding ruled out: signed, two's complement and 16-bit biases all
+> hang the same way.)
 
 Also worth asking: whether `despot_send_and_forget` can send one channel (it builds 2
 polarities, fixed at compile time; we merge them in `tools/spleat_merge_proxy.py`).
